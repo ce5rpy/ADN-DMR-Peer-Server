@@ -1,0 +1,83 @@
+# ADN DMR Peer Server - load and decrypt user passwords (legacy hblink load_user_passwords, get_user_password)
+# Copyright (C) 2026  Rodrigo Pérez, CE5RPY <ce5rpy@qmd.cl>
+# Derived from ADN DMR Server / HBlink. GPLv3.
+
+"""Load user_passwords.json, decrypt with password_crypto; expose get_user_password(radio_id) for auth."""
+
+from __future__ import annotations
+
+import json
+import logging
+import os
+import time
+from typing import Any
+
+logger = logging.getLogger(__name__)
+
+USER_PASSWORDS_RELOAD_INTERVAL = 10.0
+_last_load = 0.0
+
+
+class UserPasswordsLoader:
+    """Load and cache decrypted user passwords from GLOBAL.USERS_PASS (JSON with 'passwords' dict)."""
+
+    def __init__(self, project_root: str) -> None:
+        self._project_root = project_root
+        self._passwords: dict[str, str] = {}
+        self._config: dict[str, Any] = {}
+        self._config_dir = os.path.join(project_root, "config")
+        self._key_path = os.path.join(self._config_dir, "encryption_key.secret")
+
+    def load(self, config: dict[str, Any]) -> dict[str, str]:
+        """Load user_passwords.json from data dir, decrypt each; return passwords dict. Legacy load_user_passwords."""
+        global _last_load
+        self._config = config
+        now = time.time()
+        if now - _last_load < USER_PASSWORDS_RELOAD_INTERVAL and self._passwords:
+            return self._passwords
+        data_dir = os.path.join(
+            self._project_root,
+            (config.get("ALIASES", {}).get("PATH") or "data").rstrip("/"),
+        )
+        users_pass = (config.get("GLOBAL", {}).get("USERS_PASS") or "user_passwords.json").strip()
+        path = os.path.join(data_dir, users_pass)
+        key_path = os.path.join(
+            self._project_root,
+            (config.get("GLOBAL", {}).get("CONFIG_PATH") or "config").rstrip("/"),
+        )
+        hash_encrypt = (config.get("GLOBAL", {}).get("HASH_ENCRYPT") or "encryption_key.secret").strip()
+        self._key_path = os.path.join(key_path, hash_encrypt)
+        self._passwords = {}
+        if not os.path.exists(path):
+            _last_load = now
+            return self._passwords
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            encrypted = data.get("passwords", {})
+            from .password_crypto import decrypt_password
+            for radio_id, pwd in encrypted.items():
+                self._passwords[str(radio_id)] = decrypt_password(pwd, self._key_path) or ""
+            logger.debug("(AUTH) Loaded %d individual passwords from %s", len(self._passwords), path)
+        except (FileNotFoundError, json.JSONDecodeError, Exception) as e:
+            logger.warning("(AUTH) Could not load user passwords: %s", e)
+        _last_load = now
+        return self._passwords
+
+    def get_user_password(self, radio_id: int) -> bytes | None:
+        """Return password for radio_id (for login auth); 7-char prefix match like legacy. Legacy get_user_password."""
+        if time.time() - _last_load >= USER_PASSWORDS_RELOAD_INTERVAL and self._config:
+            self.load(self._config)
+        radio_id_str = str(radio_id)
+        if not radio_id_str.isdigit():
+            return None
+        if radio_id_str in self._passwords:
+            pwd = self._passwords[radio_id_str]
+            return pwd.encode("utf-8") if isinstance(pwd, str) else pwd
+        if len(radio_id_str) == 9:
+            base_id = radio_id_str[:7]
+            if base_id in self._passwords:
+                logger.debug("(AUTH) Radio ID %s using base ID %s password", radio_id_str, base_id)
+                pwd = self._passwords[base_id]
+                return pwd.encode("utf-8") if isinstance(pwd, str) else pwd
+        return None

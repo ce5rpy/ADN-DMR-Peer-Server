@@ -1,0 +1,31 @@
+# ADN DMR Peer Server
+# GPL v3. Derived from ADN DMR Server / HBlink.
+
+[build-system]
+requires = ["setuptools>=61", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "adn-server"
+version = "0.1.0"
+description = "ADN DMR Peer Server"
+readme = "README.md"
+license = { text = "GPL-3.0-or-later" }
+requires-python = ">=3.10"
+dependencies = [
+    "Twisted>=22.0",
+    "dmr_utils3>=0.1.19",
+    "pyyaml>=6.0",
+    "setproctitle>=1.3",
+    "bitarray>=2.0",
+    "cryptography>=41.0",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=7", "pytest-cov"]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[project.scripts]
+adn-server = "adn_server.main:main"

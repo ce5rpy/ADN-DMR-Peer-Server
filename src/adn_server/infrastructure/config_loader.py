@@ -1,0 +1,117 @@
+# ADN DMR Peer Server - YAML config loader
+# Copyright (C) 2026  Rodrigo Pérez, CE5RPY <ce5rpy@qmd.cl>
+# Derived from ADN DMR Server / HBlink. GPLv3.
+
+"""Load config from YAML at project root; same semantic structure as legacy INI."""
+
+from __future__ import annotations
+
+import os
+import sys
+from pathlib import Path
+from typing import Any
+
+import yaml
+
+from ..domain import ID_MAX, ID_MIN, PEER_MAX
+from ..domain.errors import ConfigError
+from . import logging_config
+
+
+def acl_build(acl_str: str | None, max_id: int) -> tuple[bool, list[tuple[int, int]]]:
+    """Build ACL from string e.g. 'DENY:1-5,3120101'. Returns (action, [(lo, hi), ...])."""
+    if not acl_str:
+        return (True, [(ID_MIN, max_id)])
+    parts = acl_str.split(":", 1)
+    if len(parts) != 2:
+        return (True, [(ID_MIN, max_id)])
+    action = parts[0].strip().upper() == "PERMIT"
+    acl: list[tuple[int, int]] = []
+    for entry in parts[1].strip().split(","):
+        entry = entry.strip()
+        if entry == "ALL":
+            acl.append((ID_MIN, max_id))
+            break
+        if "-" in entry:
+            start_s, end_s = entry.split("-", 1)
+            start, end = int(start_s.strip()), int(end_s.strip())
+            if not (ID_MIN <= start <= max_id) and not (ID_MIN <= end <= max_id):
+                raise ConfigError(f"ACL range out of bounds: {entry}")
+            acl.append((start, end))
+        else:
+            i = int(entry)
+            if not (ID_MIN <= i <= max_id):
+                raise ConfigError(f"ACL id out of bounds: {entry}")
+            acl.append((i, i))
+    return (action, acl)
+
+
+def process_acls(config: dict[str, Any]) -> None:
+    """Inject processed ACLs into CONFIG (GLOBAL and per SYSTEM). Mutates config."""
+    from ..domain import PEER_MAX
+
+    g = config.get("GLOBAL", {})
+    g["REG_ACL"] = acl_build(g.get("REG_ACL", "PERMIT:ALL"), PEER_MAX)
+    for key in ("SUB_ACL", "TG1_ACL", "TG2_ACL"):
+        acl_key = "TGID_TS1_ACL" if key == "TG1_ACL" else ("TGID_TS2_ACL" if key == "TG2_ACL" else key)
+        g[key] = acl_build(g.get(acl_key, g.get(key, "PERMIT:ALL")), ID_MAX)
+    for system_name, sys_cfg in config.get("SYSTEMS", {}).items():
+        if sys_cfg.get("MODE") == "MASTER":
+            sys_cfg["REG_ACL"] = acl_build(sys_cfg.get("REG_ACL", "PERMIT:ALL"), PEER_MAX)
+        for key in ("SUB_ACL", "TG1_ACL", "TG2_ACL"):
+            acl_key = "TGID_TS1_ACL" if key == "TG1_ACL" else ("TGID_TS2_ACL" if key == "TG2_ACL" else key)
+            sys_cfg[key] = acl_build(sys_cfg.get(acl_key, sys_cfg.get(key, "PERMIT:ALL")), ID_MAX)
+
+
+class YamlConfigLoader:
+    """Load config from YAML file; same semantics as legacy build_config."""
+
+    def __init__(self, project_root: str | Path = ".") -> None:
+        self._root = Path(project_root).resolve()
+
+    def load(self, path: str | None = None) -> dict[str, Any]:
+        """Load config. path=None uses project root adn-server.yaml."""
+        if path is None:
+            path = str(self._root / "adn-server.yaml")
+        if not os.path.isfile(path):
+            raise ConfigError(f"Config file not found: {path}")
+        with open(path, "r", encoding="utf-8") as f:
+            data = yaml.safe_load(f)
+        if not data or not isinstance(data, dict):
+            raise ConfigError("Invalid YAML or empty config")
+        # Normalize to same top-level keys as legacy
+        config: dict[str, Any] = {
+            "GLOBAL": data.get("GLOBAL", {}),
+            "VOICE": data.get("VOICE", {}),
+            "REPORTS": data.get("REPORTS", {}),
+            "LOGGER": data.get("LOGGER", {}),
+            "ALIASES": data.get("ALIASES", {}),
+            "ALLSTAR": data.get("ALLSTAR", {}),
+            "SYSTEMS": data.get("SYSTEMS", {}),
+        }
+        # Ensure REPORT_CLIENTS is list
+        if "REPORT_CLIENTS" in config["REPORTS"] and isinstance(config["REPORTS"]["REPORT_CLIENTS"], str):
+            config["REPORTS"]["REPORT_CLIENTS"] = [
+                x.strip() for x in config["REPORTS"]["REPORT_CLIENTS"].split(",")
+            ]
+        process_acls(config)
+        return config
+
+    def reload_voice_config(self, config: dict[str, Any], config_path: str | None = None) -> None:
+        """Reload GLOBAL from main config file (voice, announcements, TTS live there). Updates config in place."""
+        if not config_path or not os.path.isfile(config_path):
+            return
+        try:
+            with open(config_path, "r", encoding="utf-8") as f:
+                data = yaml.safe_load(f)
+        except (OSError, yaml.YAMLError):
+            return
+        if not data or not isinstance(data, dict):
+            return
+        new_global = data.get("GLOBAL", {})
+        if new_global:
+            config["GLOBAL"].update(new_global)
+            process_acls(config)
+        new_voice = data.get("VOICE", {})
+        if new_voice:
+            config.setdefault("VOICE", {}).update(new_voice)

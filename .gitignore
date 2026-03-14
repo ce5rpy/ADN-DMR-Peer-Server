@@ -1,0 +1,95 @@
+# -----------------------------------------------------------------------------
+# ADN DMR Peer Server – production config, secrets, data, build, IDE/OS
+# -----------------------------------------------------------------------------
+
+# Production config (use adn-server.example.yaml as template)
+adn-server.yaml
+*.local.yaml
+*.local.yml
+
+# Local/helper scripts (not for prod repo; users use their own run method)
+scripts/run.sh
+
+# Env and secrets
+.env
+.env.local
+.env.*.local
+!.env.example
+user_passwords.json
+encryption_key.secret
+*.secret
+keys.json
+
+# -----------------------------------------------------------------------------
+# Data and runtime (keep data/ via .gitkeep, do not commit contents)
+# -----------------------------------------------------------------------------
+data/*.json
+data/*.pkl
+data/*.tsv
+data/*.bak
+!data/.gitkeep
+json/*
+!json/.gitkeep
+docs/
+Audio/
+
+# -----------------------------------------------------------------------------
+# Python
+# -----------------------------------------------------------------------------
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+.eggs/
+
+# Virtual envs
+.venv/
+venv/
+env/
+ENV/
+
+# -----------------------------------------------------------------------------
+# Logs and runtime
+# -----------------------------------------------------------------------------
+*.log
+log/
+tmp/
+temp/
+*.tmp
+*.temp
+.cache/
+
+# -----------------------------------------------------------------------------
+# IDE and OS
+# -----------------------------------------------------------------------------
+.idea/
+.vscode/
+.cursor/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+
+# -----------------------------------------------------------------------------
+# Misc
+# -----------------------------------------------------------------------------
+*.bak
+*.backup
+*.orig
+logo.png
