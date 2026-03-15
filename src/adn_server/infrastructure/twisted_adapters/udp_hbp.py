@@ -785,7 +785,7 @@ class HBPProtocol(DatagramProtocol):
                     self.STATUS[_slot]["RX_STREAM_ID"] = _stream_id
 
         elif _command == MSTN:
-            _peer_id = _data[5:9] if len(_data) >= 9 else _data[4:8]
+            _peer_id = _data[6:10]
             if self._config.get("LOOSE") or _peer_id == self._config.get("RADIO_ID"):
                 logger.warning("(%s) MSTNAK Received. Resetting connection to the Master.", self._system)
                 self._stats["CONNECTION"] = "NO"
@@ -793,13 +793,13 @@ class HBPProtocol(DatagramProtocol):
 
         elif _command == RPTA:
             if self._stats.get("CONNECTION") == "RPTL_SENT":
-                _login_int32 = _data[5:9] if len(_data) >= 9 else _data[4:8]
+                _login_int32 = _data[6:10]
                 logger.info("(%s) Repeater Login ACK Received with 32bit ID: %s", self._system, int_id(_login_int32))
-                _pass_hash = bhex(sha256(_login_int32 + self._config.get("PASSPHRASE", b"")).hexdigest())
+                _pass_hash = bhex(sha256(b"".join([_login_int32, self._config.get("PASSPHRASE", b"")])).hexdigest())
                 self.send_master(b"".join([RPTK, self._config["RADIO_ID"], _pass_hash]))
                 self._stats["CONNECTION"] = "AUTHENTICATED"
             elif self._stats.get("CONNECTION") == "AUTHENTICATED":
-                _peer_id = _data[5:9] if len(_data) >= 9 else _data[4:8]
+                _peer_id = _data[6:10]
                 if self._config.get("LOOSE") or _peer_id == self._config.get("RADIO_ID"):
                     logger.info("(%s) Repeater Authentication Accepted", self._system)
                     _config_packet = b"".join([
@@ -826,7 +826,7 @@ class HBPProtocol(DatagramProtocol):
                     self._stats["CONNECTION"] = "NO"
                     logger.error("(%s) Master ACK Contained wrong ID - Connection Reset", self._system)
             elif self._stats.get("CONNECTION") == "CONFIG-SENT":
-                _peer_id = _data[5:9] if len(_data) >= 9 else _data[4:8]
+                _peer_id = _data[6:10]
                 if self._config.get("LOOSE") or _peer_id == self._config.get("RADIO_ID"):
                     logger.info("(%s) Repeater Configuration Accepted", self._system)
                     if self._config.get("OPTIONS"):
@@ -841,7 +841,7 @@ class HBPProtocol(DatagramProtocol):
                     self._stats["CONNECTION"] = "NO"
                     logger.error("(%s) Master ACK Contained wrong ID - Connection Reset", self._system)
             elif self._stats.get("CONNECTION") == "OPTIONS-SENT":
-                _peer_id = _data[5:9] if len(_data) >= 9 else _data[4:8]
+                _peer_id = _data[6:10]
                 if self._config.get("LOOSE") or _peer_id == self._config.get("RADIO_ID"):
                     logger.info("(%s) Repeater Options Accepted", self._system)
                     self._stats["CONNECTION"] = "YES"

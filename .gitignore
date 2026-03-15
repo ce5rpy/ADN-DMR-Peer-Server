@@ -2,8 +2,9 @@
 # ADN DMR Peer Server – production config, secrets, data, build, IDE/OS
 # -----------------------------------------------------------------------------
 
-# Production config (use adn-server.example.yaml as template)
+# Production config (use *.example.yaml as template)
 adn-server.yaml
+adn-parrot.yaml
 *.local.yaml
 *.local.yml
 

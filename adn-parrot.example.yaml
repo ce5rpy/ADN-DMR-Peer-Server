@@ -1,0 +1,75 @@
+# ADN DMR Parrot (playback) - example configuration
+# Copy to adn-parrot.yaml and set real secrets there (never commit adn-parrot.yaml).
+#
+# The parrot runs a MASTER. The ECHO PEER (defined in adn-server.yaml) connects to it.
+# When a user transmits to the ECHO peer, the parrot records the audio and plays it back.
+
+GLOBAL:
+  PATH: ./
+  PING_TIME: 10
+  MAX_MISSED: 3
+  USE_ACL: true
+  REG_ACL: DENY:1
+  SUB_ACL: DENY:1
+  TGID_TS1_ACL: PERMIT:ALL
+  TGID_TS2_ACL: PERMIT:ALL
+  ALLOW_NULL_PASSPHRASE: false
+  ANNOUNCEMENT_LANGUAGES: es_ES
+  SERVER_ID: 9990
+  DATA_GATEWAY: false
+  VALIDATE_SERVER_IDS: false
+
+REPORTS:
+  REPORT: false
+  REPORT_INTERVAL: 60
+  REPORT_PORT: 4821
+  REPORT_CLIENTS: "127.0.0.1"
+
+LOGGER:
+  LOG_FILE: /var/log/adn-server/parrot.log
+  LOG_HANDLERS: file-timed
+  LOG_LEVEL: DEBUG
+  LOG_NAME: ADN
+
+ALIASES:
+  TRY_DOWNLOAD: false
+  PATH: ./json/
+  PEER_FILE: peer_ids.json
+  SUBSCRIBER_FILE: subscriber_ids.json
+  TGID_FILE: talkgroup_ids.json
+  PEER_URL: https://adn.systems/files/peer_ids.json
+  SUBSCRIBER_URL: https://adn.systems/files/subscriber_ids.json
+  TGID_URL: https://adn.systems/files/talkgroup_ids.json
+  LOCAL_SUBSCRIBER_FILE: local_subscriber_ids.json
+  STALE_DAYS: 1
+  SUB_MAP_FILE: ""
+  SERVER_ID_URL: https://adn.systems/files/server_ids.tsv
+  SERVER_ID_FILE: server_ids.tsv
+
+SYSTEMS:
+  PARROT:
+    MODE: MASTER
+    ENABLED: true
+    REPEAT: true
+    MAX_PEERS: 1
+    EXPORT_AMBE: false
+    IP: 127.0.0.1
+    PORT: 54915
+    PASSPHRASE: "<set-in-adn-parrot.yaml>"
+    GROUP_HANGTIME: 5
+    USE_ACL: true
+    REG_ACL: DENY:1
+    SUB_ACL: DENY:1
+    TGID_TS1_ACL: PERMIT:ALL
+    TGID_TS2_ACL: PERMIT:ALL
+    DEFAULT_UA_TIMER: 10
+    SINGLE_MODE: true
+    VOICE_IDENT: false
+    TS1_STATIC: ""
+    TS2_STATIC: ""
+    DEFAULT_REFLECTOR: 0
+    GENERATOR: 1
+    ANNOUNCEMENT_LANGUAGE: es_ES
+    ALLOW_UNREG_ID: true
+    PROXY_CONTROL: false
+    OVERRIDE_IDENT_TG: ""
