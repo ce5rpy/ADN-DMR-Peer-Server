@@ -31,7 +31,8 @@ data/*.bak
 !data/.gitkeep
 json/*
 !json/.gitkeep
-docs/
+docs/*
+!docs/PARROT.md
 Audio/
 
 # -----------------------------------------------------------------------------
