@@ -468,6 +468,14 @@ class HBPProtocol(DatagramProtocol):
                         self._system, _peer_id, _rf_src, _dst_id, _seq, _slot,
                         _call_type, _frame_type, _dtype_vseq, _stream_id, _data,
                     )
+                if (
+                    _frame_type == HBPF_DATA_SYNC
+                    and _dtype_vseq == HBPF_SLT_VTERM
+                    and _slot in self.STATUS
+                    and self.STATUS[_slot].get("RX_TYPE") != HBPF_SLT_VTERM
+                    and self._on_in_band_signalling
+                ):
+                    self._on_in_band_signalling(self._system, _slot, _dst_id, pkt_time)
                 if _slot in self.STATUS:
                     self.STATUS[_slot]["RX_PEER"] = _peer_id
                     self.STATUS[_slot]["RX_SEQ"] = _seq

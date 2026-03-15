@@ -74,16 +74,17 @@ class ReportSenderAdapter(ReportSender):
         self._factory.send_bridge_event(event)
 
 
-def _make_echo_bridges() -> dict:
-    """Initial BRIDGES for ECHO peer (legacy make_bridges 9990)."""
+def _make_echo_bridges(config: dict) -> dict:
+    """Initial BRIDGES for ECHO peer (legacy make_bridges 9990 + MASTER expansion)."""
     now = time.time()
     timeout_sec = 2 * 60
-    return {
+    tgid_b = bytes_3(9990)
+    bridges: dict = {
         "9990": [
             {
                 "SYSTEM": "ECHO",
                 "TS": 2,
-                "TGID": bytes_3(9990),
+                "TGID": tgid_b,
                 "ACTIVE": True,
                 "TIMEOUT": timeout_sec,
                 "TO_TYPE": "NONE",
@@ -94,6 +95,18 @@ def _make_echo_bridges() -> dict:
             }
         ]
     }
+    systems_cfg = config.get("SYSTEMS", {})
+    for _system, sys_cfg in systems_cfg.items():
+        if sys_cfg.get("MODE") != "MASTER":
+            continue
+        _tmout = float(sys_cfg.get("DEFAULT_UA_TIMER", 10))
+        ts1 = any(e["SYSTEM"] == _system and e["TS"] == 1 for e in bridges["9990"])
+        ts2 = any(e["SYSTEM"] == _system and e["TS"] == 2 for e in bridges["9990"])
+        if not ts1:
+            bridges["9990"].append({"SYSTEM": _system, "TS": 1, "TGID": tgid_b, "ACTIVE": False, "TIMEOUT": _tmout * 60, "TO_TYPE": "ON", "OFF": [], "ON": [tgid_b], "RESET": [], "TIMER": now})
+        if not ts2:
+            bridges["9990"].append({"SYSTEM": _system, "TS": 2, "TGID": tgid_b, "ACTIVE": False, "TIMEOUT": _tmout * 60, "TO_TYPE": "ON", "OFF": [], "ON": [tgid_b], "RESET": [], "TIMER": now})
+    return bridges
 
 
 def _looping_errback(logger: logging.Logger, failure):
@@ -156,7 +169,7 @@ def main() -> None:
     bridge_router = InMemoryBridgeRouter()
     systems_cfg = config.get("SYSTEMS", {})
     if "ECHO" in systems_cfg and systems_cfg.get("ECHO", {}).get("MODE") == "PEER":
-        bridge_router.set_bridges(_make_echo_bridges())
+        bridge_router.set_bridges(_make_echo_bridges(config))
     else:
         bridge_router.set_bridges({})
 
