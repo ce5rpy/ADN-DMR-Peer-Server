@@ -19,8 +19,8 @@ class ConfigLoader(ABC):
         ...
 
     @abstractmethod
-    def reload_voice_config(self, config: dict[str, Any]) -> None:
-        """Reload voice/announcement config from main config file (optional second arg: path)."""
+    def reload_voice_config(self, config: dict[str, Any], voice_path: str | None = None) -> None:
+        """Hot-reload adn-voice.yaml into config["VOICE"]."""
         ...
 
 

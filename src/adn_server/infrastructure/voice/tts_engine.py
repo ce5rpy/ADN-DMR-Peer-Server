@@ -288,36 +288,35 @@ def text_to_ambe(
     return True
 
 
-def ensure_tts_ambe(config: dict[str, Any], tts_num: int, audio_path: str) -> str | None:
-    """Ensure .ambe exists for TTS_ANNOUNCEMENT{tts_num}; create from .txt if needed. Returns path or None."""
-    g = config.get("VOICE", {})
-    _prefix = "TTS_ANNOUNCEMENT{}".format(tts_num)
-    if not g.get("{}_ENABLED".format(_prefix), False):
+def ensure_tts_ambe(config: dict[str, Any], item: dict[str, Any], audio_path: str) -> str | None:
+    """Ensure .ambe exists for TTS item; create from .txt if needed. Returns path or None."""
+    if not item.get("ENABLED", False):
         return None
-    _file = g.get("{}_FILE".format(_prefix), "")
-    _lang = g.get("{}_LANGUAGE".format(_prefix), "en_GB")
+    _file = (item.get("FILE") or "").strip()
+    _lang = item.get("LANGUAGE", "en_GB")
     if not _file:
         return None
+    g = config.get("VOICE", {})
     _txt_path = os.path.join(audio_path, _lang, "ondemand", _file + ".txt")
     _ambe_path = os.path.join(audio_path, _lang, "ondemand", _file + ".ambe")
     if os.path.isfile(_ambe_path):
         if not os.path.isfile(_txt_path):
-            logger.info("(TTS-%d) Using existing AMBE file (no .txt): %s", tts_num, _ambe_path)
+            logger.info("(TTS) Using existing AMBE file (no .txt): %s", _ambe_path)
             return _ambe_path
         if os.path.getmtime(_ambe_path) > os.path.getmtime(_txt_path):
-            logger.debug("(TTS-%d) Using cached AMBE: %s", tts_num, _ambe_path)
+            logger.debug("(TTS) Using cached AMBE: %s", _ambe_path)
             return _ambe_path
     if not os.path.isfile(_txt_path):
-        logger.warning("(TTS-%d) Text file not found: %s", tts_num, _txt_path)
+        logger.warning("(TTS) Text file not found: %s", _txt_path)
         return None
     _vocoder_cmd = g.get("TTS_VOCODER_CMD", "")
-    _ambeserver_host = g.get("TTS_AMBESERVER_HOST", "").strip()
+    _ambeserver_host = (g.get("TTS_AMBESERVER_HOST") or "").strip()
     _ambeserver_port = int(g.get("TTS_AMBESERVER_PORT", 2460))
     _volume_db = int(g.get("TTS_VOLUME", -3))
     _speed = float(g.get("TTS_SPEED", 1.0))
     if text_to_ambe(_txt_path, _ambe_path, _lang, _vocoder_cmd, _ambeserver_host, _ambeserver_port, _volume_db, _speed):
         return _ambe_path
     if os.path.isfile(_ambe_path):
-        logger.warning("(TTS-%d) Using previous AMBE (conversion failed): %s", tts_num, _ambe_path)
+        logger.warning("(TTS) Using previous AMBE (conversion failed): %s", _ambe_path)
         return _ambe_path
     return None

@@ -97,21 +97,23 @@ class YamlConfigLoader:
         process_acls(config)
         return config
 
-    def reload_voice_config(self, config: dict[str, Any], config_path: str | None = None) -> None:
-        """Reload GLOBAL from main config file (voice, announcements, TTS live there). Updates config in place."""
-        if not config_path or not os.path.isfile(config_path):
-            return
+    def load_voice_config(self, voice_path: str | None = None) -> dict[str, Any]:
+        """Load voice config from adn-voice.yaml. Returns the VOICE dict (empty if file missing)."""
+        if not voice_path:
+            voice_path = str(self._root / "adn-voice.yaml")
+        if not os.path.isfile(voice_path):
+            return {}
         try:
-            with open(config_path, "r", encoding="utf-8") as f:
+            with open(voice_path, "r", encoding="utf-8") as f:
                 data = yaml.safe_load(f)
         except (OSError, yaml.YAMLError):
-            return
+            return {}
         if not data or not isinstance(data, dict):
-            return
-        new_global = data.get("GLOBAL", {})
-        if new_global:
-            config["GLOBAL"].update(new_global)
-            process_acls(config)
-        new_voice = data.get("VOICE", {})
+            return {}
+        return data.get("VOICE", {})
+
+    def reload_voice_config(self, config: dict[str, Any], voice_path: str | None = None) -> None:
+        """Hot-reload adn-voice.yaml into config["VOICE"]. Called every 15 s."""
+        new_voice = self.load_voice_config(voice_path)
         if new_voice:
             config.setdefault("VOICE", {}).update(new_voice)

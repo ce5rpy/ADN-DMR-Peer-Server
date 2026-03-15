@@ -132,6 +132,12 @@ def main() -> None:
     loader = YamlConfigLoader(project_root)
     config = loader.load(config_path)
 
+    # Voice config lives in a separate file for hot-reload without restart
+    voice_config_path = os.path.join(os.path.dirname(os.path.abspath(config_path)), "adn-voice.yaml")
+    voice_data = loader.load_voice_config(voice_config_path)
+    if voice_data:
+        config.setdefault("VOICE", {}).update(voice_data)
+
     if args.LOG_LEVEL:
         config.setdefault("LOGGER", {})["LOG_LEVEL"] = args.LOG_LEVEL
     logger = setup_logging(config.get("LOGGER", {}))
@@ -231,7 +237,7 @@ def main() -> None:
         start_looping_call=_start_voice_loop,
         defer_to_thread=threads.deferToThread,
     )
-    voice_use_cases.check_voice_config_reload(config_path)
+    voice_use_cases.check_voice_config_reload(voice_config_path)
     ident_use_cases = IdentUseCases(
         config,
         voice_use_cases,
@@ -380,11 +386,11 @@ def main() -> None:
     signal.signal(signal.SIGINT, sig_handler)
     reactor.addSystemEventTrigger("before", "shutdown", shutdown_handler)
 
-    # Voice/announcement config reload (15s): re-read main YAML, start/stop announcement LoopingCalls on change
+    # Voice config reload (15s): re-read adn-voice.yaml, start/stop announcement LoopingCalls on change
     def voice_reload_loop():
         try:
-            loader.reload_voice_config(config, config_path)
-            voice_use_cases.check_voice_config_reload(config_path)
+            loader.reload_voice_config(config, voice_config_path)
+            voice_use_cases.check_voice_config_reload(voice_config_path)
         except Exception as e:
             logger.debug("(VOICE-RELOAD) %s", e)
 

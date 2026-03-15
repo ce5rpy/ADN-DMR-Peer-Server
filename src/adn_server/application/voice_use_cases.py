@@ -50,10 +50,10 @@ class VoiceUseCases:
         self._defer_to_thread = defer_to_thread
         self._ann_tasks: dict[int, Any] = {}
         self._tts_tasks: dict[int, Any] = {}
-        self._announcement_running: dict[int, bool] = {1: False, 2: False, 3: False, 4: False}
-        self._tts_running: dict[int, bool] = {1: False, 2: False, 3: False, 4: False}
-        self._announcement_last_hour: dict[int, int] = {1: -1, 2: -1, 3: -1, 4: -1}
-        self._tts_last_hour: dict[int, int] = {1: -1, 2: -1, 3: -1, 4: -1}
+        self._announcement_running: dict[int, bool] = {}
+        self._tts_running: dict[int, bool] = {}
+        self._announcement_last_hour: dict[int, int] = {}
+        self._tts_last_hour: dict[int, int] = {}
         self._config_file_mtime: float = 0.0
         self._broadcast_queue: list[dict[str, Any]] = []
         self._broadcast_active: bool = False
@@ -170,11 +170,11 @@ class VoiceUseCases:
         source_id: bytes,
         dst_id: bytes,
         tg: int,
-        ann_num: int,
+        ann_idx: int,
         label: str,
         next_time: float | None = None,
     ) -> None:
-        """Send one batch of packets; schedule next via call_later (legacy _announcementSendBroadcast)."""
+        """Send one batch of packets; schedule next via call_later."""
         total = len(pkts_by_ts.get(1, []))
         if pkt_idx >= total:
             for t in targets:
@@ -186,7 +186,7 @@ class VoiceUseCases:
                                 del obj.STATUS[sid]
                 except Exception:
                     pass
-            self._announcement_running[ann_num] = False
+            self._announcement_running[ann_idx] = False
             logger.info("(%s) Broadcast complete: %s packets sent to %s targets", label, total, len(targets))
             self._broadcast_finished()
             return
@@ -229,44 +229,47 @@ class VoiceUseCases:
                 source_id,
                 dst_id,
                 tg,
-                ann_num,
+                ann_idx,
                 label,
                 next_time,
             )
 
-    def scheduled_announcement(self, ann_num: int = 1, _retry: int = 0) -> None:
-        """Run one scheduled file announcement (legacy scheduledAnnouncement 1–4)."""
+    def scheduled_announcement(self, ann_idx: int = 0, _retry: int = 0) -> None:
+        """Run one scheduled file announcement from ANNOUNCEMENTS[ann_idx]."""
         g = self._config.get("VOICE", {})
-        prefix = "ANNOUNCEMENT" if ann_num == 1 else "ANNOUNCEMENT{}".format(ann_num)
-        label = "ANNOUNCEMENT" if ann_num == 1 else "ANNOUNCEMENT-{}".format(ann_num)
-        if not g.get("{}_ENABLED".format(prefix)):
+        announcements = g.get("ANNOUNCEMENTS") or []
+        if ann_idx < 0 or ann_idx >= len(announcements):
             return
-        if self._announcement_running.get(ann_num):
+        item = announcements[ann_idx]
+        if not isinstance(item, dict) or not item.get("ENABLED"):
+            return
+        label = "ANNOUNCEMENT-{}".format(ann_idx + 1)
+        if self._announcement_running.get(ann_idx):
             if _retry == 0:
                 logger.debug("(%s) Previous announcement still running, skipping", label)
             return
-        mode = g.get("{}_MODE".format(prefix), "interval")
+        mode = item.get("MODE", "interval")
         if mode == "hourly" and _retry == 0:
             now = datetime.now()
             if now.minute != 0:
                 return
-            if self._announcement_last_hour.get(ann_num) == now.hour:
+            if self._announcement_last_hour.get(ann_idx) == now.hour:
                 return
-            self._announcement_last_hour[ann_num] = now.hour
+            self._announcement_last_hour[ann_idx] = now.hour
         if self._broadcast_active and _retry < 60:
             if _retry == 0:
                 logger.debug("(%s) Broadcast queue busy, deferring prep", label)
             if self._call_later:
-                self._call_later(3.0 + ann_num * 0.5, self.scheduled_announcement, ann_num, _retry + 1)
+                self._call_later(3.0 + ann_idx * 0.5, self.scheduled_announcement, ann_idx, _retry + 1)
             return
-        _file = g.get("{}_FILE".format(prefix), "")
-        _tg = int(g.get("{}_TG".format(prefix), 0))
-        _lang = g.get("{}_LANGUAGE".format(prefix), "en_GB")
+        _file = (item.get("FILE") or "").strip()
+        _tg = int(item.get("TG", 0))
+        _lang = item.get("LANGUAGE", "en_GB")
         if not _file or not _tg:
             return
         _dst_id = bytes_3(_tg)
         _source_id = bytes_3(5000)
-        server_id = g.get("SERVER_ID", b"\x00\x00\x00\x00")
+        server_id = self._config.get("GLOBAL", {}).get("SERVER_ID", b"\x00\x00\x00\x00")
         if not isinstance(server_id, bytes):
             server_id = bytes_3(int(server_id))
         logger.info("(%s) Playing file: %s to TG %s (both TS, mode: %s, lang: %s)", label, _file, _tg, mode, _lang)
@@ -297,63 +300,66 @@ class VoiceUseCases:
             "(%s) Broadcasting %s packets to %s targets (TS1:%s TS2:%s): %s",
             label, len(pkts_by_ts[1]), len(targets), ts1_count, ts2_count, sys_names,
         )
-        self._announcement_running[ann_num] = True
-        self._enqueue_broadcast('ann', targets, pkts_by_ts, _source_id, _dst_id, _tg, ann_num, label)
+        self._announcement_running[ann_idx] = True
+        self._enqueue_broadcast('ann', targets, pkts_by_ts, _source_id, _dst_id, _tg, ann_idx, label)
 
-    def scheduled_tts_announcement(self, tts_num: int = 1, _retry: int = 0) -> None:
-        """Run one scheduled TTS announcement (legacy scheduledTTSAnnouncement 1–4)."""
+    def scheduled_tts_announcement(self, tts_idx: int = 0, _retry: int = 0) -> None:
+        """Run one scheduled TTS announcement from TTS_ANNOUNCEMENTS[tts_idx]."""
         g = self._config.get("VOICE", {})
-        prefix = "TTS_ANNOUNCEMENT{}".format(tts_num)
-        label = "TTS-{}".format(tts_num)
-        if not g.get("{}_ENABLED".format(prefix), False):
+        tts_list = g.get("TTS_ANNOUNCEMENTS") or []
+        if tts_idx < 0 or tts_idx >= len(tts_list):
             return
-        if self._tts_running.get(tts_num):
+        item = tts_list[tts_idx]
+        if not isinstance(item, dict) or not item.get("ENABLED", False):
+            return
+        label = "TTS-{}".format(tts_idx + 1)
+        if self._tts_running.get(tts_idx):
             if _retry == 0:
                 logger.debug("(%s) Previous TTS announcement still running, skipping", label)
             return
-        mode = g.get("{}_MODE".format(prefix), "interval")
+        mode = item.get("MODE", "interval")
         if mode == "hourly" and _retry == 0:
             now = datetime.now()
             if now.minute != 0:
                 return
-            if self._tts_last_hour.get(tts_num) == now.hour:
+            if self._tts_last_hour.get(tts_idx) == now.hour:
                 return
-            self._tts_last_hour[tts_num] = now.hour
+            self._tts_last_hour[tts_idx] = now.hour
         if self._broadcast_active and _retry < 60:
             if _retry == 0:
                 logger.debug("(%s) Broadcast queue busy, deferring TTS prep", label)
             if self._call_later:
-                self._call_later(3.0 + tts_num * 0.5, self.scheduled_tts_announcement, tts_num, _retry + 1)
+                self._call_later(3.0 + tts_idx * 0.5, self.scheduled_tts_announcement, tts_idx, _retry + 1)
             return
-        _file = g.get("{}_FILE".format(prefix), "")
-        _tg = int(g.get("{}_TG".format(prefix), 0))
-        _lang = g.get("{}_LANGUAGE".format(prefix), "en_GB")
-        self._tts_running[tts_num] = True
+        _file = (item.get("FILE") or "").strip()
+        _tg = int(item.get("TG", 0))
+        _lang = item.get("LANGUAGE", "en_GB")
+        self._tts_running[tts_idx] = True
         logger.info("(%s) Starting TTS conversion in background thread for %s", label, _file)
         if self._defer_to_thread:
-            d = self._defer_to_thread(tts_ensure_tts_ambe, self._config, tts_num, self._audio_path)
-            d.addCallback(self._tts_conversion_done, tts_num, _file, _tg, _lang, mode, label)
-            d.addErrback(self._tts_conversion_error, tts_num, label)
+            d = self._defer_to_thread(tts_ensure_tts_ambe, self._config, item, self._audio_path)
+            d.addCallback(self._tts_conversion_done, tts_idx, _file, _tg, _lang, mode, label)
+            d.addErrback(self._tts_conversion_error, tts_idx, label)
         else:
             try:
-                ambe_path = tts_ensure_tts_ambe(self._config, tts_num, self._audio_path)
-                self._tts_conversion_done(ambe_path, tts_num, _file, _tg, _lang, mode, label)
+                ambe_path = tts_ensure_tts_ambe(self._config, item, self._audio_path)
+                self._tts_conversion_done(ambe_path, tts_idx, _file, _tg, _lang, mode, label)
             except Exception as e:
-                self._tts_conversion_error(e, tts_num, label)
+                self._tts_conversion_error(e, tts_idx, label)
 
     def _tts_conversion_done(
-        self, ambe_path: str | None, tts_num: int, _file: str, _tg: int, _lang: str, mode: str, label: str, _retry: int = 0
+        self, ambe_path: str | None, tts_idx: int, _file: str, _tg: int, _lang: str, mode: str, label: str, _retry: int = 0
     ) -> None:
-        """After TTS conversion: broadcast like scheduled_announcement (legacy _ttsConversionDone)."""
+        """After TTS conversion: broadcast like scheduled_announcement."""
         if not ambe_path:
-            self._tts_running[tts_num] = False
+            self._tts_running[tts_idx] = False
             logger.warning("(%s) No AMBE file available for TTS announcement %s", label, _file)
             return
         if self._broadcast_active and _retry < 60:
             if _retry == 0:
-                logger.debug('(%s) Broadcast queue busy, deferring TTS packet prep', 'TTS-{}'.format(tts_num))
+                logger.debug("(%s) Broadcast queue busy, deferring TTS packet prep", label)
             if self._call_later:
-                self._call_later(3.0 + tts_num * 0.5, self._tts_conversion_done, ambe_path, tts_num, _file, _tg, _lang, mode, label, _retry + 1)
+                self._call_later(3.0 + tts_idx * 0.5, self._tts_conversion_done, ambe_path, tts_idx, _file, _tg, _lang, mode, label, _retry + 1)
             return
         logger.info("(%s) Playing TTS file: %s to TG %s (both TS, mode: %s, lang: %s)", label, _file, _tg, mode, _lang)
         _dst_id = bytes_3(_tg)
@@ -365,12 +371,12 @@ class VoiceUseCases:
         _say = self.read_single_file(self._audio_path, _lang, _file_base)
         if not _say:
             logger.warning("(%s) Cannot read AMBE file: %s", label, ambe_path)
-            self._tts_running[tts_num] = False
+            self._tts_running[tts_idx] = False
             return
         tg_str = str(_tg)
         targets = self._build_announcement_targets(_tg, tg_str, label)
         if not targets:
-            self._tts_running[tts_num] = False
+            self._tts_running[tts_idx] = False
             logger.info("(%s) No systems with active bridge for TG %s to send to", label, _tg)
             return
         _say_list = [_say]
@@ -379,10 +385,10 @@ class VoiceUseCases:
             2: list(self.pkt_gen(_source_id, _dst_id, server_id, 1, _say_list)),
         }
         logger.info("(%s) Broadcasting %s packets to %s targets", label, len(pkts_by_ts[1]), len(targets))
-        self._enqueue_broadcast('tts', targets, pkts_by_ts, _source_id, _dst_id, _tg, tts_num, label)
+        self._enqueue_broadcast('tts', targets, pkts_by_ts, _source_id, _dst_id, _tg, tts_idx, label)
 
-    def _tts_conversion_error(self, failure: Any, tts_num: int, label: str) -> None:
-        self._tts_running[tts_num] = False
+    def _tts_conversion_error(self, failure: Any, tts_idx: int, label: str) -> None:
+        self._tts_running[tts_idx] = False
         try:
             msg = failure.getErrorMessage()
         except Exception:
@@ -397,11 +403,11 @@ class VoiceUseCases:
         source_id: bytes,
         dst_id: bytes,
         tg: int,
-        tts_num: int,
+        tts_idx: int,
         label: str,
         next_time: float | None = None,
     ) -> None:
-        """Same as _announcement_send_broadcast but clears _tts_running (legacy _ttsSendBroadcast)."""
+        """Same as _announcement_send_broadcast but clears _tts_running."""
         total = len(pkts_by_ts.get(1, []))
         if pkt_idx >= total:
             for t in targets:
@@ -413,7 +419,7 @@ class VoiceUseCases:
                                 del obj.STATUS[sid]
                 except Exception:
                     pass
-            self._tts_running[tts_num] = False
+            self._tts_running[tts_idx] = False
             logger.info("(%s) Broadcast complete: %s packets sent to %s targets", label, total, len(targets))
             self._broadcast_finished()
             return
@@ -456,7 +462,7 @@ class VoiceUseCases:
                 source_id,
                 dst_id,
                 tg,
-                tts_num,
+                tts_idx,
                 label,
                 next_time,
             )
@@ -554,7 +560,7 @@ class VoiceUseCases:
         logger.debug("(%s) disconnected voice thread end", system)
 
     def check_voice_config_reload(self, config_file_path: str | None = None) -> None:
-        """Check main config file mtime and reload if changed (15s loop). Start/stop announcement LoopingCalls."""
+        """Check adn-voice.yaml mtime and reload if changed (15s loop). Start/stop announcement LoopingCalls."""
         if config_file_path and os.path.isfile(config_file_path):
             try:
                 mtime = os.path.getmtime(config_file_path)
@@ -567,47 +573,69 @@ class VoiceUseCases:
         g = self._config.get("VOICE", {})
         if not self._start_looping_call:
             return
-        for ann_num in range(1, 5):
-            prefix = "ANNOUNCEMENT" if ann_num == 1 else "ANNOUNCEMENT{}".format(ann_num)
-            label = "ANNOUNCEMENT" if ann_num == 1 else "ANNOUNCEMENT-{}".format(ann_num)
-            enabled = g.get("{}_ENABLED".format(prefix), False)
-            if ann_num in self._ann_tasks:
+        announcements = g.get("ANNOUNCEMENTS") or []
+        if not isinstance(announcements, list):
+            announcements = []
+        for ann_idx in list(self._ann_tasks.keys()):
+            if ann_idx >= len(announcements) or not (isinstance(announcements[ann_idx], dict) and announcements[ann_idx].get("ENABLED")):
                 try:
-                    if getattr(self._ann_tasks[ann_num], "running", False):
-                        self._ann_tasks[ann_num].stop()
+                    if getattr(self._ann_tasks[ann_idx], "running", False):
+                        self._ann_tasks[ann_idx].stop()
                 except Exception:
                     pass
-                del self._ann_tasks[ann_num]
-                logger.info("(VOICE-RELOAD) %s stopped", label)
-            if enabled:
-                mode = g.get("{}_MODE".format(prefix), "interval")
-                interval = 30.0 if mode == "hourly" else float(g.get("{}_INTERVAL".format(prefix), 60))
-                lc = self._start_looping_call(lambda an=ann_num: self.scheduled_announcement(an), interval, False)
-                self._ann_tasks[ann_num] = lc
-                logger.info(
-                    "(VOICE-RELOAD) %s enabled - mode: %s, file: %s, TG: %s",
-                    label, mode, g.get("{}_FILE".format(prefix)), g.get("{}_TG".format(prefix)),
-                )
-        for tts_num in range(1, 5):
-            prefix = "TTS_ANNOUNCEMENT{}".format(tts_num)
-            label = "TTS-{}".format(tts_num)
-            enabled = g.get("{}_ENABLED".format(prefix), False)
-            if tts_num in self._tts_tasks:
+                del self._ann_tasks[ann_idx]
+                logger.info("(VOICE-RELOAD) ANNOUNCEMENT-%s stopped", ann_idx + 1)
+        for ann_idx, item in enumerate(announcements):
+            if not isinstance(item, dict) or not item.get("ENABLED"):
+                continue
+            label = "ANNOUNCEMENT-{}".format(ann_idx + 1)
+            if ann_idx in self._ann_tasks:
                 try:
-                    if getattr(self._tts_tasks[tts_num], "running", False):
-                        self._tts_tasks[tts_num].stop()
+                    if getattr(self._ann_tasks[ann_idx], "running", False):
+                        self._ann_tasks[ann_idx].stop()
                 except Exception:
                     pass
-                del self._tts_tasks[tts_num]
+                del self._ann_tasks[ann_idx]
                 logger.info("(VOICE-RELOAD) %s stopped", label)
-            if enabled:
-                mode = g.get("{}_MODE".format(prefix), "interval")
-                interval = 30.0 if mode == "hourly" else float(g.get("{}_INTERVAL".format(prefix), 60))
-                lc = self._start_looping_call(lambda tn=tts_num: self.scheduled_tts_announcement(tn), interval, False)
-                self._tts_tasks[tts_num] = lc
-                logger.info(
-                    "(VOICE-RELOAD) %s enabled - mode: %s, file: %s, TG: %s",
-                    label, mode, g.get("{}_FILE".format(prefix)), g.get("{}_TG".format(prefix)),
-                )
+            mode = item.get("MODE", "interval")
+            interval = 30.0 if mode == "hourly" else float(item.get("INTERVAL", 60))
+            lc = self._start_looping_call(lambda ai=ann_idx: self.scheduled_announcement(ai), interval, False)
+            self._ann_tasks[ann_idx] = lc
+            logger.info(
+                "(VOICE-RELOAD) %s enabled - mode: %s, file: %s, TG: %s",
+                label, mode, item.get("FILE"), item.get("TG"),
+            )
+        tts_list = g.get("TTS_ANNOUNCEMENTS") or []
+        if not isinstance(tts_list, list):
+            tts_list = []
+        for tts_idx in list(self._tts_tasks.keys()):
+            if tts_idx >= len(tts_list) or not (isinstance(tts_list[tts_idx], dict) and tts_list[tts_idx].get("ENABLED")):
+                try:
+                    if getattr(self._tts_tasks[tts_idx], "running", False):
+                        self._tts_tasks[tts_idx].stop()
+                except Exception:
+                    pass
+                del self._tts_tasks[tts_idx]
+                logger.info("(VOICE-RELOAD) TTS-%s stopped", tts_idx + 1)
+        for tts_idx, item in enumerate(tts_list):
+            if not isinstance(item, dict) or not item.get("ENABLED"):
+                continue
+            label = "TTS-{}".format(tts_idx + 1)
+            if tts_idx in self._tts_tasks:
+                try:
+                    if getattr(self._tts_tasks[tts_idx], "running", False):
+                        self._tts_tasks[tts_idx].stop()
+                except Exception:
+                    pass
+                del self._tts_tasks[tts_idx]
+                logger.info("(VOICE-RELOAD) %s stopped", label)
+            mode = item.get("MODE", "interval")
+            interval = 30.0 if mode == "hourly" else float(item.get("INTERVAL", 60))
+            lc = self._start_looping_call(lambda ti=tts_idx: self.scheduled_tts_announcement(ti), interval, False)
+            self._tts_tasks[tts_idx] = lc
+            logger.info(
+                "(VOICE-RELOAD) %s enabled - mode: %s, file: %s, TG: %s",
+                label, mode, item.get("FILE"), item.get("TG"),
+            )
         if config_file_path and self._config_file_mtime:
             logger.info("(VOICE-RELOAD) config reload completed")

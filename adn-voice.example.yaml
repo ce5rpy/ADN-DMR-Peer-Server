@@ -1,0 +1,84 @@
+# ADN Voice configuration — hot-reloaded every 15 seconds
+# Copy to adn-voice.yaml and edit freely.
+#
+# If adn-voice.yaml does not exist, voice features are disabled (no error).
+# This file is re-checked every 15 s; changes take effect without restart.
+
+VOICE:
+  # Languages available for voice announcements (comma-separated, e.g. "es_ES,en_GB").
+  # Leave empty to disable voice features.
+  ANNOUNCEMENT_LANGUAGES: ""
+
+  # Base path for AMBE audio files (relative to project root).
+  AUDIO_PATH: Audio
+
+  # ---------------------------------------------------------------------------
+  # Scheduled AMBE announcements (array — add as many as needed)
+  # Pre-recorded .ambe files played on a talkgroup at intervals or hourly.
+  # FILE: filename without .ambe, looked up in Audio/<LANGUAGE>/ondemand/
+  # MODE: "hourly" (once per hour) or "interval" (every INTERVAL seconds)
+  # ---------------------------------------------------------------------------
+  ANNOUNCEMENTS: []
+  # Example (all variables used):
+  # ANNOUNCEMENTS:
+  #   - ENABLED: false
+  #     FILE: announcement
+  #     TG: 2
+  #     MODE: hourly
+  #     INTERVAL: 3600
+  #     LANGUAGE: en_GB
+  #   - ENABLED: false
+  #     FILE: announcement2
+  #     TG: 2
+  #     MODE: interval
+  #     INTERVAL: 1800
+  #     LANGUAGE: en_GB
+
+  # ---------------------------------------------------------------------------
+  # Recording
+  # Records voice traffic on a TG/TS and saves as .ambe in Audio/<LANGUAGE>/ondemand/
+  # Enable on the fly, record, then disable to prevent overwriting.
+  # Max duration: ~2 min 45 s.
+  # ---------------------------------------------------------------------------
+  RECORDING_ENABLED: false
+  RECORDING_TG: 2
+  RECORDING_TIMESLOT: 2
+  RECORDING_FILE: recording
+  RECORDING_LANGUAGE: en_GB
+
+  # ---------------------------------------------------------------------------
+  # TTS (Text-to-Speech) — array
+  # Converts .txt files to AMBE via: gTTS -> ffmpeg -> vocoder/AMBEServer
+  # FILE: filename without .txt, looked up in Audio/<LANGUAGE>/ondemand/
+  # ---------------------------------------------------------------------------
+
+  # External vocoder command ({wav} and {ambe} are replaced at runtime).
+  # Example: /usr/local/bin/md380-vocoder -e {wav} {ambe}
+  TTS_VOCODER_CMD: ""
+
+  # AMBEServer (DV3000 remote via UDP) — alternative to local vocoder.
+  # See https://github.com/marrold/AMBEServer
+  TTS_AMBESERVER_HOST: ""
+  TTS_AMBESERVER_PORT: 2460
+
+  # Volume in dB before AMBE encoding (-3 = slightly quieter).
+  TTS_VOLUME: -3
+  # Speech rate: 1.0 = normal, 1.2 = ~20% faster (recommended for some languages).
+  TTS_SPEED: 1.0
+
+  TTS_ANNOUNCEMENTS: []
+
+  # Example:
+  # TTS_ANNOUNCEMENTS:
+  #   - ENABLED: false
+  #     FILE: text1
+  #     TG: 2
+  #     MODE: hourly
+  #     INTERVAL: 3600
+  #     LANGUAGE: en_GB
+  #   - ENABLED: false
+  #     FILE: text2
+  #     TG: 2
+  #     MODE: interval
+  #     INTERVAL: 3600
+  #     LANGUAGE: en_GB
