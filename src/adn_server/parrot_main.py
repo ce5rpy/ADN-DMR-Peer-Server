@@ -1,7 +1,25 @@
 # ADN DMR Peer Server - parrot (playback) entrypoint
-# Copyright (C) 2016-2019 Cortney T. Buffington, N0MJS & Mike Zingman, N4IRR
 # Copyright (C) 2026  Rodrigo Pérez, CE5RPY <ce5rpy@qmd.cl>
-# Derived from playback.py. GPLv3.
+#
+# Derived from ADN DMR Server / FreeDMR  / HBlink. Original license:
+###############################################################################
+# Copyright (C) 2020 Simon Adlem, G7RZU <g7rzu@gb7fr.org.uk>
+# Copyright (C) 2016-2019 Cortney T. Buffington, N0MJS <n0mjs@me.com>
+#
+#   This program is free software; you can redistribute it and/or modify
+#   it under the terms of the GNU General Public License as published by
+#   the Free Software Foundation; either version 3 of the License, or
+#   (at your option) any later version.
+#
+#   This program is distributed in the hope that it will be useful,
+#   but WITHOUT ANY WARRANTY; without even the implied warranty of
+#   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+#   GNU General Public License for more details.
+#
+#   You should have received a copy of the GNU General Public License
+#   along with this program; if not, write to the Free Software Foundation,
+#   Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301  USA
+###############################################################################
 
 """
 ADN DMR Parrot (playback) entrypoint.
@@ -66,7 +84,8 @@ def main() -> None:
     logger.info("\n\nCopyright (c) 2026 Rodrigo Pérez, CE5RPY ce5rpy@qmd.cl")
     logger.info("\n\nCopyright (c) 2026 Joaquin Madrid Belando, EA5GVK ea5gvk@gmail.com")
     logger.info("\nCopyright (c) 2024-2026 Esteban Mackay, HP3ICC setcom40@gmail.com")
-    logger.info("\nCopyright (c) 2020-2023 Simon G7RZU simon@gb7fr.org.uk")
+    logger.info("\nCopyright (c) 2020-2023 Simon Adlem, G7RZU g7rzu@gb7fr.org.uk")
+    logger.info("\nCopyright (c) 2016-2019 Cortney T. Buffington, N0MJS n0mjs@me.com")
     logger.info("\nCopyright (c) 2013, 2014, 2015, 2016, 2018, 2019\n\tThe Regents of the K0USY Group. All rights reserved.")
     logger.debug("\n\n(GLOBAL) Logging system started, anything from here on gets logged")
 

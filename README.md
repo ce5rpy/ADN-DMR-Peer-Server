@@ -4,7 +4,7 @@ Clean Architecture rewrite of the ADN DMR conference bridge. Same behaviour as t
 
 ## License
 
-GPL v3. Derived from ADN DMR Server / HBlink.
+GPL v3. Derived from FreeDMR / HBlink.
 
 ## Requirements
 
