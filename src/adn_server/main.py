@@ -75,7 +75,13 @@ class ReportSenderAdapter(ReportSender):
 
 
 def _make_echo_bridges(config: dict) -> dict:
-    """Initial BRIDGES for ECHO peer (legacy make_bridges 9990 + MASTER expansion)."""
+    """Initial BRIDGES for ECHO system (legacy make_bridges 9990 + MASTER expansion).
+
+    Works regardless of whether ECHO is PEER or MASTER:
+    - ECHO entry is always ACTIVE with TO_TYPE NONE (the parrot endpoint).
+    - Every other MASTER gets ACTIVE False / TO_TYPE ON so in-band signalling
+      activates them on first voice terminator (legacy behavior).
+    """
     now = time.time()
     timeout_sec = 2 * 60
     tgid_b = bytes_3(9990)
@@ -97,15 +103,13 @@ def _make_echo_bridges(config: dict) -> dict:
     }
     systems_cfg = config.get("SYSTEMS", {})
     for _system, sys_cfg in systems_cfg.items():
+        if _system == "ECHO":
+            continue
         if sys_cfg.get("MODE") != "MASTER":
             continue
         _tmout = float(sys_cfg.get("DEFAULT_UA_TIMER", 10))
-        ts1 = any(e["SYSTEM"] == _system and e["TS"] == 1 for e in bridges["9990"])
-        ts2 = any(e["SYSTEM"] == _system and e["TS"] == 2 for e in bridges["9990"])
-        if not ts1:
-            bridges["9990"].append({"SYSTEM": _system, "TS": 1, "TGID": tgid_b, "ACTIVE": False, "TIMEOUT": _tmout * 60, "TO_TYPE": "ON", "OFF": [], "ON": [tgid_b], "RESET": [], "TIMER": now})
-        if not ts2:
-            bridges["9990"].append({"SYSTEM": _system, "TS": 2, "TGID": tgid_b, "ACTIVE": False, "TIMEOUT": _tmout * 60, "TO_TYPE": "ON", "OFF": [], "ON": [tgid_b], "RESET": [], "TIMER": now})
+        bridges["9990"].append({"SYSTEM": _system, "TS": 1, "TGID": tgid_b, "ACTIVE": False, "TIMEOUT": _tmout * 60, "TO_TYPE": "ON", "OFF": [], "ON": [tgid_b], "RESET": [], "TIMER": now})
+        bridges["9990"].append({"SYSTEM": _system, "TS": 2, "TGID": tgid_b, "ACTIVE": False, "TIMEOUT": _tmout * 60, "TO_TYPE": "ON", "OFF": [], "ON": [tgid_b], "RESET": [], "TIMER": now})
     return bridges
 
 
@@ -168,7 +172,7 @@ def main() -> None:
     # BRIDGES
     bridge_router = InMemoryBridgeRouter()
     systems_cfg = config.get("SYSTEMS", {})
-    if "ECHO" in systems_cfg and systems_cfg.get("ECHO", {}).get("MODE") == "PEER":
+    if "ECHO" in systems_cfg and systems_cfg["ECHO"].get("MODE") in ("PEER", "MASTER"):
         bridge_router.set_bridges(_make_echo_bridges(config))
     else:
         bridge_router.set_bridges({})

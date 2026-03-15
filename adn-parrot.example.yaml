@@ -1,20 +1,21 @@
 # ADN DMR Parrot (playback) - example configuration
 # Copy to adn-parrot.yaml and set real secrets there (never commit adn-parrot.yaml).
 #
-# The parrot runs a MASTER. The ECHO PEER (defined in adn-server.yaml) connects to it.
-# When a user transmits to the ECHO peer, the parrot records the audio and plays it back.
+# The parrot runs as a PEER that connects to the ECHO MASTER (defined in adn-server.yaml).
+# When a user transmits to TG 9990, the bridge forwards the call to ECHO, the parrot
+# records the audio and plays it back.
 
 GLOBAL:
   PATH: ./
   PING_TIME: 10
   MAX_MISSED: 3
   USE_ACL: true
-  REG_ACL: DENY:1
+  REG_ACL: PERMIT:ALL
   SUB_ACL: DENY:1
   TGID_TS1_ACL: PERMIT:ALL
   TGID_TS2_ACL: PERMIT:ALL
   ALLOW_NULL_PASSPHRASE: false
-  ANNOUNCEMENT_LANGUAGES: es_ES
+  ANNOUNCEMENT_LANGUAGES: en_GB
   SERVER_ID: 9990
   DATA_GATEWAY: false
   VALIDATE_SERVER_IDS: false
@@ -48,28 +49,35 @@ ALIASES:
 
 SYSTEMS:
   PARROT:
-    MODE: MASTER
+    MODE: PEER
     ENABLED: true
-    REPEAT: true
-    MAX_PEERS: 1
+    LOOSE: false
     EXPORT_AMBE: false
     IP: 127.0.0.1
-    PORT: 54915
-    PASSPHRASE: "<set-in-adn-parrot.yaml>"
+    PORT: 54915                    # parrot local port
+    MASTER_IP: 127.0.0.1
+    MASTER_PORT: 54917             # must match ECHO.PORT in adn-server.yaml
+    PASSPHRASE: "<set-in-adn-parrot.yaml>"   # must match ECHO.PASSPHRASE
+    CALLSIGN: ECHO
+    RADIO_ID: 9990
+    RX_FREQ: 000000000
+    TX_FREQ: 000000000
+    TX_POWER: 25
+    COLORCODE: 1
+    SLOTS: 2
+    LATITUDE: "00.0000"
+    LONGITUDE: "000.0000"
+    HEIGHT: 0
+    LOCATION: "9990 Parrot"
+    DESCRIPTION: ECHO
+    URL: adn.systems
+    SOFTWARE_ID: "20170620"
+    PACKAGE_ID: MMDVM_ADN-Systems
     GROUP_HANGTIME: 5
+    OPTIONS: "TS2=9990;"
     USE_ACL: true
-    REG_ACL: DENY:1
     SUB_ACL: DENY:1
-    TGID_TS1_ACL: PERMIT:ALL
-    TGID_TS2_ACL: PERMIT:ALL
-    DEFAULT_UA_TIMER: 10
-    SINGLE_MODE: true
-    VOICE_IDENT: false
-    TS1_STATIC: ""
-    TS2_STATIC: ""
-    DEFAULT_REFLECTOR: 0
-    GENERATOR: 1
-    ANNOUNCEMENT_LANGUAGE: es_ES
+    TGID_TS1_ACL: DENY:ALL
+    TGID_TS2_ACL: PERMIT:9990
+    ANNOUNCEMENT_LANGUAGE: en_GB
     ALLOW_UNREG_ID: true
-    PROXY_CONTROL: false
-    OVERRIDE_IDENT_TG: ""
