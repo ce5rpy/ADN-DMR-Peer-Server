@@ -10,10 +10,20 @@ GPL v3. Derived from FreeDMR / HBlink.
 
 - Python 3.10+
 - Dependencies: `pip install -r requirements.txt`
+- **ffmpeg** (system package) — required for voice/TTS. Install via your distro:
+  - Debian/Ubuntu: `apt install ffmpeg`
+  - openSUSE: `zypper install ffmpeg`
+  - Fedora/RHEL: `dnf install ffmpeg` or `yum install ffmpeg`
 
 ## Configuration
 
 Copy `adn-server.example.yaml` to `adn-server.yaml` and edit with your settings. Production config is not committed.
+
+### Voice configuration
+
+Voice features (announcements, TTS, recording) use a separate config file. Copy `adn-voice.example.yaml` to `adn-voice.yaml` and edit. If the file does not exist, voice features are disabled (no error). Changes are hot-reloaded every 15 seconds.
+
+TTS (Text-to-Speech) requires **ffmpeg** installed on the system (see Requirements above). The pipeline is: `.txt` → gTTS → `.mp3` → ffmpeg → `.wav` → vocoder → `.ambe`
 
 ## Run
 
