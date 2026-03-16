@@ -19,23 +19,21 @@ VOICE:
   # Pre-recorded .ambe files played on a talkgroup at intervals or hourly.
   # FILE: filename without .ambe, looked up in Audio/<LANGUAGE>/ondemand/
   # MODE: "hourly" (once per hour) or "interval" (every INTERVAL seconds)
-  # ENABLED: true to activate; false to keep configured but inactive
+  # ENABLED: true = plays; false = configured but inactive (edit to true when ready)
   # ---------------------------------------------------------------------------
-  ANNOUNCEMENTS: []
-  # Example (all variables used):
-  # ANNOUNCEMENTS:
-  #   - ENABLED: true
-  #     FILE: announcement
-  #     TG: 2
-  #     MODE: hourly
-  #     INTERVAL: 3600
-  #     LANGUAGE: en_GB
-  #   - ENABLED: true
-  #     FILE: announcement2
-  #     TG: 2
-  #     MODE: interval
-  #     INTERVAL: 60
-  #     LANGUAGE: es_ES
+  ANNOUNCEMENTS:
+    - ENABLED: true
+      FILE: announcement1
+      TG: 2
+      MODE: interval
+      INTERVAL: 60
+      LANGUAGE: es_ES
+    - ENABLED: false
+      FILE: announcement2
+      TG: 2
+      MODE: hourly
+      INTERVAL: 3600
+      LANGUAGE: es_ES
 
   # ---------------------------------------------------------------------------
   # Recording
@@ -70,19 +68,16 @@ VOICE:
   # Speech rate: 1.0 = normal, 1.2 = ~20% faster (recommended for some languages).
   TTS_SPEED: 1.0
 
-  TTS_ANNOUNCEMENTS: []
-
-  # Example:
-  # TTS_ANNOUNCEMENTS:
-  #   - ENABLED: true
-  #     FILE: text1
-  #     TG: 2
-  #     MODE: hourly
-  #     INTERVAL: 3600
-  #     LANGUAGE: en_GB
-  #   - ENABLED: true
-  #     FILE: text2
-  #     TG: 2
-  #     MODE: interval
-  #     INTERVAL: 60
-  #     LANGUAGE: es_ES
+  TTS_ANNOUNCEMENTS:
+    - ENABLED: true
+      FILE: texto1
+      TG: 2
+      MODE: interval
+      INTERVAL: 60
+      LANGUAGE: es_ES
+    - ENABLED: false
+      FILE: texto2
+      TG: 2
+      MODE: hourly
+      INTERVAL: 3600
+      LANGUAGE: es_ES
