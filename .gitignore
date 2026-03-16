@@ -34,8 +34,6 @@ json/*
 !json/.gitkeep
 docs/*
 !docs/PARROT.md
-Audio/*
-!Audio/.gitkeep
 
 # -----------------------------------------------------------------------------
 # Python
