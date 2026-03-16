@@ -66,6 +66,13 @@ class IdentUseCases:
         protocols = self._get_protocols()
         ann_lang = (self._config.get("VOICE", {}).get("ANNOUNCEMENT_LANGUAGES") or "").strip()
         if not ann_lang:
+            # Fallback: derive from MASTER systems with VOICE_IDENT (each has ANNOUNCEMENT_LANGUAGE)
+            langs = set()
+            for sys_cfg in systems_cfg.values():
+                if sys_cfg.get("MODE") == "MASTER" and sys_cfg.get("VOICE_IDENT"):
+                    langs.add(sys_cfg.get("ANNOUNCEMENT_LANGUAGE", "en_GB"))
+            ann_lang = ",".join(sorted(langs)) if langs else ""
+        if not ann_lang:
             return
         words_by_lang = self._voice.get_ambe_words(ann_lang, self._audio_path)
         if not words_by_lang:

@@ -234,10 +234,12 @@ def main() -> None:
 
     recording_handler = RecordingHandler(config, project_root)
 
-    # Voice: AMBE words + pkt_gen (legacy readAMBE + mk_voice). Use Default when languages + audio path set.
+    # Voice: AMBE words + pkt_gen (legacy readAMBE + mk_voice). Use Default when Audio dir exists.
+    # ANNOUNCEMENT_LANGUAGES is only for voice ident; announcements/TTS use per-item LANGUAGE.
     audio_path = os.path.join(project_root, config.get("VOICE", {}).get("AUDIO_PATH", "Audio"))
-    ann_lang = (config.get("VOICE", {}).get("ANNOUNCEMENT_LANGUAGES") or "").strip()
-    if ann_lang and os.path.isdir(audio_path):
+    if config.get("VOICE") and not os.path.isdir(audio_path):
+        os.makedirs(audio_path, exist_ok=True)
+    if os.path.isdir(audio_path):
         voice_provider = DefaultVoiceProvider()
     else:
         voice_provider = StubVoiceProvider()

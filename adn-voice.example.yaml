@@ -3,10 +3,12 @@
 #
 # If adn-voice.yaml does not exist, voice features are disabled (no error).
 # This file is re-checked every 15 s; changes take effect without restart.
+#
+# Each announcement/TTS has its own LANGUAGE. ENABLED: true activates that item.
 
 VOICE:
-  # Languages available for voice announcements (comma-separated, e.g. "es_ES,en_GB").
-  # Leave empty to disable voice features.
+  # Optional: languages for voice ident (MASTER systems with VOICE_IDENT).
+  # If empty, ident uses per-system ANNOUNCEMENT_LANGUAGE. Not needed for announcements/TTS.
   ANNOUNCEMENT_LANGUAGES: ""
 
   # Base path for AMBE audio files (relative to project root).
@@ -17,22 +19,23 @@ VOICE:
   # Pre-recorded .ambe files played on a talkgroup at intervals or hourly.
   # FILE: filename without .ambe, looked up in Audio/<LANGUAGE>/ondemand/
   # MODE: "hourly" (once per hour) or "interval" (every INTERVAL seconds)
+  # ENABLED: true to activate; false to keep configured but inactive
   # ---------------------------------------------------------------------------
   ANNOUNCEMENTS: []
   # Example (all variables used):
   # ANNOUNCEMENTS:
-  #   - ENABLED: false
+  #   - ENABLED: true
   #     FILE: announcement
   #     TG: 2
   #     MODE: hourly
   #     INTERVAL: 3600
   #     LANGUAGE: en_GB
-  #   - ENABLED: false
+  #   - ENABLED: true
   #     FILE: announcement2
   #     TG: 2
   #     MODE: interval
-  #     INTERVAL: 1800
-  #     LANGUAGE: en_GB
+  #     INTERVAL: 60
+  #     LANGUAGE: es_ES
 
   # ---------------------------------------------------------------------------
   # Recording
@@ -50,6 +53,7 @@ VOICE:
   # TTS (Text-to-Speech) — array
   # Converts .txt files to AMBE via: gTTS -> ffmpeg -> vocoder/AMBEServer
   # FILE: filename without .txt, looked up in Audio/<LANGUAGE>/ondemand/
+  # ENABLED: true to activate; requires TTS_VOCODER_CMD or TTS_AMBESERVER_HOST
   # ---------------------------------------------------------------------------
 
   # External vocoder command ({wav} and {ambe} are replaced at runtime).
@@ -70,15 +74,15 @@ VOICE:
 
   # Example:
   # TTS_ANNOUNCEMENTS:
-  #   - ENABLED: false
+  #   - ENABLED: true
   #     FILE: text1
   #     TG: 2
   #     MODE: hourly
   #     INTERVAL: 3600
   #     LANGUAGE: en_GB
-  #   - ENABLED: false
+  #   - ENABLED: true
   #     FILE: text2
   #     TG: 2
   #     MODE: interval
-  #     INTERVAL: 3600
-  #     LANGUAGE: en_GB
+  #     INTERVAL: 60
+  #     LANGUAGE: es_ES

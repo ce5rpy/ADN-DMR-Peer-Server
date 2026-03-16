@@ -23,7 +23,9 @@ Copy `adn-server.example.yaml` to `adn-server.yaml` and edit with your settings.
 
 Voice features (announcements, TTS, recording) use a separate config file. Copy `adn-voice.example.yaml` to `adn-voice.yaml` and edit. If the file does not exist, voice features are disabled (no error). Changes are hot-reloaded every 15 seconds.
 
-TTS (Text-to-Speech) requires **ffmpeg** installed on the system (see Requirements above). The pipeline is: `.txt` → gTTS → `.mp3` → ffmpeg → `.wav` → vocoder → `.ambe`
+- **Each item** (ANNOUNCEMENTS, TTS_ANNOUNCEMENTS) has its own `LANGUAGE` and `ENABLED: true` to activate.
+- **ANNOUNCEMENT_LANGUAGES** is optional (for voice ident only); announcements/TTS work without it.
+- **TTS** requires ffmpeg + vocoder (TTS_VOCODER_CMD or TTS_AMBESERVER_HOST). Pipeline: `.txt` → gTTS → `.mp3` → ffmpeg → `.wav` → vocoder → `.ambe`
 
 ## Run
 

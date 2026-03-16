@@ -534,12 +534,9 @@ class VoiceUseCases:
         protocol = self._get_protocols().get(system)
         if not protocol or not getattr(protocol, "STATUS", None):
             return
-        ann_lang = (self._config.get("VOICE", {}).get("ANNOUNCEMENT_LANGUAGES") or "").strip()
-        if not ann_lang:
-            return
-        words_by_lang = self.get_ambe_words(ann_lang, self._audio_path)
         sys_cfg = self._config.get("SYSTEMS", {}).get(system, {})
         _lang = sys_cfg.get("ANNOUNCEMENT_LANGUAGE", "en_GB")
+        words_by_lang = self.get_ambe_words(_lang, self._audio_path)
         if _lang not in words_by_lang:
             return
         words = words_by_lang[_lang]
