@@ -713,6 +713,43 @@ class BridgeUseCases:
             new_ts2 = str(_options.get("TS2_STATIC") or "").strip()
             if re.search(r"[^\d,]", new_ts1) or re.search(r"[^\d,]", new_ts2):
                 return
+            # Legacy: reset TGs that were removed (bridge_master.py 1736-1767)
+            old_ts1 = str(sys_cfg.get("TS1_STATIC") or "").strip()
+            old_ts2 = str(sys_cfg.get("TS2_STATIC") or "").strip()
+            new_ts1_set: set[int] = set()
+            new_ts2_set: set[int] = set()
+            for x in new_ts1.split(","):
+                if x.strip():
+                    try:
+                        new_ts1_set.add(int(x))
+                    except ValueError:
+                        pass
+            for x in new_ts2.split(","):
+                if x.strip():
+                    try:
+                        t = int(x)
+                        if t != 0 and t < 16777215:
+                            new_ts2_set.add(t)
+                    except ValueError:
+                        pass
+            for tg_s in old_ts1.split(","):
+                if not tg_s.strip():
+                    continue
+                try:
+                    tg = int(tg_s)
+                    if tg not in new_ts1_set:
+                        self.reset_static_tg(tg, 1, _tmout, system_name)
+                except ValueError:
+                    pass
+            for tg_s in old_ts2.split(","):
+                if not tg_s.strip():
+                    continue
+                try:
+                    tg = int(tg_s)
+                    if tg not in new_ts2_set and tg != 0 and tg < 16777215:
+                        self.reset_static_tg(tg, 2, _tmout, system_name)
+                except ValueError:
+                    pass
             for tg_s in new_ts1.split(","):
                 if not tg_s.strip():
                     continue
