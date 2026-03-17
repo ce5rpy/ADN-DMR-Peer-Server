@@ -7,8 +7,9 @@
 # Each announcement/TTS has its own LANGUAGE. ENABLED: true activates that item.
 
 VOICE:
-  # Optional: languages for voice ident (MASTER systems with VOICE_IDENT).
-  # If empty, ident uses per-system ANNOUNCEMENT_LANGUAGE. Not needed for announcements/TTS.
+  # Voice ident only (MASTER systems with VOICE_IDENT in adn-server.yaml).
+  # Leave empty: ident auto-detects from systems. Or set "es_ES,en_GB" to preload.
+  # NOT used by ANNOUNCEMENTS or TTS — those use each item's LANGUAGE.
   ANNOUNCEMENT_LANGUAGES: ""
 
   # Base path for AMBE audio files (relative to project root).
@@ -49,16 +50,20 @@ VOICE:
 
   # ---------------------------------------------------------------------------
   # TTS (Text-to-Speech) — array
-  # Converts .txt files to AMBE via: gTTS -> ffmpeg -> vocoder/AMBEServer
+  # Pipeline: .txt -> gTTS -> .mp3 -> ffmpeg -> .wav -> vocoder/AMBEServer -> .ambe
   # FILE: filename without .txt, looked up in Audio/<LANGUAGE>/ondemand/
+  # First time: create Audio/<LANG>/ondemand/<FILE>.txt with the text to speak.
+  # The system encodes it to .ambe (via AMBEServer or vocoder) and plays it.
+  # Later: if .ambe exists and is newer than .txt, uses cached .ambe directly.
   # ENABLED: true to activate; requires TTS_VOCODER_CMD or TTS_AMBESERVER_HOST
+  # See docs/TTS_SETUP.md for full setup and troubleshooting.
   # ---------------------------------------------------------------------------
 
   # External vocoder command ({wav} and {ambe} are replaced at runtime).
   # Example: /usr/local/bin/md380-vocoder -e {wav} {ambe}
   TTS_VOCODER_CMD: ""
 
-  # AMBEServer (DV3000 remote via UDP) — alternative to local vocoder.
+  # AMBEServer (physical DV3000 via UDP) — host where AMBEServer runs.
   # See https://github.com/marrold/AMBEServer
   TTS_AMBESERVER_HOST: ""
   TTS_AMBESERVER_PORT: 2460

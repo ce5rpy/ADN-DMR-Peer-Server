@@ -25,7 +25,7 @@ Voice features (announcements, TTS, recording) use a separate config file. Copy 
 
 - **Each item** (ANNOUNCEMENTS, TTS_ANNOUNCEMENTS) has its own `LANGUAGE` and `ENABLED: true` to activate.
 - **ANNOUNCEMENT_LANGUAGES** is optional (for voice ident only); announcements/TTS work without it.
-- **TTS** requires ffmpeg + vocoder (TTS_VOCODER_CMD or TTS_AMBESERVER_HOST). Pipeline: `.txt` → gTTS → `.mp3` → ffmpeg → `.wav` → vocoder → `.ambe`
+- **TTS** requires ffmpeg + vocoder (TTS_VOCODER_CMD or TTS_AMBESERVER_HOST). Pipeline: `.txt` → gTTS → `.mp3` → ffmpeg → `.wav` → vocoder → `.ambe`. First time: create `Audio/<LANG>/ondemand/<FILE>.txt` with the text. See [docs/TTS_SETUP.md](docs/TTS_SETUP.md).
 
 ## Run
 
