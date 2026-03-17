@@ -106,7 +106,6 @@ class YamlConfigLoader:
             "REPORTS": data.get("REPORTS", {}),
             "LOGGER": data.get("LOGGER", {}),
             "ALIASES": data.get("ALIASES", {}),
-            "ALLSTAR": data.get("ALLSTAR", {}),
             "SYSTEMS": data.get("SYSTEMS", {}),
         }
         # Ensure REPORT_CLIENTS is list

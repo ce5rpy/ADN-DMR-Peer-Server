@@ -2,7 +2,6 @@
 # Copy to adn-server.yaml and set real secrets there (never commit adn-server.yaml).
 
 GLOBAL:
-  PATH: ./
   PING_TIME: 10
   MAX_MISSED: 3
   USE_ACL: true
@@ -11,10 +10,7 @@ GLOBAL:
   TGID_TS1_ACL: PERMIT:ALL
   TGID_TS2_ACL: PERMIT:ALL
   GEN_STAT_BRIDGES: true
-  ALLOW_NULL_PASSPHRASE: true
-  ANNOUNCEMENT_LANGUAGES: ""
   SERVER_ID: 73010
-  DATA_GATEWAY: false
   VALIDATE_SERVER_IDS: true
   URL_SECURITY: "<set-in-adn-server.yaml>"
   PORT_SECURITY: "<set-in-adn-server.yaml>"
@@ -51,14 +47,6 @@ ALIASES:
   CHECKSUM_URL: https://adn.systems/files/file_checksums.json
   CHECKSUM_FILE: file_checksums.json
   KEYS_FILE: keys.json
-
-ALLSTAR:
-  ENABLED: false
-  USER: llcgi
-  PASS: "<set-in-adn-server.yaml>"
-  SERVER: my.asl.server
-  PORT: 5038
-  NODE: "0000"
 
 # Systems: MASTER, PEER, OPENBRIDGE. Names match legacy [SYSTEM], [D-APRS], [ECHO], [OBP-*].
 SYSTEMS:
@@ -157,4 +145,4 @@ SYSTEMS:
     TGID_ACL: DENY:0-82,92-199,800-899,9990-9999,730999
     RELAX_CHECKS: true
     ENHANCED_OBP: true
-    PROTO_VER: 2
+    PROTO_VER: 5
