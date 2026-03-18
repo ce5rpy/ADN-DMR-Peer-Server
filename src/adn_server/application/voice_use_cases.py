@@ -282,7 +282,7 @@ class VoiceUseCases:
             if self._call_later:
                 self._call_later(3.0 + ann_idx * 0.5, self.scheduled_announcement, ann_idx, _retry + 1)
             return
-        _file = (item.get("FILE") or "").strip()
+        _file = str(item.get("FILE") or "").strip()
         _tg = int(item.get("TG", 0))
         _lang = item.get("LANGUAGE", "en_GB")
         if not _file or not _tg:
@@ -351,7 +351,7 @@ class VoiceUseCases:
             if self._call_later:
                 self._call_later(3.0 + tts_idx * 0.5, self.scheduled_tts_announcement, tts_idx, _retry + 1)
             return
-        _file = (item.get("FILE") or "").strip()
+        _file = str(item.get("FILE") or "").strip()
         _tg = int(item.get("TG", 0))
         _lang = item.get("LANGUAGE", "en_GB")
         self._tts_running[tts_idx] = True

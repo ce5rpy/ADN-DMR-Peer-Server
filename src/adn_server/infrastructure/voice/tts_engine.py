@@ -312,7 +312,7 @@ def ensure_tts_ambe(config: dict[str, Any], item: dict[str, Any], audio_path: st
     """Ensure .ambe exists for TTS item; create from .txt if needed. Returns path or None."""
     if not item.get("ENABLED", False):
         return None
-    _file = (item.get("FILE") or "").strip()
+    _file = str(item.get("FILE") or "").strip()
     _lang = item.get("LANGUAGE", "en_GB")
     if not _file:
         return None
