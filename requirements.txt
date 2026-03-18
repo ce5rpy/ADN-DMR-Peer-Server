@@ -7,3 +7,5 @@ pyyaml>=6.0
 bitarray>=2.0.0
 cryptography>=41.0.0
 gTTS>=2.3.1
+# System dependencies (install via apt/dnf/apk, NOT pip):
+# ffmpeg - Required for TTS MP3 to WAV conversion (apt install ffmpeg)

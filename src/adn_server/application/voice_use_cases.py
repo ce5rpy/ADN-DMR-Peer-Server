@@ -33,7 +33,7 @@ from datetime import datetime
 from typing import Any, Callable
 
 from ..domain import bytes_3
-from ..infrastructure.hbp_constants import HBPF_SLT_VTERM
+from ..infrastructure.hbp_constants import HBPF_SLT_VHEAD, HBPF_SLT_VTERM
 from ..infrastructure.voice.tts_engine import ensure_tts_ambe as tts_ensure_tts_ambe
 from .ports import VoiceProvider
 
@@ -76,7 +76,7 @@ class VoiceUseCases:
         self._tts_last_hour: dict[int, int] = {}
         self._config_file_mtime: float = 0.0
         self._broadcast_queue: list[dict[str, Any]] = []
-        self._broadcast_active: bool = False
+        self._broadcast_active_tgs: set[str] = set()
 
     def get_ambe_words(self, languages: str, audio_path: str) -> dict[str, dict[str, Any]]:
         """Load AMBE words for given languages (legacy readAMBE.readfiles)."""
@@ -144,43 +144,83 @@ class VoiceUseCases:
                 return -1
         return 0
 
+    def _mark_slots_busy(self, targets: list[dict[str, Any]]) -> None:
+        """Mark target slots busy (TX_TYPE=VHEAD) to prevent TS conflict."""
+        for t in targets:
+            try:
+                slot = t.get("slot")
+                if slot is not None:
+                    slot["TX_TYPE"] = HBPF_SLT_VHEAD
+            except (KeyError, TypeError):
+                pass
+
+    def _mark_slots_free(self, targets: list[dict[str, Any]]) -> None:
+        """Mark target slots free (TX_TYPE=VTERM) when broadcast done."""
+        for t in targets:
+            try:
+                slot = t.get("slot")
+                if slot is not None:
+                    slot["TX_TYPE"] = HBPF_SLT_VTERM
+            except (KeyError, TypeError):
+                pass
+
     def _enqueue_broadcast(
         self, _type: str, targets: list[dict[str, Any]], pkts_by_ts: dict[int, list[bytes]],
         source_id: bytes, dst_id: bytes, tg: int, num: int, label: str,
     ) -> None:
-        self._broadcast_queue.append({
-            'type': _type, 'targets': targets, 'pkts_by_ts': pkts_by_ts,
-            'source_id': source_id, 'dst_id': dst_id, 'tg': tg, 'num': num, 'label': label,
-        })
-        _pos = len(self._broadcast_queue)
-        if self._broadcast_active:
-            logger.info('(%s) Enqueued broadcast (position %s in queue)', label, _pos)
+        _tg_key = str(tg)
+        if _tg_key in self._broadcast_active_tgs:
+            self._broadcast_queue.append({
+                'type': _type, 'targets': targets, 'pkts_by_ts': pkts_by_ts,
+                'source_id': source_id, 'dst_id': dst_id, 'tg': tg, 'num': num, 'label': label,
+            })
+            _pos = len(self._broadcast_queue)
+            logger.info('(%s) Enqueued broadcast for same TG %s (position %s in queue)', label, tg, _pos)
         else:
-            self._start_next_broadcast()
+            self._broadcast_active_tgs.add(_tg_key)
+            self._mark_slots_busy(targets)
+            logger.info('(%s) Starting broadcast immediately for TG %s (active TGs: %s)', label, tg, len(self._broadcast_active_tgs))
+            if self._call_later:
+                if _type == 'ann':
+                    self._call_later(0.5, self._announcement_send_broadcast, targets, pkts_by_ts, 0, source_id, dst_id, tg, num, label, None)
+                elif _type == 'tts':
+                    self._call_later(0.5, self._tts_send_broadcast, targets, pkts_by_ts, 0, source_id, dst_id, tg, num, label, None)
 
     def _start_next_broadcast(self) -> None:
         if not self._broadcast_queue:
-            self._broadcast_active = False
             return
-        self._broadcast_active = True
-        _item = self._broadcast_queue.pop(0)
-        _type = _item['type']
-        _label = _item['label']
-        logger.info('(%s) Starting broadcast from queue (%s remaining)', _label, len(self._broadcast_queue))
+        _next = None
+        for i, _item in enumerate(self._broadcast_queue):
+            _tg_key = str(_item['tg'])
+            if _tg_key not in self._broadcast_active_tgs:
+                _next = self._broadcast_queue.pop(i)
+                break
+        if not _next:
+            return
+        _type = _next['type']
+        _label = _next['label']
+        _tg_key = str(_next['tg'])
+        self._broadcast_active_tgs.add(_tg_key)
+        self._mark_slots_busy(_next['targets'])
+        logger.info('(%s) Starting broadcast from queue for TG %s (%s remaining, active TGs: %s)', _label, _next['tg'], len(self._broadcast_queue), len(self._broadcast_active_tgs))
         if self._call_later:
             if _type == 'ann':
-                self._call_later(0.5, self._announcement_send_broadcast, _item['targets'], _item['pkts_by_ts'], 0, _item['source_id'], _item['dst_id'], _item['tg'], _item['num'], _label, None)
+                self._call_later(0.5, self._announcement_send_broadcast, _next['targets'], _next['pkts_by_ts'], 0, _next['source_id'], _next['dst_id'], _next['tg'], _next['num'], _label, None)
             elif _type == 'tts':
-                self._call_later(0.5, self._tts_send_broadcast, _item['targets'], _item['pkts_by_ts'], 0, _item['source_id'], _item['dst_id'], _item['tg'], _item['num'], _label, None)
+                self._call_later(0.5, self._tts_send_broadcast, _next['targets'], _next['pkts_by_ts'], 0, _next['source_id'], _next['dst_id'], _next['tg'], _next['num'], _label, None)
 
-    def _broadcast_finished(self) -> None:
+    def _broadcast_finished(self, tg: int | None = None) -> None:
+        if tg is not None:
+            self._broadcast_active_tgs.discard(str(tg))
         if self._broadcast_queue:
-            logger.info('(QUEUE) Broadcast finished, next in %.1fs (%s queued)', _BROADCAST_GAP, len(self._broadcast_queue))
+            logger.info('(QUEUE) Broadcast finished for TG %s, checking queue (%s queued, active TGs: %s)', tg, len(self._broadcast_queue), len(self._broadcast_active_tgs))
             if self._call_later:
                 self._call_later(_BROADCAST_GAP, self._start_next_broadcast)
         else:
-            self._broadcast_active = False
-            logger.info('(QUEUE) Broadcast finished, queue empty')
+            if not self._broadcast_active_tgs:
+                logger.info('(QUEUE) All broadcasts finished, queue empty')
+            else:
+                logger.info('(QUEUE) Broadcast finished for TG %s, %s TGs still active', tg, len(self._broadcast_active_tgs))
 
     def _announcement_send_broadcast(
         self,
@@ -197,6 +237,7 @@ class VoiceUseCases:
         """Send one batch of packets; schedule next via call_later."""
         total = len(pkts_by_ts.get(1, []))
         if pkt_idx >= total:
+            self._mark_slots_free(targets)
             for t in targets:
                 try:
                     obj = t.get("sys_obj")
@@ -208,7 +249,7 @@ class VoiceUseCases:
                     pass
             self._announcement_running[ann_idx] = False
             logger.info("(%s) Broadcast complete: %s packets sent to %s targets", label, total, len(targets))
-            self._broadcast_finished()
+            self._broadcast_finished(tg)
             return
         bridges = self._get_bridges() if self._get_bridges else {}
         now = time.time()
@@ -276,14 +317,14 @@ class VoiceUseCases:
             if self._announcement_last_hour.get(ann_idx) == now.hour:
                 return
             self._announcement_last_hour[ann_idx] = now.hour
-        if self._broadcast_active and _retry < 60:
+        _tg = int(item.get("TG", 0))
+        if str(_tg) in self._broadcast_active_tgs and _retry < 60:
             if _retry == 0:
-                logger.debug("(%s) Broadcast queue busy, deferring prep", label)
+                logger.debug("(%s) Same TG %s already broadcasting, deferring prep", label, _tg)
             if self._call_later:
                 self._call_later(3.0 + ann_idx * 0.5, self.scheduled_announcement, ann_idx, _retry + 1)
             return
         _file = str(item.get("FILE") or "").strip()
-        _tg = int(item.get("TG", 0))
         _lang = item.get("LANGUAGE", "en_GB")
         if not _file or not _tg:
             return
@@ -345,14 +386,14 @@ class VoiceUseCases:
             if self._tts_last_hour.get(tts_idx) == now.hour:
                 return
             self._tts_last_hour[tts_idx] = now.hour
-        if self._broadcast_active and _retry < 60:
+        _tg = int(item.get("TG", 0))
+        if str(_tg) in self._broadcast_active_tgs and _retry < 60:
             if _retry == 0:
-                logger.debug("(%s) Broadcast queue busy, deferring TTS prep", label)
+                logger.debug("(%s) Same TG %s already broadcasting, deferring TTS prep", label, _tg)
             if self._call_later:
                 self._call_later(3.0 + tts_idx * 0.5, self.scheduled_tts_announcement, tts_idx, _retry + 1)
             return
         _file = str(item.get("FILE") or "").strip()
-        _tg = int(item.get("TG", 0))
         _lang = item.get("LANGUAGE", "en_GB")
         self._tts_running[tts_idx] = True
         logger.info("(%s) Starting TTS conversion in background thread for %s", label, _file)
@@ -375,9 +416,9 @@ class VoiceUseCases:
             self._tts_running[tts_idx] = False
             logger.warning("(%s) No AMBE file available for TTS announcement %s", label, _file)
             return
-        if self._broadcast_active and _retry < 60:
+        if str(_tg) in self._broadcast_active_tgs and _retry < 60:
             if _retry == 0:
-                logger.debug("(%s) Broadcast queue busy, deferring TTS packet prep", label)
+                logger.debug("(%s) Same TG %s already broadcasting, deferring TTS packet prep", label, _tg)
             if self._call_later:
                 self._call_later(3.0 + tts_idx * 0.5, self._tts_conversion_done, ambe_path, tts_idx, _file, _tg, _lang, mode, label, _retry + 1)
             return
@@ -430,6 +471,7 @@ class VoiceUseCases:
         """Same as _announcement_send_broadcast but clears _tts_running."""
         total = len(pkts_by_ts.get(1, []))
         if pkt_idx >= total:
+            self._mark_slots_free(targets)
             for t in targets:
                 try:
                     obj = t.get("sys_obj")
@@ -441,7 +483,7 @@ class VoiceUseCases:
                     pass
             self._tts_running[tts_idx] = False
             logger.info("(%s) Broadcast complete: %s packets sent to %s targets", label, total, len(targets))
-            self._broadcast_finished()
+            self._broadcast_finished(tg)
             return
         bridges = self._get_bridges() if self._get_bridges else {}
         now = time.time()
