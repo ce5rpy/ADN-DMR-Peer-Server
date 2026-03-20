@@ -391,6 +391,18 @@ class HBPProtocol(DatagramProtocol):
                     logger.warning("(%s) CALL DROPPED AS STREAM ID IS NULL FROM SUBSCRIBER %s", self._system, int_id(_rf_src))
                     return
                 pkt_time = time.time()
+                _int_dst_id = int_id(_dst_id)
+                # TG / private ID 4000: deactivate dynamic bridges (legacy bridge_master 3080–3177).
+                # Must run before ACL: private 4000 is rarely in TG allow lists.
+                if _int_dst_id == 4000 and self._on_deactivate_dynamic_bridges:
+                    _kind = "Private call to ID" if _call_type == "unit" else "Group call to TG"
+                    logger.info(
+                        "(%s) %s 4000 received on TS %s — deactivating all dynamic bridges",
+                        self._system,
+                        _kind,
+                        _slot,
+                    )
+                    self._on_deactivate_dynamic_bridges(self._system)
                 # ACL (legacy order and _laststrid)
                 if self._router and _global.get("USE_ACL"):
                     if not self._router.acl_check(_rf_src, _global.get("SUB_ACL", (True, []))):
@@ -428,10 +440,6 @@ class HBPProtocol(DatagramProtocol):
                 sub_map = self._CONFIG.get("_SUB_MAP")
                 if sub_map is not None:
                     sub_map[_rf_src] = (self._system, _slot, pkt_time)
-                # TG 4000: deactivate all dynamic bridges (legacy routerHBP)
-                _int_dst_id = int_id(_dst_id)
-                if _int_dst_id == 4000 and self._on_deactivate_dynamic_bridges:
-                    self._on_deactivate_dynamic_bridges(self._system)
                 # TG 9991-9999: information services (legacy peer_datagramReceived, also needed in MASTER)
                 if 9991 <= _int_dst_id <= 9999 and self._on_play_file_request:
                     if _frame_type == HBPF_DATA_SYNC and _dtype_vseq == HBPF_SLT_VHEAD:
@@ -741,6 +749,16 @@ class HBPProtocol(DatagramProtocol):
                     logger.warning("(%s) CALL DROPPED AS STREAM ID IS NULL FROM SUBSCRIBER %s", self._system, int_id(_rf_src))
                     return
                 pkt_time = time.time()
+                _int_dst_id = int_id(_dst_id)
+                if _int_dst_id == 4000 and self._on_deactivate_dynamic_bridges:
+                    _kind = "Private call to ID" if _call_type == "unit" else "Group call to TG"
+                    logger.info(
+                        "(%s) %s 4000 received on TS %s — deactivating all dynamic bridges",
+                        self._system,
+                        _kind,
+                        _slot,
+                    )
+                    self._on_deactivate_dynamic_bridges(self._system)
                 _global = self._CONFIG.get("GLOBAL", {})
                 if self._router and _global.get("USE_ACL"):
                     if not self._router.acl_check(_rf_src, _global.get("SUB_ACL", (True, []))):
@@ -778,10 +796,6 @@ class HBPProtocol(DatagramProtocol):
                 sub_map = self._CONFIG.get("_SUB_MAP")
                 if sub_map is not None:
                     sub_map[_rf_src] = (self._system, _slot, pkt_time)
-                _int_dst_id = int_id(_dst_id)
-                # TG 4000: deactivate all dynamic bridges (legacy routerHBP)
-                if _int_dst_id == 4000 and self._on_deactivate_dynamic_bridges:
-                    self._on_deactivate_dynamic_bridges(self._system)
                 if self._on_play_file_request and _frame_type == HBPF_DATA_SYNC and _dtype_vseq == HBPF_SLT_VHEAD:
                     if 9991 <= _int_dst_id <= 9999:
                         reactor.callInThread(self._on_play_file_request, str(_int_dst_id), self._system)

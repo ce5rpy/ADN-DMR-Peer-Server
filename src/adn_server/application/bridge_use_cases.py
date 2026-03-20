@@ -1084,6 +1084,9 @@ class BridgeUseCases:
         """Called by UDP MASTER when DMRD is received. Forward to other systems in same bridge (to_target)."""
         if not self._send_to_system:
             return
+        # Legacy bridge_master 3080–3085: private call to ID 4000 only disconnects dynamics; do not route as PC.
+        if call_type == "unit" and int_id(dst_id) == 4000:
+            return
         if call_type == "unit":
             self._pvt_call_received(system_name, peer_id, rf_src, dst_id, seq, slot, frame_type, dtype_vseq, stream_id, data)
             return
@@ -1482,7 +1485,9 @@ class BridgeUseCases:
         protocols = self._get_protocols() if self._get_protocols else {}
         source_proto = protocols.get(system_name)
         source_status = getattr(source_proto, "STATUS", {}) if source_proto else {}
-        slot_st = source_status.get(slot, {})
+        if source_proto:
+            source_status.setdefault(slot, {})
+        slot_st = source_status[slot] if source_proto and slot in source_status else {}
         if stream_id != slot_st.get("RX_STREAM_ID"):
             if (slot_st.get("RX_TYPE") != HBPF_SLT_VTERM) and (pkt_time < (slot_st.get("RX_TIME", 0) + STREAM_TO)) and (rf_src != slot_st.get("RX_RFS")):
                 logger.warning(
@@ -1490,6 +1495,7 @@ class BridgeUseCases:
                     system_name, int_id(stream_id), int_id(rf_src), int_id(peer_id), int_id(dst_id), slot,
                 )
                 return
+            slot_st["RX_START"] = pkt_time
             if dst_id in sub_map:
                 if sub_map[dst_id][0] != system_name:
                     self._pvt_targets = [sub_map[dst_id][0]]
@@ -1573,10 +1579,27 @@ class BridgeUseCases:
                 "(%s) *PRIVATE CALL END*   STREAM ID: %s SUB: %s PEER: %s DST: %s, TS %s, Duration: %.2f",
                 system_name, int_id(stream_id), int_id(rf_src), int_id(peer_id), int_id(dst_id), slot, call_duration,
             )
-        slot_st["RX_PEER"] = peer_id
-        slot_st["RX_SEQ"] = seq
-        slot_st["RX_RFS"] = rf_src
-        slot_st["RX_TYPE"] = dtype_vseq
-        slot_st["RX_TGID"] = dst_id
-        slot_st["RX_TIME"] = pkt_time
-        slot_st["RX_STREAM_ID"] = stream_id
+            report = self._report_factory
+            if report and hasattr(report, "send_bridge_event"):
+                try:
+                    report.send_bridge_event(
+                        "PRIVATE VOICE,END,RX,{},{},{},{},{},{},{:.2f}".format(
+                            system_name,
+                            int_id(stream_id),
+                            int_id(peer_id),
+                            int_id(rf_src),
+                            slot,
+                            int_id(dst_id),
+                            call_duration,
+                        )
+                    )
+                except Exception:
+                    pass
+        if slot_st:
+            slot_st["RX_PEER"] = peer_id
+            slot_st["RX_SEQ"] = seq
+            slot_st["RX_RFS"] = rf_src
+            slot_st["RX_TYPE"] = dtype_vseq
+            slot_st["RX_TGID"] = dst_id
+            slot_st["RX_TIME"] = pkt_time
+            slot_st["RX_STREAM_ID"] = stream_id
