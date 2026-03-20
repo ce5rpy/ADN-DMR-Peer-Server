@@ -1167,6 +1167,10 @@ class HBPProtocol(DatagramProtocol):
             _int_dst_id = int_id(_dst_id)
             _bits = _data[15]
             _slot = 2 if (_bits & 0x80) else 1
+            if self._config.get("MODE") == "OPENBRIDGE":
+                # Legacy bridge_master: OpenBridge streams are effectively TS1 (DMRD v1 rejects slot != 1).
+                # DMRE can still carry TS2 in bits; BRIDGES use TS:1 for OBP — normalize before STATUS/dmrd.
+                _slot = 1
             if _bits & 0x40:
                 _call_type = "unit"
             elif (_bits & 0x23) == 0x23:

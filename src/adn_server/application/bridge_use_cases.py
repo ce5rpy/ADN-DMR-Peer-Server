@@ -1095,6 +1095,10 @@ class BridgeUseCases:
         dst_int = int_id(dst_id)
         systems_cfg = self._config.get("SYSTEMS", {})
         source_is_obp = systems_cfg.get(system_name, {}).get("MODE") == "OPENBRIDGE"
+        # Legacy bridge_master to_target: OpenBridge clears TS bit — "all OpenBridge streams are
+        # effectively on TS1". DMRD v1 rejects slot != 1; DMRE v5 can still set slot 2 from bits.
+        # BRIDGES entries for OBP use TS:1 (make_single_bridge / make_stat_bridge). Match that.
+        bridge_match_slot = 1 if source_is_obp else slot
         if bridge_key not in bridges:
             if dst_int < 5 or dst_int == 9 or dst_int == 4000 or dst_int == 5000:
                 logger.debug(
@@ -1121,7 +1125,7 @@ class BridgeUseCases:
         dst_id_b = dst_id if isinstance(dst_id, bytes) and len(dst_id) >= 3 else bytes_3(dst_int)
         has_source = any(
             entry.get("SYSTEM") == system_name
-            and entry.get("TS") == slot
+            and entry.get("TS") == bridge_match_slot
             and entry.get("ACTIVE")
             and (entry.get("TGID") == dst_id_b or int_id(entry.get("TGID") or b"\x00\x00\x00") == dst_int)
             for entry in entries
@@ -1132,7 +1136,7 @@ class BridgeUseCases:
             entries = list(bridges.get(bridge_key, [])) + list(bridges.get("#" + bridge_key, []))
             has_source = any(
                 entry.get("SYSTEM") == system_name
-                and entry.get("TS") == slot
+                and entry.get("TS") == bridge_match_slot
                 and entry.get("ACTIVE")
                 and (entry.get("TGID") == dst_id_b or int_id(entry.get("TGID") or b"\x00\x00\x00") == dst_int)
                 for entry in entries
@@ -1140,7 +1144,7 @@ class BridgeUseCases:
         if not has_source:
             logger.debug(
                 "(ROUTER) No matching source rule for TG %s from %s slot %s (ACTIVE), not forwarding",
-                bridge_key, system_name, slot,
+                bridge_key, system_name, bridge_match_slot,
             )
             return
         pkt_time = time.time()
@@ -1272,6 +1276,11 @@ class BridgeUseCases:
                 source_lc = st.get(slot, {}).get("RX_LC")
         if not source_lc or len(source_lc) < 9:
             source_lc = b"\x00\x00\x20" + dst_id_b + rf_src
+        # Legacy bridge_master to_target: _sysIgnore — dedupe OBP (SYSTEM, TS) per packet across
+        # multiple to_target passes (current TG + reflector + other bridges). We merge those
+        # lists into one `entries` loop, so the same OpenBridge can appear twice (e.g. TG + #TG)
+        # and would get duplicate sends → echo/loops without this.
+        sys_ignore_obp: set[tuple[str, int]] = set()
         forwarded = []
         for entry in entries:
             if entry.get("SYSTEM") == system_name:
@@ -1287,6 +1296,13 @@ class BridgeUseCases:
 
             if target_mode == "OPENBRIDGE":
                 # ── Exact port of legacy bridge.py OBP target (lines 355-401 / 672-718) ──
+                entry_ts_obp = entry.get("TS")
+                if entry_ts_obp is None:
+                    entry_ts_obp = 1
+                _obp_key = (entry["SYSTEM"], int(entry_ts_obp))
+                if _obp_key in sys_ignore_obp:
+                    continue
+                sys_ignore_obp.add(_obp_key)
                 target_tgid = entry.get("TGID")
                 if isinstance(target_tgid, int):
                     target_tgid = bytes_3(target_tgid)
