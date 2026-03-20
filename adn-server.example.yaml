@@ -17,6 +17,9 @@ GLOBAL:
   PASS_SECURITY: "<set-in-adn-server.yaml>"
   USERS_PASS: user_passwords.json
   HASH_ENCRYPT: encryption_key.secret
+  # Multi-OBP mesh hub: when true, inbound peer BCSQ does not block bridge TX from the mesh-designated source OBP
+  # (see _obp_mesh_first). Set false for strict legacy routerOBP behavior.
+  OBP_BRIDGE_MESH_OWNER_BYPASS_BCSQ: true
 
 REPORTS:
   REPORT: true

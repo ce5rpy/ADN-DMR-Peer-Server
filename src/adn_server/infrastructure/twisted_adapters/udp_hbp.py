@@ -181,6 +181,9 @@ class HBPProtocol(DatagramProtocol):
                 self._config.get("TARGET_IP", ""),
                 self._config.get("TARGET_PORT", ""),
             )
+            # bridge_master.routerOBP.to_target skips ENHANCED targets when '_bcka' not in SYSTEMS[name].
+            # Seed so cross-OBP forwarding works before the first inbound BCKA/DMR on *this* leg.
+            self._config["_bcka"] = time.time()
             if self._config.get("ENHANCED_OBP"):
                 self._bcka_loop = task.LoopingCall(self._obp_send_bcka)
                 self._bcka_loop.start(10)
@@ -228,7 +231,8 @@ class HBPProtocol(DatagramProtocol):
         if self._config.get("MODE") == "MASTER":
             self.send_peers(_packet, _hops, _ber, _rssi, _source_server, _source_rptr)
         elif self._config.get("MODE") == "OPENBRIDGE":
-            if "STUN" in self._CONFIG:
+            # Global STUN (config) or per-system BCST (hblink sets _config['_STUN'] on BCST RX)
+            if "STUN" in self._CONFIG or self._config.get("_STUN"):
                 logger.info("(%s) Bridge STUNned, discarding", self._system)
                 return
             if not _hops:
@@ -236,7 +240,7 @@ class HBPProtocol(DatagramProtocol):
             if _packet[:3] == DMR and self._config.get("TARGET_IP"):
                 _sid = self._CONFIG.get("GLOBAL", {}).get("SERVER_ID", b"\x00\x00\x00\x00")
                 _server_id = _sid if isinstance(_sid, bytes) and len(_sid) >= 4 else bytes_4(int(_sid) & 0xFFFFFFFF if isinstance(_sid, int) else 0)
-                _passphrase = self._config.get("PASSPHRASE", b"")
+                _passphrase = _get_passphrase_bytes(self._config)
                 _target_addr = (self._config["TARGET_IP"], self._config["TARGET_PORT"])
                 if "VER" in self._config and self._config["VER"] > 4:
                     _ver = VER.to_bytes(1, "big")
@@ -948,8 +952,11 @@ class HBPProtocol(DatagramProtocol):
         _rf_src: bytes = b"\x00\x00\x00",
         _peer_id: bytes = b"\x00\x00\x00\x00",
     ) -> bool:
-        """Legacy bridge_master OBP: stream state, 1ST, _fin, duplicate/seq handling. Returns True if packet should be forwarded to bridge."""
+        """Port of bridge_master.py dmrd_received: OBP STATUS[_stream_id] packet control (group/vcsbk)."""
         now = time.time()
+        _h = blake2b(digest_size=16)
+        _h.update(_data)
+        _pkt_crc = _h.digest()
         # Trim old streams (legacy: 180s)
         if _stream_id not in self._obp_streams:
             to_remove = [sid for sid, st in self._obp_streams.items() if st.get("LAST", 0) < now - 180]
@@ -964,44 +971,90 @@ class HBPProtocol(DatagramProtocol):
                 "lastSeq": False,
                 "lastData": False,
                 "packets": 0,
+                "loss": 0,
+                "crcs": set(),
                 "_fin": False,
                 "RFS": _rf_src,
                 "RX_PEER": _peer_id,
             }
+            self._obp_streams[_stream_id]["crcs"].add(_pkt_crc)
             return True
         st = self._obp_streams[_stream_id]
         if st.get("_fin"):
             return False
         st["LAST"] = now
-        st["packets"] = st.get("packets", 0) + 1
-        # Duplicate / out-of-order (legacy bridge_master 3256-3184)
-        if st.get("lastData") and st["lastData"] == _data and _seq > 1:
+        if "packets" in st:
+            st["packets"] = st["packets"] + 1
+        # Duplicate handling#
+        # Handle inbound duplicates
+        # Duplicate complete packet
+        if st["lastData"] and st["lastData"] == _data and _seq > 1:
+            st["loss"] += 1
             logger.debug(
-                "(%s) *PacketControl* last packet is a complete duplicate, discarding. Stream ID: %s TGID: %s",
-                self._system, int_id(_stream_id), int_id(_dst_id),
+                "(%s) *PacketControl* last packet is a complete duplicate of the previous one, disgarding. Stream ID:, %s TGID: %s, LOSS: %.2f%%",
+                self._system,
+                int_id(_stream_id),
+                int_id(_dst_id),
+                ((st["loss"] / st["packets"]) * 100),
             )
             return False
-        if _seq is not None and _seq == st.get("lastSeq"):
+        # Duplicate SEQ number
+        if _seq and _seq == st["lastSeq"]:
+            st["loss"] += 1
             logger.debug(
-                "(%s) *PacketControl* Duplicate sequence number %s, discarding. Stream ID: %s TGID: %s",
-                self._system, _seq, int_id(_stream_id), int_id(_dst_id),
+                "(%s) *PacketControl* Duplicate sequence number %s, disgarding. Stream ID:, %s TGID: %s, LOSS: %.2f%%",
+                self._system,
+                _seq,
+                int_id(_stream_id),
+                int_id(_dst_id),
+                ((st["loss"] / st["packets"]) * 100),
             )
             return False
-        if _seq is not None and st.get("lastSeq") is not None and _seq != 1 and _seq < st["lastSeq"]:
+        # Inbound out-of-order packets
+        if _seq and st["lastSeq"] and (_seq != 1) and (_seq < st["lastSeq"]):
+            st["loss"] += 1
             logger.debug(
-                "(%s) *PacketControl* Out of order packet - last SEQ: %s, this SEQ: %s, discarding. Stream ID: %s TGID: %s",
-                self._system, st["lastSeq"], _seq, int_id(_stream_id), int_id(_dst_id),
+                "%s) *PacketControl* Out of order packet - last SEQ: %s, this SEQ: %s,  disgarding. Stream ID:, %s TGID: %s, LOSS: %.2f%%",
+                self._system,
+                st["lastSeq"],
+                _seq,
+                int_id(_stream_id),
+                int_id(_dst_id),
+                ((st["loss"] / st["packets"]) * 100),
             )
             return False
-        if _seq is not None and st.get("lastSeq") is not None and _seq > st["lastSeq"] + 1:
+        # Duplicate DMR payload to previuos packet (by hash
+        if _seq > 0 and _pkt_crc in st["crcs"]:
+            st["loss"] += 1
             logger.debug(
-                "(%s) *PacketControl* Missed packet(s) - last SEQ: %s, this SEQ: %s. Stream ID: %s TGID: %s",
-                self._system, st["lastSeq"], _seq, int_id(_stream_id), int_id(_dst_id),
+                "(%s) *PacketControl* DMR packet payload with hash: %s seen before in this stream, disgarding. Stream ID:, %s TGID: %s: SEQ:%s PACKETS: %s, LOSS: %.2f%% ",
+                self._system,
+                _pkt_crc,
+                int_id(_stream_id),
+                int_id(_dst_id),
+                _seq,
+                st["packets"],
+                ((st["loss"] / st["packets"]) * 100),
             )
+            return False
+        # Inbound missed packets
+        if _seq and st["lastSeq"] and _seq > (st["lastSeq"] + 1):
+            st["loss"] += 1
+            logger.debug(
+                "(%s) *PacketControl* Missed packet(s) - last SEQ: %s, this SEQ: %s. Stream ID:, %s TGID: %s , LOSS: %.2f%%",
+                self._system,
+                st["lastSeq"],
+                _seq,
+                int_id(_stream_id),
+                int_id(_dst_id),
+                ((st["loss"] / st["packets"]) * 100),
+            )
+        # Save this sequence number
         st["lastSeq"] = _seq
+        # Save this packet
         st["lastData"] = _data
-        if _frame_type == HBPF_DATA_SYNC and _dtype_vseq == HBPF_SLT_VTERM:
-            st["_fin"] = True
+        st["crcs"].add(_pkt_crc)
+        # Legacy bridge_master routerOBP: _fin is set after to_target + REPORT END (~2430-2432), not here.
         return True
 
     def _obp_datagram_received(self, _packet: bytes, _sockaddr: tuple[str, int]) -> None:
@@ -1118,7 +1171,33 @@ class HBPProtocol(DatagramProtocol):
                     self.STATUS[_slot]["RX_RFS"] = _rf_src
                     self.STATUS[_slot]["RX_TIME"] = time.time()
                 if self._dmrd_received:
-                    self._dmrd_received(self._system, _peer_id, _rf_src, _dst_id, _seq, _slot, _call_type, _frame_type, _dtype_vseq, _stream_id, _data)
+                    # Legacy hblink DMRD v1: SERVER_ID + default rptr/hops/ber/rssi (`hblink.py` ~338–345, ~416)
+                    _global = self._CONFIG.get("GLOBAL", {})
+                    _sid = _global.get("SERVER_ID", b"\x00\x00\x00\x00")
+                    _obp_ss = (
+                        _sid
+                        if isinstance(_sid, bytes) and len(_sid) >= 4
+                        else bytes_4(int(_sid) & 0xFFFFFFFF if isinstance(_sid, int) else 0)
+                    )
+                    self._dmrd_received(
+                        self._system,
+                        _peer_id,
+                        _rf_src,
+                        _dst_id,
+                        _seq,
+                        _slot,
+                        _call_type,
+                        _frame_type,
+                        _dtype_vseq,
+                        _stream_id,
+                        _data,
+                        obp_use_parsed=True,
+                        obp_hops=b"",
+                        obp_source_server=_obp_ss,
+                        obp_ber=b"\x00",
+                        obp_rssi=b"\x00",
+                        obp_source_rptr=b"\x00\x00\x00\x00",
+                    )
                 self._config["_bcka"] = time.time()
             else:
                 logger.warning("(%s) OpenBridge HMAC failed, packet discarded - OPCODE: %s SRC: %s", self._system, _packet[:4], _sockaddr)
@@ -1127,6 +1206,9 @@ class HBPProtocol(DatagramProtocol):
             if len(_packet) < 69:
                 return
             _data = _packet[:53]
+            # Legacy hblink OPENBRIDGE DMRE: BER/RSSI before version split (`hblink.py` ~432–433)
+            _ber = _packet[53:54]
+            _rssi = _packet[54:55]
             _embedded_version = _packet[55]
             if _embedded_version > 4:
                 if len(_packet) < 89:
@@ -1305,8 +1387,28 @@ class HBPProtocol(DatagramProtocol):
                 self.STATUS[_slot]["RX_RFS"] = _rf_src
                 self.STATUS[_slot]["RX_TIME"] = time.time()
             _data_dmrd = DMRD + _data[4:]
+            _hops_out = _inthops.to_bytes(1, "big")
             if self._dmrd_received:
-                self._dmrd_received(self._system, _peer_id, _rf_src, _dst_id, _seq, _slot, _call_type, _frame_type, _dtype_vseq, _stream_id, _data_dmrd)
+                # Legacy hblink DMRE: same fields passed to dmrd_received as after increment (`hblink.py` ~592–596)
+                self._dmrd_received(
+                    self._system,
+                    _peer_id,
+                    _rf_src,
+                    _dst_id,
+                    _seq,
+                    _slot,
+                    _call_type,
+                    _frame_type,
+                    _dtype_vseq,
+                    _stream_id,
+                    _data_dmrd,
+                    obp_use_parsed=True,
+                    obp_hops=_hops_out,
+                    obp_source_server=_source_server,
+                    obp_ber=_ber,
+                    obp_rssi=_rssi,
+                    obp_source_rptr=_source_rptr,
+                )
             self._config["_bcka"] = time.time()
         elif _packet[:4] == EOBP:
             logger.warning("(%s) *ProtoControl* KF7EEL EOBP protocol not supported", self._system)
@@ -1324,6 +1426,35 @@ class HBPProtocol(DatagramProtocol):
                     self._config.pop("_no_target_log_time", None)  # reset so next "no target" logs once
                 else:
                     logger.info("(%s) *BridgeControl* BCKA invalid KeepAlive, packet discarded", self._system)
+            # Source quench — legacy hblink.py OPENBRIDGE ~629-639 (sets CONFIG['_bcsq'][tgid]=stream_id)
+            if _packet[:4] == BCSQ and len(_packet) >= 31:
+                _hash_bcsq = _packet[11:]
+                _tgid_bcsq = _packet[4:7]
+                _stream_bcsq = _packet[7:11]
+                _ckhs_bcsq = hmac_new(self._config["PASSPHRASE"], _packet[:11], sha1).digest()
+                if compare_digest(_hash_bcsq, _ckhs_bcsq):
+                    if "_bcsq" not in self._config:
+                        self._config["_bcsq"] = {}
+                    self._config["_bcsq"][_tgid_bcsq] = _stream_bcsq
+                else:
+                    logger.warning(
+                        "(%s) *BridgeControl* BCSQ invalid Source Quench, packet discarded - SRC: %s",
+                        self._system,
+                        _sockaddr,
+                    )
+            # STUN — must match send_bcst: HMAC-SHA1 over opcode only (hblink.py ~282-285). RX used _packet[4:] in ~647 but that does not match TX.
+            if _packet[:4] == BCST and len(_packet) >= 24:
+                _hash_bcst = _packet[4:24]
+                _ckhs_bcst = hmac_new(self._config["PASSPHRASE"], _packet[:4], sha1).digest()
+                if compare_digest(_hash_bcst, _ckhs_bcst):
+                    logger.trace("(%s) *BridgeControl* BCST STUN request received", self._system)
+                    self._config["_STUN"] = True
+                else:
+                    logger.warning(
+                        "(%s) *BridgeControl* BCST invalid STUN, packet discarded - SRC: %s",
+                        self._system,
+                        _sockaddr,
+                    )
             if _packet[:4] == BCVE and len(_packet) >= 25:
                 _ver = int.from_bytes(_packet[4:5], "big")
                 _hash = _packet[5:25]
