@@ -143,6 +143,7 @@ class HBPProtocol(DatagramProtocol):
         on_in_band_signalling: Callable[[str, int, bytes, float], None] | None = None,
         on_options_received: Callable[[str], None] | None = None,
         on_deactivate_dynamic_bridges: Callable[[str], None] | None = None,
+        on_obp_bcsq_received: Callable[[str, bytes, bytes], None] | None = None,
     ) -> None:
         self._CONFIG = config
         self._system = system_name
@@ -155,12 +156,14 @@ class HBPProtocol(DatagramProtocol):
         self._on_in_band_signalling = on_in_band_signalling
         self._on_options_received = on_options_received
         self._on_deactivate_dynamic_bridges = on_deactivate_dynamic_bridges
+        self._on_obp_bcsq_received = on_obp_bcsq_received
         self._config = config.get("SYSTEMS", {}).get(system_name, {})
         if self._config.get("MODE") == "OPENBRIDGE":
             self._laststrid = deque([], 20)
             self.STATUS = {1: _make_slot_status(), 2: _make_slot_status()}
             # Legacy bridge_master: OBP stream state by stream_id for loop control (1ST) and duplicate handling
             self._obp_streams = {}
+            self._bcsq_log_once: set[tuple[bytes, bytes]] = set()
         else:
             self._laststrid = {1: b"", 2: b""}
             self.STATUS = {1: _make_slot_status(), 2: _make_slot_status()}
@@ -932,13 +935,47 @@ class HBPProtocol(DatagramProtocol):
         else:
             logger.debug("(%s) *BridgeControl* not sending BCVE, TARGET not currently known", self._system)
 
+    def _obp_sync_target_sock_from_peer(self, _sockaddr: tuple[str, int]) -> None:
+        """If RELAX_CHECKS accepted traffic from a different IP:port than TARGET_SOCK, sync (same idea as BCKA).
+        Ensures BCSQ and outbound DMR go to the peer address we actually receive from."""
+        if self._config.get("MODE") != "OPENBRIDGE" or not self._config.get("RELAX_CHECKS"):
+            return
+        if not _sockaddr or not _sockaddr[0]:
+            return
+        cur = self._config.get("TARGET_SOCK")
+        if cur == _sockaddr:
+            return
+        h, p = _sockaddr[0], int(_sockaddr[1])
+        logger.info(
+            "(%s) *BridgeControl* OBP peer address sync to %s:%s (RELAX_CHECKS; was %s:%s)",
+            self._system,
+            h,
+            p,
+            (cur[0] if cur and cur[0] else "?"),
+            (cur[1] if cur and len(cur) > 1 else "?"),
+        )
+        self._config["TARGET_IP"] = h
+        self._config["TARGET_PORT"] = p
+        self._config["TARGET_SOCK"] = (h, p)
+
     def _obp_send_bcsq(self, _tgid: bytes, _stream_id: bytes) -> None:
         """Legacy send_bcsq: BCSQ + tgid + stream_id + HMAC-SHA1. Uses TARGET_SOCK (IP only)."""
         _addr = self._config.get("TARGET_SOCK")
+        if not _addr or not _addr[0]:
+            tip = self._config.get("TARGET_IP")
+            tport = int(self._config.get("TARGET_PORT", 62044))
+            if tip:
+                _addr = (tip, tport)
+                self._config["TARGET_SOCK"] = _addr
         if _addr and _addr[0]:
             _packet = BCSQ + _tgid + _stream_id
             _packet = _packet + hmac_new(self._config["PASSPHRASE"], _packet, sha1).digest()
             self.transport.write(_packet, _addr)
+        else:
+            logger.warning(
+                "(%s) *BridgeControl* BCSQ not sent: no TARGET_SOCK/TARGET_IP — peer cannot be quenched",
+                self._system,
+            )
 
     def proxy_bad_peer(self) -> None:
         """Legacy bridge_master routerOBP rate-drop hook; HBSYSTEM has peer handling — OBP noop."""
@@ -957,6 +994,7 @@ class HBPProtocol(DatagramProtocol):
             _hash = _packet[53:73]
             _ckhs = hmac_new(self._config["PASSPHRASE"], _data, sha1).digest()
             if compare_digest(_hash, _ckhs) and (_sockaddr == self._config.get("TARGET_SOCK") or self._config.get("RELAX_CHECKS")):
+                self._obp_sync_target_sock_from_peer(_sockaddr)
                 _peer_id = _data[11:15]
                 if self._config.get("NETWORK_ID") != _peer_id:
                     if _stream_id not in self._laststrid:
@@ -1092,6 +1130,7 @@ class HBPProtocol(DatagramProtocol):
             if not (compare_digest(_hash, _ckhs) and (_sockaddr == self._config.get("TARGET_SOCK") or self._config.get("RELAX_CHECKS"))):
                 logger.warning("(%s) OpenBridge DMRE BLAKE2b failed, packet discarded - SRC: %s", self._system, _sockaddr)
                 return
+            self._obp_sync_target_sock_from_peer(_sockaddr)
             _peer_id = _data[11:15]
             if self._config.get("NETWORK_ID") != _peer_id:
                 if _stream_id not in self._laststrid:
@@ -1267,6 +1306,23 @@ class HBPProtocol(DatagramProtocol):
                     if "_bcsq" not in self._config:
                         self._config["_bcsq"] = {}
                     self._config["_bcsq"][_tgid_bcsq] = _stream_bcsq
+                    if self._config.get("MODE") == "OPENBRIDGE":
+                        _key = (_stream_bcsq, _tgid_bcsq)
+                        _once = getattr(self, "_bcsq_log_once", None)
+                        if isinstance(_once, set) and _key not in _once:
+                            _once.add(_key)
+                            logger.info(
+                                "(%s) *BridgeControl* BCSQ accepted: stream_id=%s TGID=%s (peer quenched; forwarding on this OBP stops for this stream/TG)",
+                                self._system,
+                                int_id(_stream_bcsq),
+                                int_id(_tgid_bcsq),
+                            )
+                        cb = self._on_obp_bcsq_received
+                        if cb is not None:
+                            try:
+                                cb(self._system, _tgid_bcsq, _stream_bcsq)
+                            except Exception:
+                                logger.exception("(%s) on_obp_bcsq_received failed", self._system)
                 else:
                     logger.warning(
                         "(%s) *BridgeControl* BCSQ invalid Source Quench, packet discarded - SRC: %s",
@@ -1316,6 +1372,7 @@ def HBPProtocolFactory(
     on_in_band_signalling: Callable[[str, int, bytes, float], None] | None = None,
     on_options_received: Callable[[str], None] | None = None,
     on_deactivate_dynamic_bridges: Callable[[str], None] | None = None,
+    on_obp_bcsq_received: Callable[[str, bytes, bytes], None] | None = None,
 ) -> HBPProtocol:
     """Create HBP protocol instance (legacy: one HBSYSTEM per system)."""
     return HBPProtocol(
@@ -1330,4 +1387,5 @@ def HBPProtocolFactory(
         on_in_band_signalling=on_in_band_signalling,
         on_options_received=on_options_received,
         on_deactivate_dynamic_bridges=on_deactivate_dynamic_bridges,
+        on_obp_bcsq_received=on_obp_bcsq_received,
     )

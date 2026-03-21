@@ -455,6 +455,7 @@ def main() -> None:
             on_in_band_signalling=bridge_use_cases.apply_in_band_signalling,
             on_options_received=bridge_use_cases.options_config_for_system,
             on_deactivate_dynamic_bridges=bridge_use_cases.deactivate_all_dynamic_bridges,
+            on_obp_bcsq_received=bridge_use_cases.on_obp_bcsq_received,
         )
         protocols[system_name] = protocol
         reactor.listenUDP(udp_port, protocol, interface=ip or "0.0.0.0")

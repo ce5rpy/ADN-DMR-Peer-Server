@@ -45,6 +45,30 @@ from .ports import BridgeRouter
 
 logger = logging.getLogger(__name__)
 
+# While loop-control loser, re-send BCSQ periodically so peers stop forwarding if first UDP was lost (legacy sends once).
+_BCSQ_LOSER_RESEND_SEC = 2.0
+
+
+def _obp_target_bcsq_quenches_stream(
+    systems_cfg: dict[str, Any], target_name: str, dst_id_b: bytes, stream_id: bytes
+) -> bool:
+    """True if target OBP config has _bcsq[tgid]==stream_id (bytes key or same int TG)."""
+    m = systems_cfg.get(target_name, {}).get("_bcsq")
+    if not isinstance(m, dict) or not m:
+        return False
+    tid = dst_id_b[:3] if isinstance(dst_id_b, bytes) and len(dst_id_b) >= 3 else bytes_3(int_id(dst_id_b))
+    if m.get(tid) == stream_id:
+        return True
+    for k, v in m.items():
+        if v != stream_id:
+            continue
+        try:
+            if isinstance(k, bytes) and len(k) >= 3 and int_id(k) == int_id(tid):
+                return True
+        except Exception:
+            continue
+    return False
+
 
 def _log_trace(msg: str, *args: Any) -> None:
     """Per-packet forwarding diagnostics (BCSQ/BCKA/ACL). Below DEBUG — enable TRACE in LOGGER config to see."""
@@ -362,6 +386,49 @@ class BridgeUseCases:
             except Exception:
                 pass
             tstatus.pop(stream_id, None)
+
+    def on_obp_bcsq_received(self, system_name: str, tgid: bytes, stream_id: bytes) -> None:
+        """After valid BCSQ on this OBP leg: emit END,TX and clear forward STATUS if present (monitor parity; no VTERM to peer)."""
+        if not bool(self._config.get("REPORTS", {}).get("REPORT", True)):
+            return
+        report = self._report_factory
+        if not report or not hasattr(report, "send_bridge_event"):
+            return
+        protocols = self._get_protocols() if self._get_protocols else {}
+        tgt_proto = protocols.get(system_name)
+        if not tgt_proto:
+            return
+        if self._config.get("SYSTEMS", {}).get(system_name, {}).get("MODE") != "OPENBRIDGE":
+            return
+        tstatus = getattr(tgt_proto, "STATUS", None)
+        if not tstatus or stream_id not in tstatus:
+            return
+        tst = tstatus[stream_id]
+        if not isinstance(tst, dict) or "H_LC" not in tst:
+            return
+        if tst.get("TGID", b"\x00\x00\x00") != tgid:
+            return
+        now = time.time()
+        rfs = tst.get("RFS", b"\x00\x00\x00")
+        peer = tst.get("RX_PEER", b"\x00\x00\x00\x00")
+        tgid_b = tst.get("TGID", b"\x00\x00\x00")
+        start = tst.get("START", now)
+        duration = max(0.0, now - start)
+        try:
+            report.send_bridge_event(
+                "GROUP VOICE,END,TX,{},{},{},{},{},{},{:.2f}".format(
+                    system_name,
+                    int_id(stream_id),
+                    int_id(peer),
+                    int_id(rfs),
+                    1,
+                    int_id(tgid_b),
+                    duration,
+                )
+            )
+        except Exception:
+            pass
+        tstatus.pop(stream_id, None)
 
     def stream_trimmer_loop(self) -> None:
         """Trim old stream state (legacy stream_trimmer_loop, 5s). RX/TX timeout per system/slot; OBP streams (legacy bridge.py 181-240)."""
@@ -1364,11 +1431,29 @@ class BridgeUseCases:
                         call_duration,
                     )
                     st["LOOPLOG"] = True
+                    if _do_report and self._report_factory and hasattr(self._report_factory, "send_bridge_event"):
+                        try:
+                            self._report_factory.send_bridge_event(
+                                "GROUP VOICE,END,RX,{},{},{},{},{},{},{:.2f}".format(
+                                    system_name,
+                                    int_id(stream_id),
+                                    int_id(peer_id),
+                                    int_id(rf_src),
+                                    slot,
+                                    int_id(dst_id),
+                                    max(0.0, pkt_time - st.get("START", pkt_time)),
+                                )
+                            )
+                        except Exception:
+                            pass
                 st["LAST"] = pkt_time
-                if systems_cfg.get(system_name, {}).get("ENHANCED_OBP") and "_bcsq" not in st:
-                    if self._send_bcsq:
+                if systems_cfg.get(system_name, {}).get("ENHANCED_OBP") and self._send_bcsq:
+                    now_sq = time.time()
+                    last_sq = float(st.get("_bcsq_last", 0.0))
+                    if "_bcsq" not in st or (now_sq - last_sq >= _BCSQ_LOSER_RESEND_SEC):
                         self._send_bcsq(system_name, dst_id, stream_id)
-                    st["_bcsq"] = True
+                        st["_bcsq_last"] = now_sq
+                        st["_bcsq"] = True
                 return False
 
             if st["packets"] > 18 and (st["packets"] / st["START"] > 25):
@@ -1688,12 +1773,7 @@ class BridgeUseCases:
                     if isinstance(target_tgid, int):
                         target_tgid = bytes_3(target_tgid)
                     # If target has quenched us, don't send (~1856-1859).
-                    _bcsq_map = _target_system.get("_bcsq")
-                    if (
-                        isinstance(_bcsq_map, dict)
-                        and dst_id_b in _bcsq_map
-                        and _bcsq_map[dst_id_b] == stream_id
-                    ):
+                    if _obp_target_bcsq_quenches_stream(systems_cfg, entry["SYSTEM"], dst_id_b, stream_id):
                         _log_trace(
                             "(%s) OBP skip (BCSQ): target=%s TGID=%s stream=%s",
                             system_name,
