@@ -940,122 +940,8 @@ class HBPProtocol(DatagramProtocol):
             _packet = _packet + hmac_new(self._config["PASSPHRASE"], _packet, sha1).digest()
             self.transport.write(_packet, _addr)
 
-    def _obp_stream_accept(
-        self,
-        _stream_id: bytes,
-        _dst_id: bytes,
-        _seq: int,
-        _data: bytes,
-        _frame_type: int,
-        _dtype_vseq: int,
-        _dmrpkt: bytes,
-        _rf_src: bytes = b"\x00\x00\x00",
-        _peer_id: bytes = b"\x00\x00\x00\x00",
-    ) -> bool:
-        """Port of bridge_master.py dmrd_received: OBP STATUS[_stream_id] packet control (group/vcsbk)."""
-        now = time.time()
-        _h = blake2b(digest_size=16)
-        _h.update(_data)
-        _pkt_crc = _h.digest()
-        # Trim old streams (legacy: 180s)
-        if _stream_id not in self._obp_streams:
-            to_remove = [sid for sid, st in self._obp_streams.items() if st.get("LAST", 0) < now - 180]
-            for sid in to_remove:
-                self._obp_streams.pop(sid, None)
-        if _stream_id not in self._obp_streams:
-            self._obp_streams[_stream_id] = {
-                "1ST": time.perf_counter(),
-                "TGID": _dst_id,
-                "START": now,
-                "LAST": now,
-                "lastSeq": False,
-                "lastData": False,
-                "packets": 0,
-                "loss": 0,
-                "crcs": set(),
-                "_fin": False,
-                "RFS": _rf_src,
-                "RX_PEER": _peer_id,
-            }
-            self._obp_streams[_stream_id]["crcs"].add(_pkt_crc)
-            return True
-        st = self._obp_streams[_stream_id]
-        if st.get("_fin"):
-            return False
-        st["LAST"] = now
-        if "packets" in st:
-            st["packets"] = st["packets"] + 1
-        # Duplicate handling#
-        # Handle inbound duplicates
-        # Duplicate complete packet
-        if st["lastData"] and st["lastData"] == _data and _seq > 1:
-            st["loss"] += 1
-            logger.debug(
-                "(%s) *PacketControl* last packet is a complete duplicate of the previous one, disgarding. Stream ID:, %s TGID: %s, LOSS: %.2f%%",
-                self._system,
-                int_id(_stream_id),
-                int_id(_dst_id),
-                ((st["loss"] / st["packets"]) * 100),
-            )
-            return False
-        # Duplicate SEQ number
-        if _seq and _seq == st["lastSeq"]:
-            st["loss"] += 1
-            logger.debug(
-                "(%s) *PacketControl* Duplicate sequence number %s, disgarding. Stream ID:, %s TGID: %s, LOSS: %.2f%%",
-                self._system,
-                _seq,
-                int_id(_stream_id),
-                int_id(_dst_id),
-                ((st["loss"] / st["packets"]) * 100),
-            )
-            return False
-        # Inbound out-of-order packets
-        if _seq and st["lastSeq"] and (_seq != 1) and (_seq < st["lastSeq"]):
-            st["loss"] += 1
-            logger.debug(
-                "%s) *PacketControl* Out of order packet - last SEQ: %s, this SEQ: %s,  disgarding. Stream ID:, %s TGID: %s, LOSS: %.2f%%",
-                self._system,
-                st["lastSeq"],
-                _seq,
-                int_id(_stream_id),
-                int_id(_dst_id),
-                ((st["loss"] / st["packets"]) * 100),
-            )
-            return False
-        # Duplicate DMR payload to previuos packet (by hash
-        if _seq > 0 and _pkt_crc in st["crcs"]:
-            st["loss"] += 1
-            logger.debug(
-                "(%s) *PacketControl* DMR packet payload with hash: %s seen before in this stream, disgarding. Stream ID:, %s TGID: %s: SEQ:%s PACKETS: %s, LOSS: %.2f%% ",
-                self._system,
-                _pkt_crc,
-                int_id(_stream_id),
-                int_id(_dst_id),
-                _seq,
-                st["packets"],
-                ((st["loss"] / st["packets"]) * 100),
-            )
-            return False
-        # Inbound missed packets
-        if _seq and st["lastSeq"] and _seq > (st["lastSeq"] + 1):
-            st["loss"] += 1
-            logger.debug(
-                "(%s) *PacketControl* Missed packet(s) - last SEQ: %s, this SEQ: %s. Stream ID:, %s TGID: %s , LOSS: %.2f%%",
-                self._system,
-                st["lastSeq"],
-                _seq,
-                int_id(_stream_id),
-                int_id(_dst_id),
-                ((st["loss"] / st["packets"]) * 100),
-            )
-        # Save this sequence number
-        st["lastSeq"] = _seq
-        # Save this packet
-        st["lastData"] = _data
-        st["crcs"].add(_pkt_crc)
-        # Legacy bridge_master routerOBP: _fin is set after to_target + REPORT END (~2430-2432), not here.
-        return True
+    def proxy_bad_peer(self) -> None:
+        """Legacy bridge_master routerOBP rate-drop hook; HBSYSTEM has peer handling — OBP noop."""
 
     def _obp_datagram_received(self, _packet: bytes, _sockaddr: tuple[str, int]) -> None:
         """Port of hblink.py OPENBRIDGE.datagramReceived: DMRD v1 (53+HMAC), BCKA, BCVE."""
@@ -1138,38 +1024,7 @@ class HBPProtocol(DatagramProtocol):
                         "(%s) CALL RX (OBP) src %s -> TG %s slot %s",
                         self._system, int_id(_rf_src), int_id(_dst_id), _slot,
                     )
-                # Legacy bridge.py routerOBP: stream state with LC (STATUS[stream_id])
-                dmrpkt_obp = _data[20:53] if len(_data) >= 53 else b""
-                if _call_type == "group" or _call_type == "vcsbk":
-                    if not self._obp_stream_accept(_stream_id, _dst_id, _seq, _data, _frame_type, _dtype_vseq, dmrpkt_obp, _rf_src, _peer_id):
-                        self._config["_bcka"] = time.time()
-                        return
-                # Legacy routerOBP: STATUS[stream_id] with LC (bridge.py 259-278)
-                if _stream_id not in self.STATUS:
-                    self.STATUS[_stream_id] = {
-                        "START": time.time(),
-                        "CONTENTION": False,
-                        "RFS": _rf_src,
-                        "TGID": _dst_id,
-                        "LAST": time.time(),
-                        "lastSeq": False,
-                        "lastData": False,
-                    }
-                    if _frame_type == HBPF_DATA_SYNC and _dtype_vseq == HBPF_SLT_VHEAD and len(dmrpkt_obp) >= 33:
-                        try:
-                            decoded_obp = decode.voice_head_term(dmrpkt_obp)
-                            self.STATUS[_stream_id]["LC"] = decoded_obp["LC"]
-                        except Exception:
-                            self.STATUS[_stream_id]["LC"] = LC_OPT + _dst_id + _rf_src
-                    else:
-                        self.STATUS[_stream_id]["LC"] = LC_OPT + _dst_id + _rf_src
-                self.STATUS[_stream_id]["LAST"] = time.time()
-                # Also update slot STATUS for contention/RX tracking
-                if _slot in self.STATUS:
-                    self.STATUS[_slot]["RX_STREAM_ID"] = _stream_id
-                    self.STATUS[_slot]["RX_TGID"] = _dst_id
-                    self.STATUS[_slot]["RX_RFS"] = _rf_src
-                    self.STATUS[_slot]["RX_TIME"] = time.time()
+                # Group/vcsbk stream state, LC, duplicates: bridge_use_cases._obp_group_voice_router_obp (legacy routerOBP.dmrd_received)
                 if self._dmrd_received:
                     # Legacy hblink DMRD v1: SERVER_ID + default rptr/hops/ber/rssi (`hblink.py` ~338–345, ~416)
                     _global = self._CONFIG.get("GLOBAL", {})
@@ -1298,7 +1153,13 @@ class HBPProtocol(DatagramProtocol):
                 return
             _inthops = (_hops if isinstance(_hops, int) else int.from_bytes(_hops, "big")) + 1
             if _inthops > 10:
-                logger.warning("(%s) MAX HOPS exceed, dropping. Hops: %s, DST: %s, SRC: %s", self._system, _inthops, _int_dst_id, _src_srv_int)
+                logger.debug(
+                    "(%s) MAX HOPS exceed, dropping. Hops: %s, DST: %s, SRC: %s",
+                    self._system,
+                    _inthops,
+                    _int_dst_id,
+                    _src_srv_int,
+                )
                 self._obp_send_bcsq(_dst_id, _stream_id)
                 return
             if _call_type != "unit":
@@ -1356,36 +1217,6 @@ class HBPProtocol(DatagramProtocol):
                     return
             if _call_type == "group" and _frame_type == HBPF_DATA_SYNC and _dtype_vseq == HBPF_SLT_VHEAD:
                 logger.info("(%s) CALL RX (OBP DMRE) src %s -> TG %s slot %s", self._system, int_id(_rf_src), int_id(_dst_id), _slot)
-            dmrpkt_obp = _data[20:53] if len(_data) >= 53 else b""
-            if _call_type == "group" or _call_type == "vcsbk":
-                if not self._obp_stream_accept(_stream_id, _dst_id, _seq, _data, _frame_type, _dtype_vseq, dmrpkt_obp, _rf_src, _peer_id):
-                    self._config["_bcka"] = time.time()
-                    return
-            # Legacy routerOBP: STATUS[stream_id] with LC (same as DMRD v1 path)
-            if _stream_id not in self.STATUS:
-                self.STATUS[_stream_id] = {
-                    "START": time.time(),
-                    "CONTENTION": False,
-                    "RFS": _rf_src,
-                    "TGID": _dst_id,
-                    "LAST": time.time(),
-                    "lastSeq": False,
-                    "lastData": False,
-                }
-                if _frame_type == HBPF_DATA_SYNC and _dtype_vseq == HBPF_SLT_VHEAD and len(dmrpkt_obp) >= 33:
-                    try:
-                        decoded_obp = decode.voice_head_term(dmrpkt_obp)
-                        self.STATUS[_stream_id]["LC"] = decoded_obp["LC"]
-                    except Exception:
-                        self.STATUS[_stream_id]["LC"] = LC_OPT + _dst_id + _rf_src
-                else:
-                    self.STATUS[_stream_id]["LC"] = LC_OPT + _dst_id + _rf_src
-            self.STATUS[_stream_id]["LAST"] = time.time()
-            if _slot in self.STATUS:
-                self.STATUS[_slot]["RX_STREAM_ID"] = _stream_id
-                self.STATUS[_slot]["RX_TGID"] = _dst_id
-                self.STATUS[_slot]["RX_RFS"] = _rf_src
-                self.STATUS[_slot]["RX_TIME"] = time.time()
             _data_dmrd = DMRD + _data[4:]
             _hops_out = _inthops.to_bytes(1, "big")
             if self._dmrd_received:
