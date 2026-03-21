@@ -388,12 +388,11 @@ class BridgeUseCases:
             tstatus.pop(stream_id, None)
 
     def on_obp_bcsq_received(self, system_name: str, tgid: bytes, stream_id: bytes) -> None:
-        """After valid BCSQ on this OBP leg: emit END,TX and clear forward STATUS if present (monitor parity; no VTERM to peer)."""
-        if not bool(self._config.get("REPORTS", {}).get("REPORT", True)):
-            return
-        report = self._report_factory
-        if not report or not hasattr(report, "send_bridge_event"):
-            return
+        """After valid BCSQ on this OBP leg: clear forward STATUS if present (no VTERM to peer).
+
+        No BRDG_EVENT: BCSQ is control-plane quench, not a normal call end; reporting would spam
+        the monitor / Last Heard with spurious ends while the real call may continue elsewhere.
+        """
         protocols = self._get_protocols() if self._get_protocols else {}
         tgt_proto = protocols.get(system_name)
         if not tgt_proto:
@@ -408,26 +407,6 @@ class BridgeUseCases:
             return
         if tst.get("TGID", b"\x00\x00\x00") != tgid:
             return
-        now = time.time()
-        rfs = tst.get("RFS", b"\x00\x00\x00")
-        peer = tst.get("RX_PEER", b"\x00\x00\x00\x00")
-        tgid_b = tst.get("TGID", b"\x00\x00\x00")
-        start = tst.get("START", now)
-        duration = max(0.0, now - start)
-        try:
-            report.send_bridge_event(
-                "GROUP VOICE,END,TX,{},{},{},{},{},{},{:.2f}".format(
-                    system_name,
-                    int_id(stream_id),
-                    int_id(peer),
-                    int_id(rfs),
-                    1,
-                    int_id(tgid_b),
-                    duration,
-                )
-            )
-        except Exception:
-            pass
         tstatus.pop(stream_id, None)
 
     def stream_trimmer_loop(self) -> None:
@@ -1431,10 +1410,13 @@ class BridgeUseCases:
                         call_duration,
                     )
                     st["LOOPLOG"] = True
+                    # Report END,TX (not END,RX): this OBP lost loop race; the call may continue on the winning OBP.
+                    # END,RX would (a) spam Last Heard with 0s "ends" and (b) make the monitor pop stream_id from
+                    # every OPENBRIDGES row (rts_update global END,RX), clearing the dashboard before VTERM.
                     if _do_report and self._report_factory and hasattr(self._report_factory, "send_bridge_event"):
                         try:
                             self._report_factory.send_bridge_event(
-                                "GROUP VOICE,END,RX,{},{},{},{},{},{},{:.2f}".format(
+                                "GROUP VOICE,END,TX,{},{},{},{},{},{},{:.2f}".format(
                                     system_name,
                                     int_id(stream_id),
                                     int_id(peer_id),
