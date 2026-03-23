@@ -70,12 +70,6 @@ def _obp_target_bcsq_quenches_stream(
     return False
 
 
-def _log_trace(msg: str, *args: Any) -> None:
-    """Per-packet forwarding diagnostics (BCSQ/BCKA/ACL). Below DEBUG — enable TRACE in LOGGER config to see."""
-    if hasattr(logging, "TRACE"):
-        logger.log(logging.TRACE, msg, *args)
-
-
 def _is_special_tg(bridge_key: str) -> bool:
     """True if bridge is special TGID 9990-9999 (excluded from infinite timer)."""
     if bridge_key and bridge_key[0:1] == "#":
@@ -1438,7 +1432,8 @@ class BridgeUseCases:
                         st["_bcsq"] = True
                 return False
 
-            if st["packets"] > 18 and (st["packets"] / st["START"] > 25):
+            _elapsed = pkt_time - st["START"]
+            if _elapsed > 0 and st["packets"] > 18 and (st["packets"] / _elapsed) > 25:
                 logger.warning(
                     "(%s) *PacketControl* RATE DROP! Stream ID:, %s TGID: %s",
                     system_name,
@@ -1483,7 +1478,9 @@ class BridgeUseCases:
                     ((st["loss"] / st["packets"]) * 100) if st.get("packets") else 0.0,
                 )
                 return False
-            if seq > 0 and _pkt_crc in st["crcs"]:
+            # Match intent of legacy `seq > 0 and crc in set`, but also drop seq==0
+            # retransmissions of the same 53-byte frame (seq is falsy so duplicate-seq check misses).
+            if _pkt_crc in st["crcs"]:
                 st["loss"] += 1
                 logger.debug(
                     "(%s) *PacketControl* DMR packet payload with hash: %s seen before in this stream, disgarding. Stream ID:, %s TGID: %s: SEQ:%s PACKETS: %s, LOSS: %.2f%% ",
@@ -1756,44 +1753,18 @@ class BridgeUseCases:
                         target_tgid = bytes_3(target_tgid)
                     # If target has quenched us, don't send (~1856-1859).
                     if _obp_target_bcsq_quenches_stream(systems_cfg, entry["SYSTEM"], dst_id_b, stream_id):
-                        _log_trace(
-                            "(%s) OBP skip (BCSQ): target=%s TGID=%s stream=%s",
-                            system_name,
-                            entry["SYSTEM"],
-                            int_id(dst_id_b),
-                            int_id(stream_id),
-                        )
                         continue
                     # If target has missed keepalives (ENHANCED_OBP), don't send (~1861-1863)
                     if _target_system.get("ENHANCED_OBP") and (
                         "_bcka" not in _target_system or _target_system["_bcka"] < pkt_time - 60
                     ):
-                        _log_trace(
-                            "(%s) OBP skip (BCKA stale/missing): target=%s _bcka=%s pkt_time=%s",
-                            system_name,
-                            entry["SYSTEM"],
-                            _target_system.get("_bcka"),
-                            pkt_time,
-                        )
                         continue
                     # Talkgroup ACL (global + per-system TG1) (~1865-1873)
                     _global_cfg = self._config.get("GLOBAL", {})
                     if _global_cfg.get("USE_ACL"):
                         if not self.acl_check(target_tgid, _global_cfg.get("TG1_ACL", (True, []))):
-                            _log_trace(
-                                "(%s) OBP skip (global ACL): target=%s TGID=%s",
-                                system_name,
-                                entry["SYSTEM"],
-                                int_id(target_tgid),
-                            )
                             continue
                         if not self.acl_check(target_tgid, _target_system.get("TG1_ACL", (True, []))):
-                            _log_trace(
-                                "(%s) OBP skip (system ACL): target=%s TGID=%s",
-                                system_name,
-                                entry["SYSTEM"],
-                                int_id(target_tgid),
-                            )
                             continue
                     if _target_status is not None:
                         if stream_id not in _target_status:
@@ -2036,11 +2007,6 @@ class BridgeUseCases:
                     "(ROUTER) Bridged TG %s from %s -> %s",
                     bridge_key, system_name, ", ".join(forwarded),
                 )
-        else:
-            _log_trace(
-                "(ROUTER) No ACTIVE targets forwarded for TG %s from %s (%s bridge tables)",
-                bridge_key, system_name, len(bridges),
-            )
 
     def _pvt_call_received(
         self,
