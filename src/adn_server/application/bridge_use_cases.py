@@ -947,6 +947,42 @@ class BridgeUseCases:
         except Exception as e:
             logger.debug("(OPTIONS) options_config_for_system %s: %s", system_name, e)
 
+    def _static_tg_lists_from_runtime_cfg(
+        self, sys_cfg: dict[str, Any]
+    ) -> tuple[float, list[int], list[int]] | None:
+        """Build static TG lists from TS1_STATIC / TS2_STATIC (updated when peers send RPTO)."""
+        prohibited_tgs = (0, 1, 2, 3, 4, 5, 9, 9990, 9991, 9992, 9993, 9994, 9995, 9996, 9997, 9998, 9999)
+        tmout = float(sys_cfg.get("DEFAULT_UA_TIMER", 10))
+        if tmout <= 0:
+            tmout = 35791394.0
+        ts1_list: list[int] = []
+        ts2_list: list[int] = []
+        for tg_s in str(sys_cfg.get("TS1_STATIC") or "").split(","):
+            if not tg_s.strip():
+                continue
+            try:
+                tg = int(tg_s.strip())
+            except ValueError:
+                continue
+            if tg in prohibited_tgs:
+                continue
+            ts1_list.append(tg)
+        for tg_s in str(sys_cfg.get("TS2_STATIC") or "").split(","):
+            if not tg_s.strip():
+                continue
+            try:
+                tg = int(tg_s.strip())
+            except ValueError:
+                continue
+            if tg in prohibited_tgs:
+                continue
+            if tg == 0 or tg >= 16777215:
+                continue
+            ts2_list.append(tg)
+        if not ts1_list and not ts2_list:
+            return None
+        return (tmout, ts1_list, ts2_list)
+
     def _parse_options_static_tgs(self, opt_str: str, sys_cfg: dict) -> tuple[float, list[int], list[int]] | None:
         """Parse OPTIONS string; return (tmout, ts1_tg_list, ts2_tg_list) or None. Used to apply static TGs to an existing bridge."""
         try:
@@ -1002,16 +1038,17 @@ class BridgeUseCases:
             return None
 
     def apply_static_tg_to_bridge(self, tg_int: int) -> None:
-        """When a bridge was just created from OBP, mark MASTER systems that have this TG as static (OPTIONS) as ACTIVE so the first OBP traffic reaches them."""
+        """When a bridge was just created from OBP, mark MASTER systems that have this TG in static TS1/TS2 (runtime lists or OPTIONS) ACTIVE so the first OBP traffic reaches them."""
         systems_cfg = self._config.get("SYSTEMS", {})
         for _system in systems_cfg:
             if systems_cfg.get(_system, {}).get("MODE") != "MASTER":
                 continue
             if not systems_cfg.get(_system, {}).get("ENABLED", True):
                 continue
-            if "OPTIONS" not in systems_cfg.get(_system, {}):
-                continue
-            parsed = self._parse_options_static_tgs(systems_cfg[_system]["OPTIONS"], systems_cfg[_system])
+            sys_cfg = systems_cfg[_system]
+            parsed = self._static_tg_lists_from_runtime_cfg(sys_cfg)
+            if parsed is None and "OPTIONS" in sys_cfg:
+                parsed = self._parse_options_static_tgs(sys_cfg["OPTIONS"], sys_cfg)
             if not parsed:
                 continue
             _tmout, ts1_list, ts2_list = parsed
