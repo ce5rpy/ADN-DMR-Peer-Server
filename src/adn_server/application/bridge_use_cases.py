@@ -679,18 +679,79 @@ class BridgeUseCases:
                 bridgetemp.append(bridgesystem)
         bridges[bridge] = list(bridgetemp)
 
+    def _ensure_master_legs_in_tg_bridge(self, tg: int, system: str, _tmout: float) -> None:
+        """If BRIDGES[tg] exists but this MASTER has no TS1/TS2 rows, append them.
+
+        Legacy parity: make_stat_bridge and OPTIONS UA re-add create TS1+TS2 per MASTER; if a bridge
+        was built earlier without this system, make_static_tg must insert missing legs before ACTIVE.
+        """
+        sys_cfg = self._config.get("SYSTEMS", {}).get(system, {})
+        if sys_cfg.get("MODE") != "MASTER":
+            return
+        bridge_key = str(tg)
+        if bridge_key[:1] == "#":
+            return
+        bridges = self._router.get_bridges()
+        entries = bridges.get(bridge_key)
+        if not entries:
+            return
+        tgid_b = bytes_3(tg)
+        if bridge_key in ("9990", "9991", "9992", "9993", "9994", "9995", "9996", "9997", "9998", "9999"):
+            tmout_eff = 1.0 / 6.0
+        else:
+            tmout_eff = float(_tmout)
+        if tmout_eff <= 0:
+            tmout_eff = 35791394.0
+        timeout_sec = tmout_eff * 60.0
+        now = time.time()
+        has_ts1 = any(e.get("SYSTEM") == system and e.get("TS") == 1 for e in entries)
+        has_ts2 = any(e.get("SYSTEM") == system and e.get("TS") == 2 for e in entries)
+        if not has_ts1:
+            entries.append(
+                {
+                    "SYSTEM": system,
+                    "TS": 1,
+                    "TGID": tgid_b,
+                    "ACTIVE": False,
+                    "TIMEOUT": timeout_sec,
+                    "TO_TYPE": "ON",
+                    "OFF": [],
+                    "ON": [tgid_b],
+                    "RESET": [],
+                    "TIMER": now + timeout_sec,
+                }
+            )
+        if not has_ts2:
+            entries.append(
+                {
+                    "SYSTEM": system,
+                    "TS": 2,
+                    "TGID": tgid_b,
+                    "ACTIVE": False,
+                    "TIMEOUT": timeout_sec,
+                    "TO_TYPE": "ON",
+                    "OFF": [],
+                    "ON": [tgid_b],
+                    "RESET": [],
+                    "TIMER": now + timeout_sec,
+                }
+            )
+
     def make_static_tg(self, tg: int, ts: int, _tmout: float, system: str) -> None:
         """Legacy make_static_tg: ensure bridge for tg exists and set system/ts to ACTIVE/OFF."""
-        if str(tg) not in self._router.get_bridges():
+        bridges = self._router.get_bridges()
+        key = str(tg)
+        if key not in bridges or not bridges.get(key):
             self.make_single_bridge(bytes_3(tg), system, ts, _tmout)
+        self._ensure_master_legs_in_tg_bridge(tg, system, _tmout)
         bridges = self._router.get_bridges()
         bridgetemp = deque()
-        for bridgesystem in bridges.get(str(tg), []):
+        for bridgesystem in bridges.get(key, []):
             if bridgesystem.get("SYSTEM") == system and bridgesystem.get("TS") == ts:
                 bridgetemp.append({"SYSTEM": system, "TS": ts, "TGID": bytes_3(tg), "ACTIVE": True, "TIMEOUT": _tmout * 60.0, "TO_TYPE": "OFF", "OFF": [], "ON": [bytes_3(tg)], "RESET": [], "TIMER": time.time() + _tmout * 60.0})
             else:
                 bridgetemp.append(bridgesystem)
-        bridges[str(tg)] = list(bridgetemp)
+        bridges[key] = list(bridgetemp)
 
     def reset_static_tg(self, tg: int, ts: int, _tmout: float, system: str) -> None:
         """Legacy reset_static_tg: set system/ts entry to ACTIVE False, TO_TYPE ON."""
