@@ -88,9 +88,14 @@ class VoiceUseCases:
 
     def _build_announcement_targets(
         self, tg_int: int, tg_str: str, label: str
-    ) -> list[dict[str, Any]]:
-        """MASTER systems with active bridge for tg_int and idle slot (legacy target list)."""
+    ) -> tuple[list[dict[str, Any]], int]:
+        """MASTER systems with active bridge for tg_int and idle slot (legacy target list).
+
+        Returns (targets, busy_count). busy_count increments when a candidate slot is skipped
+        because a QSO is active (RX/TX not VTERM), for anti-collision retry scheduling.
+        """
         targets: list[dict[str, Any]] = []
+        busy_count = 0
         protocols = self._get_protocols() if self._get_protocols else {}
         systems_cfg = self._config.get("SYSTEMS", {})
         bridges = self._get_bridges() if self._get_bridges else {}
@@ -128,10 +133,11 @@ class VoiceUseCases:
                 rx_type = slot.get("RX_TYPE")
                 tx_type = slot.get("TX_TYPE")
                 if (rx_type != HBPF_SLT_VTERM) or (tx_type != HBPF_SLT_VTERM):
-                    logger.debug("(%s) System %s TS%s busy, skipping", label, sys_name, ts)
+                    logger.debug("(%s) System %s TS%s busy (QSO active), skipping", label, sys_name, ts)
+                    busy_count += 1
                     continue
                 targets.append({"sys_obj": sys_obj, "name": sys_name, "slot": slot, "ts": ts})
-        return targets
+        return targets, busy_count
 
     def _send_filtered_by_tg(
         self, sys_obj: Any, pkt: bytes, tg: int, ts: int, bridges: dict[str, list[dict[str, Any]]]
@@ -236,7 +242,7 @@ class VoiceUseCases:
     ) -> None:
         """Send one batch of packets; schedule next via call_later."""
         total = len(pkts_by_ts.get(1, []))
-        if pkt_idx >= total:
+        if pkt_idx >= total or not targets:
             self._mark_slots_free(targets)
             for t in targets:
                 try:
@@ -248,7 +254,41 @@ class VoiceUseCases:
                 except Exception:
                     pass
             self._announcement_running[ann_idx] = False
-            logger.info("(%s) Broadcast complete: %s packets sent to %s targets", label, total, len(targets))
+            if not targets:
+                logger.info(
+                    "(%s) Broadcast aborted at packet %s/%s: all targets removed (QSO collision)",
+                    label,
+                    pkt_idx,
+                    total,
+                )
+            else:
+                logger.info("(%s) Broadcast complete: %s packets sent to %s targets", label, total, len(targets))
+            self._broadcast_finished(tg)
+            return
+        collided: list[dict[str, Any]] = []
+        for t in targets:
+            slot = t["slot"]
+            if slot.get("RX_TYPE") != HBPF_SLT_VTERM:
+                logger.info(
+                    "(%s) QSO detected on %s/TS%s during broadcast (packet %s/%s), removing target",
+                    label,
+                    t["name"],
+                    t["ts"],
+                    pkt_idx,
+                    total,
+                )
+                slot["TX_TYPE"] = HBPF_SLT_VTERM
+                collided.append(t)
+        for t in collided:
+            targets.remove(t)
+        if not targets:
+            self._announcement_running[ann_idx] = False
+            logger.info(
+                "(%s) Broadcast stopped: all targets had QSO collision at packet %s/%s",
+                label,
+                pkt_idx,
+                total,
+            )
             self._broadcast_finished(tg)
             return
         bridges = self._get_bridges() if self._get_bridges else {}
@@ -316,7 +356,6 @@ class VoiceUseCases:
                 return
             if self._announcement_last_hour.get(ann_idx) == now.hour:
                 return
-            self._announcement_last_hour[ann_idx] = now.hour
         _tg = int(item.get("TG", 0))
         if str(_tg) in self._broadcast_active_tgs and _retry < 60:
             if _retry == 0:
@@ -343,10 +382,22 @@ class VoiceUseCases:
             logger.warning("(%s) AMBE file empty or not found: %s/ondemand/%s.ambe", label, _lang, _file)
             return
         tg_str = str(_tg)
-        targets = self._build_announcement_targets(_tg, tg_str, label)
+        targets, busy_count = self._build_announcement_targets(_tg, tg_str, label)
         if not targets:
+            if busy_count > 0 and _retry < 60:
+                if _retry == 0:
+                    logger.info(
+                        "(%s) All %s target slots busy (QSO active), waiting for QSO to finish...",
+                        label,
+                        busy_count,
+                    )
+                if self._call_later:
+                    self._call_later(5.0, self.scheduled_announcement, ann_idx, _retry + 1)
+                return
             logger.info("(%s) No systems with active bridge for TG %s to send to", label, _tg)
             return
+        if mode == "hourly":
+            self._announcement_last_hour[ann_idx] = datetime.now().hour
         _say_list = [_say]
         pkts_by_ts = {
             1: list(self.pkt_gen(_source_id, _dst_id, server_id, 0, _say_list)),
@@ -385,7 +436,6 @@ class VoiceUseCases:
                 return
             if self._tts_last_hour.get(tts_idx) == now.hour:
                 return
-            self._tts_last_hour[tts_idx] = now.hour
         _tg = int(item.get("TG", 0))
         if str(_tg) in self._broadcast_active_tgs and _retry < 60:
             if _retry == 0:
@@ -435,11 +485,34 @@ class VoiceUseCases:
             self._tts_running[tts_idx] = False
             return
         tg_str = str(_tg)
-        targets = self._build_announcement_targets(_tg, tg_str, label)
+        targets, busy_count = self._build_announcement_targets(_tg, tg_str, label)
         if not targets:
+            if busy_count > 0 and _retry < 60:
+                if _retry == 0:
+                    logger.info(
+                        "(%s) All %s target slots busy (QSO active), waiting for QSO to finish...",
+                        label,
+                        busy_count,
+                    )
+                if self._call_later:
+                    self._call_later(
+                        5.0,
+                        self._tts_conversion_done,
+                        ambe_path,
+                        tts_idx,
+                        _file,
+                        _tg,
+                        _lang,
+                        mode,
+                        label,
+                        _retry + 1,
+                    )
+                return
             self._tts_running[tts_idx] = False
             logger.info("(%s) No systems with active bridge for TG %s to send to", label, _tg)
             return
+        if mode == "hourly":
+            self._tts_last_hour[tts_idx] = datetime.now().hour
         _say_list = [_say]
         pkts_by_ts = {
             1: list(self.pkt_gen(_source_id, _dst_id, server_id, 0, _say_list)),
@@ -470,7 +543,7 @@ class VoiceUseCases:
     ) -> None:
         """Same as _announcement_send_broadcast but clears _tts_running."""
         total = len(pkts_by_ts.get(1, []))
-        if pkt_idx >= total:
+        if pkt_idx >= total or not targets:
             self._mark_slots_free(targets)
             for t in targets:
                 try:
@@ -482,7 +555,41 @@ class VoiceUseCases:
                 except Exception:
                     pass
             self._tts_running[tts_idx] = False
-            logger.info("(%s) Broadcast complete: %s packets sent to %s targets", label, total, len(targets))
+            if not targets:
+                logger.info(
+                    "(%s) Broadcast aborted at packet %s/%s: all targets removed (QSO collision)",
+                    label,
+                    pkt_idx,
+                    total,
+                )
+            else:
+                logger.info("(%s) Broadcast complete: %s packets sent to %s targets", label, total, len(targets))
+            self._broadcast_finished(tg)
+            return
+        collided: list[dict[str, Any]] = []
+        for t in targets:
+            slot = t["slot"]
+            if slot.get("RX_TYPE") != HBPF_SLT_VTERM:
+                logger.info(
+                    "(%s) QSO detected on %s/TS%s during broadcast (packet %s/%s), removing target",
+                    label,
+                    t["name"],
+                    t["ts"],
+                    pkt_idx,
+                    total,
+                )
+                slot["TX_TYPE"] = HBPF_SLT_VTERM
+                collided.append(t)
+        for t in collided:
+            targets.remove(t)
+        if not targets:
+            self._tts_running[tts_idx] = False
+            logger.info(
+                "(%s) Broadcast stopped: all targets had QSO collision at packet %s/%s",
+                label,
+                pkt_idx,
+                total,
+            )
             self._broadcast_finished(tg)
             return
         bridges = self._get_bridges() if self._get_bridges else {}
