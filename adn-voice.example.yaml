@@ -56,7 +56,7 @@ VOICE:
   # The system encodes it to .ambe (via AMBEServer or vocoder) and plays it.
   # Later: if .ambe exists and is newer than .txt, uses cached .ambe directly.
   # ENABLED: true to activate; requires TTS_VOCODER_CMD or TTS_AMBESERVER_HOST
-  # See docs/TTS_SETUP.md for full setup and troubleshooting.
+  # See docs/en/server/user-guide/voice-and-tts.md for the TTS pipeline and troubleshooting.
   # ---------------------------------------------------------------------------
 
   # External vocoder command ({wav} and {ambe} are replaced at runtime).

@@ -32,8 +32,12 @@ data/*.bak
 !data/.gitkeep
 json/*
 !json/.gitkeep
-docs/*
-!docs/PARROT.md
+
+# Internal 
+docs-priv/
+
+# MkDocs build output (site/en, site/es)
+site/
 
 # -----------------------------------------------------------------------------
 # Python
