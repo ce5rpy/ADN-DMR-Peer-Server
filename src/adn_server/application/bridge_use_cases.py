@@ -114,6 +114,8 @@ class BridgeUseCases:
         _debug_msgs: list[str] = []
 
         for bridge_key, entries in list(bridges.items()):
+            if bridge_key not in bridges:
+                continue
             bridge_used = False
             is_special_tg = _is_special_tg(bridge_key)
 
@@ -215,6 +217,8 @@ class BridgeUseCases:
             dialroll = 0
             activeroll = 0
             for _bridge, entries in list(bridges.items()):
+                if _bridge not in bridges:
+                    continue
                 for enabled_system in entries:
                     if enabled_system.get("SYSTEM") == system:
                         bridgeroll += 1
@@ -239,12 +243,16 @@ class BridgeUseCases:
                 _tmout = float(systems_cfg.get(system, {}).get("DEFAULT_UA_TIMER", 10))
                 times: dict[float, str] = {}
                 for _bridge, entries in list(bridges.items()):
+                    if _bridge not in bridges:
+                        continue
                     for enabled_system in entries:
                         if enabled_system.get("ACTIVE") and _bridge and _bridge[:1] == "#":
                             t = enabled_system.get("TIMER")
                             if isinstance(t, (int, float)):
                                 times[t] = _bridge
                 for _bridge in set(times.values()):
+                    if _bridge not in bridges:
+                        continue
                     logger.warning("(BRIDGEDEBUG) deactivating system: %s for bridge: %s", system, _bridge)
                     try:
                         _setbridge = int(_bridge[1:]) if _bridge[:1] == "#" else int(_bridge)
@@ -280,6 +288,8 @@ class BridgeUseCases:
         dst_id_b = dst_id if isinstance(dst_id, bytes) and len(dst_id) >= 3 else bytes_3(_dst_group)
 
         for _bridge, entries in list(bridges.items()):
+            if _bridge not in bridges:
+                continue
             for _system in entries:
                 if _system.get("SYSTEM") != system_name:
                     continue
@@ -513,6 +523,8 @@ class BridgeUseCases:
         """Remove all bridge entries for system (legacy remove_bridge_system)."""
         to_remove: list[str] = []
         for bridge_key, entries in list(bridges.items()):
+            if bridge_key not in bridges:
+                continue
             new_entries = [e for e in entries if e.get("SYSTEM") != system_name]
             if len(new_entries) < len(entries):
                 if new_entries:
@@ -528,6 +540,8 @@ class BridgeUseCases:
         bridges = self._router.get_bridges()
         remove_bridges: deque = deque()
         for bridge_key, entries in list(bridges.items()):
+            if bridge_key not in bridges:
+                continue
             has_stat = any(e.get("TO_TYPE") == "STAT" for e in entries)
             in_use = any(
                 (e.get("TO_TYPE") == "ON" and e.get("ACTIVE")) or e.get("TO_TYPE") == "OFF"
@@ -760,7 +774,7 @@ class BridgeUseCases:
         if key not in bridges:
             return
         bridgetemp = deque()
-        for bridgesystem in bridges[key]:
+        for bridgesystem in bridges.get(key, []):
             if bridgesystem.get("SYSTEM") == system and bridgesystem.get("TS") == ts:
                 bridgetemp.append({"SYSTEM": system, "TS": ts, "TGID": bytes_3(tg), "ACTIVE": False, "TIMEOUT": _tmout * 60.0, "TO_TYPE": "ON", "OFF": [], "ON": [bytes_3(tg)], "RESET": [], "TIMER": time.time() + _tmout * 60.0})
             else:
@@ -773,6 +787,8 @@ class BridgeUseCases:
         timeout_sec = _tmout * 60.0
         now = time.time()
         for bridge in list(bridges.keys()):
+            if bridge not in bridges:
+                continue
             if bridge[:1] != "#":
                 continue
             bridgetemp = deque()
@@ -789,6 +805,8 @@ class BridgeUseCases:
         """Legacy remove_bridge_system: set all entries for system to ACTIVE False, TO_TYPE ON."""
         bridges = self._router.get_bridges()
         for _bridge in list(bridges.keys()):
+            if _bridge not in bridges:
+                continue
             bridgetemp = deque()
             for bridgesystem in bridges.get(_bridge, []):
                 if bridgesystem.get("SYSTEM") != system:
@@ -822,9 +840,11 @@ class BridgeUseCases:
         """Legacy deactivate_all_dynamic_bridges: deactivate all non-STAT, non-reflector bridges for a system (TG 4000)."""
         bridges = self._router.get_bridges()
         for _bridge in list(bridges):
+            if _bridge not in bridges:
+                continue
             if _bridge[:1] == "#":
                 continue
-            for _sys_entry in bridges[_bridge]:
+            for _sys_entry in bridges.get(_bridge, []):
                 if _sys_entry.get("SYSTEM") == system_name and _sys_entry.get("TO_TYPE") != "STAT":
                     if _sys_entry.get("ACTIVE"):
                         _sys_entry["ACTIVE"] = False
@@ -839,6 +859,8 @@ class BridgeUseCases:
         timeout_sec = _tmout * 60.0
         now = time.time()
         for _bridge in list(bridges.keys()):
+            if _bridge not in bridges:
+                continue
             has_ts1 = any(e.get("SYSTEM") == system and e.get("TS") == 1 for e in bridges.get(_bridge, []))
             has_ts2 = any(e.get("SYSTEM") == system and e.get("TS") == 2 for e in bridges.get(_bridge, []))
             if _bridge[:1] != "#":
@@ -1835,6 +1857,9 @@ class BridgeUseCases:
         sys_ignore_obp: set[tuple[str, int]] = set()
         forwarded = []
         for _bridge_table_name, _bridge_rows in list(bridges.items()):
+            # Legacy: routerOBP/routerHBP to_target — if BRIDGES[_bridge] was removed mid-routing, skip
+            if _bridge_table_name not in bridges:
+                continue
             if not any(_row_is_active_source(r) for r in _bridge_rows):
                 continue
             for entry in _bridge_rows:
