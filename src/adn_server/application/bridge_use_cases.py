@@ -965,6 +965,12 @@ class BridgeUseCases:
             new_ts2 = str(_options.get("TS2_STATIC") or "").strip()
             if re.search(r"[^\d,]", new_ts1) or re.search(r"[^\d,]", new_ts2):
                 return
+            # Peers may resend identical RPTO on every voice burst. YAML may already match parsed TS — do not
+            # compare only to TS*_STATIC (first RPTO could skip make_static_tg). Skip if we already applied
+            # this exact fingerprint after a previous RPTO in this process.
+            _fp = f"{new_ts1}|{new_ts2}|{int(_tmout)}"
+            if sys_cfg.get("_options_static_apply_fp") == _fp:
+                return
             # Legacy: reset TGs that were removed (bridge_master.py 1736-1767)
             old_ts1 = str(sys_cfg.get("TS1_STATIC") or "").strip()
             old_ts2 = str(sys_cfg.get("TS2_STATIC") or "").strip()
@@ -1025,6 +1031,7 @@ class BridgeUseCases:
             systems_cfg[system_name]["TS1_STATIC"] = new_ts1
             systems_cfg[system_name]["TS2_STATIC"] = new_ts2
             systems_cfg[system_name]["DEFAULT_UA_TIMER"] = int(_tmout)
+            systems_cfg[system_name]["_options_static_apply_fp"] = _fp
             if new_ts1 or new_ts2:
                 logger.info("(OPTIONS) %s static TGs applied: TS1=%s TS2=%s", system_name, new_ts1 or "-", new_ts2 or "-")
         except Exception as e:
@@ -1754,6 +1761,11 @@ class BridgeUseCases:
             self.options_config_for_system(system_name)
             bridges = self._router.get_bridges()
             has_source = any(_row_is_active_source(e) for elist in bridges.values() for e in elist)
+        # Do not call make_single_bridge here for 9990–9999 when BRIDGES["9990"] already exists:
+        # make_single_bridge replaces the whole table and only sets the source MASTER ACTIVE; every
+        # other system (including ECHO with TO_TYPE NONE) becomes ACTIVE False — to_target then has
+        # no active target for the parrot path (legacy _make_echo_bridges / make_bridges keeps ECHO
+        # ACTIVE True; activation of the source row is via in-band ON on VTERM, bridge_master ~3465).
         if not has_source:
             logger.debug(
                 "(ROUTER) No matching source rule for TG %s from %s slot %s (ACTIVE), not forwarding",
