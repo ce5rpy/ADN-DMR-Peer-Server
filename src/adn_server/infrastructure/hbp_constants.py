@@ -21,7 +21,23 @@
 #   Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301  USA
 ###############################################################################
 
-"""Homebrew protocol opcodes and frame types (legacy const.py)."""
+"""Homebrew protocol opcodes and frame types (legacy const.py).
+
+Frame types and protocol-level constants live in domain.hbp_protocol (the
+canonical source); they are re-exported here so existing infrastructure
+imports keep working.
+"""
+
+from ..domain.hbp_protocol import (  # noqa: F401 — re-export
+    HBPF_VOICE,
+    HBPF_VOICE_SYNC,
+    HBPF_DATA_SYNC,
+    HBPF_SLT_VHEAD,
+    HBPF_SLT_VTERM,
+    VER,
+    PROTO_VER,
+    STREAM_TO,
+)
 
 # DMR
 DMR = b"DMR"
@@ -58,16 +74,3 @@ BCVE = b"BCVE"
 # Proxy
 PRIN = b"PRIN"
 PRBL = b"PRBL"
-
-# Frame types (bits)
-HBPF_VOICE = 0x0
-HBPF_VOICE_SYNC = 0x1
-HBPF_DATA_SYNC = 0x2
-HBPF_SLT_VHEAD = 0x1
-HBPF_SLT_VTERM = 0x2
-
-VER = 5
-PROTO_VER = 5
-
-# Legacy const.py: stream timeout (seconds) for contention
-STREAM_TO = 0.36

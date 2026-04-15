@@ -30,8 +30,7 @@ from random import randint
 from time import sleep, time
 from typing import Any
 
-from ..domain import int_id, bytes_4
-from ..infrastructure.hbp_constants import HBPF_DATA_SYNC, HBPF_SLT_VTERM
+from ..domain import int_id, bytes_4, HBPF_DATA_SYNC, HBPF_SLT_VTERM
 
 logger = logging.getLogger(__name__)
 

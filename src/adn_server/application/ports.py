@@ -139,7 +139,7 @@ class VoiceProvider(ABC):
         ...
 
     @abstractmethod
-    def ensure_tts_ambe(self, text: str, lang: str, out_path: str, config: dict[str, Any]) -> str | None:
+    def ensure_tts_ambe(self, config: dict[str, Any], item: dict[str, Any], audio_path: str) -> str | None:
         """TTS to AMBE file; return path or None. Legacy tts_engine.ensure_tts_ambe."""
         ...
 

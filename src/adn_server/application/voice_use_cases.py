@@ -32,9 +32,7 @@ import time
 from datetime import datetime
 from typing import Any, Callable
 
-from ..domain import bytes_3
-from ..infrastructure.hbp_constants import HBPF_SLT_VHEAD, HBPF_SLT_VTERM
-from ..infrastructure.voice.tts_engine import ensure_tts_ambe as tts_ensure_tts_ambe
+from ..domain import bytes_3, HBPF_SLT_VHEAD, HBPF_SLT_VTERM
 from .ports import VoiceProvider
 
 logger = logging.getLogger(__name__)
@@ -448,12 +446,12 @@ class VoiceUseCases:
         self._tts_running[tts_idx] = True
         logger.info("(%s) Starting TTS conversion in background thread for %s", label, _file)
         if self._defer_to_thread:
-            d = self._defer_to_thread(tts_ensure_tts_ambe, self._config, item, self._audio_path)
+            d = self._defer_to_thread(self._voice.ensure_tts_ambe, self._config, item, self._audio_path)
             d.addCallback(self._tts_conversion_done, tts_idx, _file, _tg, _lang, mode, label)
             d.addErrback(self._tts_conversion_error, tts_idx, label)
         else:
             try:
-                ambe_path = tts_ensure_tts_ambe(self._config, item, self._audio_path)
+                ambe_path = self._voice.ensure_tts_ambe(self._config, item, self._audio_path)
                 self._tts_conversion_done(ambe_path, tts_idx, _file, _tg, _lang, mode, label)
             except Exception as e:
                 self._tts_conversion_error(e, tts_idx, label)

@@ -1,4 +1,4 @@
-# ADN DMR Peer Server - domain layer
+# ADN DMR Peer Server - HBP protocol constants (domain)
 # Copyright (C) 2026  Rodrigo Pérez, CE5RPY <ce5rpy@qmd.cl>
 #
 # Derived from ADN DMR Server / FreeDMR  / HBlink. Original license:
@@ -21,45 +21,23 @@
 #   Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301  USA
 ###############################################################################
 
-from .entities import BridgeEntry, StreamState, SystemConfig
-from .value_objects import DmrId, TgId, Slot, CallType, bytes_3, bytes_4, int_id, ID_MIN, ID_MAX, PEER_MAX
-from .errors import DomainError, ConfigError, ACLError
-from .result import Result, Success, Fail, is_fail, is_ok, unwrap_or
-from .hbp_protocol import (
-    HBPF_VOICE, HBPF_VOICE_SYNC, HBPF_DATA_SYNC,
-    HBPF_SLT_VHEAD, HBPF_SLT_VTERM,
-    VER, PROTO_VER, STREAM_TO,
-)
+"""HBP frame types and protocol-level constants used across layers.
 
-__all__ = [
-    "BridgeEntry",
-    "StreamState",
-    "SystemConfig",
-    "DmrId",
-    "TgId",
-    "Slot",
-    "CallType",
-    "bytes_3",
-    "bytes_4",
-    "int_id",
-    "ID_MIN",
-    "ID_MAX",
-    "PEER_MAX",
-    "DomainError",
-    "ConfigError",
-    "ACLError",
-    "Result",
-    "Success",
-    "Fail",
-    "is_fail",
-    "is_ok",
-    "unwrap_or",
-    "HBPF_VOICE",
-    "HBPF_VOICE_SYNC",
-    "HBPF_DATA_SYNC",
-    "HBPF_SLT_VHEAD",
-    "HBPF_SLT_VTERM",
-    "VER",
-    "PROTO_VER",
-    "STREAM_TO",
-]
+These are pure protocol vocabulary (no Twisted, no I/O dependencies) and
+belong in the domain layer so application use cases can reference them
+without importing infrastructure.
+"""
+
+# Frame types (bits)
+HBPF_VOICE = 0x0
+HBPF_VOICE_SYNC = 0x1
+HBPF_DATA_SYNC = 0x2
+HBPF_SLT_VHEAD = 0x1
+HBPF_SLT_VTERM = 0x2
+
+# Protocol version
+VER = 5
+PROTO_VER = 5
+
+# Stream timeout (seconds) for contention (legacy const.py)
+STREAM_TO = 0.36

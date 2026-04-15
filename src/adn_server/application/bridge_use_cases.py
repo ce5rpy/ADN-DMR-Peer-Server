@@ -39,8 +39,7 @@ from dmr_utils3 import bptc
 from dmr_utils3 import decode
 from dmr_utils3.const import LC_OPT
 
-from ..domain import int_id, bytes_3, bytes_4
-from ..infrastructure.hbp_constants import HBPF_DATA_SYNC, HBPF_SLT_VHEAD, HBPF_SLT_VTERM, STREAM_TO
+from ..domain import int_id, bytes_3, bytes_4, HBPF_DATA_SYNC, HBPF_SLT_VHEAD, HBPF_SLT_VTERM, STREAM_TO
 from .ports import BridgeRouter
 
 logger = logging.getLogger(__name__)
