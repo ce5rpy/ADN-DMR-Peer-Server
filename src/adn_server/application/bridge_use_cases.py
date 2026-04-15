@@ -282,13 +282,21 @@ class BridgeUseCases:
     def apply_in_band_signalling(
         self, system_name: str, slot: int, dst_id: bytes, pkt_time: float
     ) -> None:
-        """Legacy in-band signalling on voice terminator (bridge.py 817-866): reset TIMER, ON/OFF activation."""
+        """Legacy in-band signalling on voice terminator (bridge_master.py ~3447-3549).
+
+        Reflector bridges (#xxx) are ONLY processed when dst TG is 9 (legacy ~3455).
+        De-activation distinguishes SINGLE_MODE True/False (legacy ~3484-3548).
+        """
         bridges = self._router.get_bridges()
+        systems_cfg = self._config.get("SYSTEMS", {})
         _dst_group = int_id(dst_id)
         dst_id_b = dst_id if isinstance(dst_id, bytes) and len(dst_id) >= 3 else bytes_3(_dst_group)
 
         for _bridge, entries in list(bridges.items()):
             if _bridge not in bridges:
+                continue
+            # Legacy bridge_master.py ~3455: reflector bridges only respond to TG9
+            if _bridge[:1] == "#" and _dst_group != 9:
                 continue
             for _system in entries:
                 if _system.get("SYSTEM") != system_name:
@@ -301,7 +309,7 @@ class BridgeUseCases:
                         tgid_match = int_id(_tgid) == _dst_group
                     except (TypeError, ValueError):
                         pass
-                # TGID matches a rule source, reset its timer
+                # [1] TGID matches a rule source, reset its timer
                 if slot == _ts and tgid_match:
                     to_type = _system.get("TO_TYPE", "")
                     active = _system.get("ACTIVE", False)
@@ -310,9 +318,9 @@ class BridgeUseCases:
                     if (to_type == "ON" and active) or (to_type == "OFF" and not active):
                         if timeout_sec:
                             _system["TIMER"] = pkt_time + timeout_sec
-                            logger.info("(%s) Transmission match for Bridge: %s. Reset timeout to %s", system_name, _bridge, _system["TIMER"])
+                            logger.info("(%s) [1] Transmission match for Bridge: %s. Reset timeout to %s", system_name, _bridge, _system["TIMER"])
 
-                # TGID matches an ACTIVATION trigger (dst_id in ON or RESET)
+                # [2-4] TGID matches an ACTIVATION trigger (dst_id in ON or RESET)
                 on_list = _system.get("ON") or []
                 reset_list = _system.get("RESET") or []
                 if slot == _ts and (dst_id_b in on_list or dst_id_b in reset_list or any(int_id(x) == _dst_group for x in on_list) or any(int_id(x) == _dst_group for x in reset_list)):
@@ -320,30 +328,66 @@ class BridgeUseCases:
                         if not _system.get("ACTIVE"):
                             _system["ACTIVE"] = True
                             _system["TIMER"] = pkt_time + (float(_system.get("TIMEOUT") or 0) or 0)
-                            logger.info("(%s) Bridge: %s, connection changed to state: %s", system_name, _bridge, _system["ACTIVE"])
+                            logger.info("(%s) [2] Bridge: %s, connection changed to state: %s", system_name, _bridge, _system["ACTIVE"])
                             if _system.get("TO_TYPE") == "OFF":
                                 _system["TIMER"] = pkt_time
-                                logger.info("(%s) Bridge: %s set to \"OFF\" with an on timer rule: timeout timer cancelled", system_name, _bridge)
+                                logger.info("(%s) [3] Bridge: %s set to \"OFF\" with an on timer rule: timeout timer cancelled", system_name, _bridge)
                         if _system.get("ACTIVE") and _system.get("TO_TYPE") == "ON" and _system.get("TIMEOUT"):
                             _system["TIMER"] = pkt_time + float(_system["TIMEOUT"])
-                            logger.info("(%s) Bridge: %s, timeout timer reset to: %s", system_name, _bridge, _system["TIMER"] - pkt_time)
+                            logger.info("(%s) [4] Bridge: %s, timeout timer reset to: %s", system_name, _bridge, _system["TIMER"] - pkt_time)
 
-                # TGID matches a DE-ACTIVATION trigger (dst_id in OFF or RESET)
-                off_list = _system.get("OFF") or []
-                if slot == _ts and (dst_id_b in off_list or dst_id_b in reset_list or any(int_id(x) == _dst_group for x in off_list) or any(int_id(x) == _dst_group for x in reset_list)):
-                    if dst_id_b in off_list or any(int_id(x) == _dst_group for x in off_list):
-                        if _system.get("ACTIVE"):
-                            _system["ACTIVE"] = False
-                            logger.info("(%s) Bridge: %s, connection changed to state: %s", system_name, _bridge, _system["ACTIVE"])
-                            if _system.get("TO_TYPE") == "ON":
-                                _system["TIMER"] = pkt_time
-                                logger.info("(%s) Bridge: %s set to ON with and \"OFF\" timer rule: timeout timer cancelled", system_name, _bridge)
+                # [5-8] TGID matches a DE-ACTIVATION trigger
+                # Legacy bridge_master.py ~3484-3548: SINGLE_MODE True vs False
+                sys_cfg = systems_cfg.get(system_name, {})
+                is_single_mode = sys_cfg.get("MODE") == "MASTER" and sys_cfg.get("SINGLE_MODE", False)
+
+                if is_single_mode:
+                    # SINGLE_MODE=True: aggressive de-activation (legacy ~3484-3503)
+                    off_list = _system.get("OFF") or []
+                    if slot == _ts and (dst_id_b in off_list or dst_id_b in reset_list or dst_id_b == bytes_3(4000) or dst_id_b != _tgid):
+                        if dst_id_b in off_list or dst_id_b != _tgid or dst_id_b == bytes_3(4000):
+                            if _system.get("ACTIVE"):
+                                _system["ACTIVE"] = False
+                                logger.info("(%s) [5] Bridge: %s, connection changed to state: %s", system_name, _bridge, _system["ACTIVE"])
+                                if _system.get("TO_TYPE") == "ON":
+                                    _system["TIMER"] = pkt_time
+                                    logger.info("(%s) [6] Bridge: %s set to \"OFF\" with an on timer rule: timeout timer cancelled", system_name, _bridge)
                         if not _system.get("ACTIVE") and _system.get("TO_TYPE") == "OFF" and _system.get("TIMEOUT"):
                             _system["TIMER"] = pkt_time + float(_system["TIMEOUT"])
-                            logger.info("(%s) Bridge: %s, timeout timer reset to: %s", system_name, _bridge, _system["TIMER"] - pkt_time)
-                        if _system.get("ACTIVE") and _system.get("TO_TYPE") == "ON" and _dst_group in [int_id(x) for x in (_system.get("OFF") or [])]:
+                            logger.info("(%s) [7] Bridge: %s, timeout timer reset to: %s", system_name, _bridge, _system["TIMER"] - pkt_time)
+                        if _system.get("ACTIVE") and _system.get("TO_TYPE") == "ON" and dst_id_b in off_list:
                             _system["TIMER"] = pkt_time
-                            logger.info("(%s) Bridge: %s set to ON with and \"OFF\" timer rule: timeout timer cancelled", system_name, _bridge)
+                            logger.info("(%s) [8] Bridge: %s set to ON with and \"OFF\" timer rule: timeout timer cancelled", system_name, _bridge)
+                else:
+                    # SINGLE_MODE=False: only de-activate on TG 4000 (legacy ~3504-3548)
+                    if dst_id_b == bytes_3(4000) and slot == _ts:
+                        is_static_tg = False
+                        ts1_static = sys_cfg.get("TS1_STATIC") or ""
+                        ts2_static = sys_cfg.get("TS2_STATIC") or ""
+                        if ts1_static and slot == 1:
+                            static_tgs = [int(tg) for tg in ts1_static.split(",") if tg.strip()]
+                            if _dst_group in static_tgs:
+                                is_static_tg = True
+                        elif ts2_static and slot == 2:
+                            static_tgs = [int(tg) for tg in ts2_static.split(",") if tg.strip()]
+                            if _dst_group in static_tgs:
+                                is_static_tg = True
+
+                        is_reflector = _bridge[:1] == "#"
+                        off_list = _system.get("OFF") or []
+                        if dst_id_b in off_list or dst_id_b == bytes_3(4000) or (dst_id_b != _tgid and not is_static_tg and not is_reflector):
+                            if _system.get("ACTIVE"):
+                                _system["ACTIVE"] = False
+                                logger.info("(%s) [5b] Bridge: %s, connection changed to state: %s (TG 4000 forced deactivation)", system_name, _bridge, _system["ACTIVE"])
+                                if _system.get("TO_TYPE") == "ON":
+                                    _system["TIMER"] = pkt_time
+                                    logger.info("(%s) [6b] Bridge: %s set to \"OFF\" with an on timer rule: timeout timer cancelled", system_name, _bridge)
+                        if not _system.get("ACTIVE") and _system.get("TO_TYPE") == "OFF" and _system.get("TIMEOUT"):
+                            _system["TIMER"] = pkt_time + float(_system["TIMEOUT"])
+                            logger.info("(%s) [7b] Bridge: %s, timeout timer reset to: %s", system_name, _bridge, _system["TIMER"] - pkt_time)
+                        if _system.get("ACTIVE") and _system.get("TO_TYPE") == "ON" and dst_id_b in (off_list or []):
+                            _system["TIMER"] = pkt_time
+                            logger.info("(%s) [8b] Bridge: %s set to ON with and \"OFF\" timer rule: timeout timer cancelled", system_name, _bridge)
 
     def _obp_emit_end_tx_for_forward_legs(self, stream_id: bytes, source_system: str, now: float) -> None:
         """Emit GROUP VOICE,END,TX for every OBP that still holds this stream as a to_target forward leg.
