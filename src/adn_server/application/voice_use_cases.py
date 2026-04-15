@@ -32,7 +32,7 @@ import time
 from datetime import datetime
 from typing import Any, Callable
 
-from ..domain import bytes_3, HBPF_SLT_VHEAD, HBPF_SLT_VTERM
+from ..domain import bytes_3, bytes_4, HBPF_SLT_VHEAD, HBPF_SLT_VTERM
 from .ports import VoiceProvider
 
 logger = logging.getLogger(__name__)
@@ -654,10 +654,8 @@ class VoiceUseCases:
         logger.info("(%s) Playing on-demand AMBE file: %s (ID: %s)", system, file_number, file_number)
         time.sleep(1)
         _say = [pairs]
-        server_id = self._config.get("GLOBAL", {}).get("SERVER_ID", b"\x00\x00\x00\x00")
-        if not isinstance(server_id, bytes):
-            server_id = bytes_3(int(server_id))
-        speech = self.pkt_gen(bytes_3(5000), bytes_3(9), server_id, 1, _say)
+        speech = self.pkt_gen(bytes_3(5000), bytes_3(9), bytes_4(9), 1, _say)
+        time.sleep(1)
         _slot = protocol.STATUS.get(2)
         if not _slot:
             return
@@ -705,10 +703,7 @@ class VoiceUseCases:
         else:
             _say.append(words.get("notlinked") or silence)
         _say.append(silence)
-        server_id = self._config.get("GLOBAL", {}).get("SERVER_ID", b"\x00\x00\x00\x00")
-        if not isinstance(server_id, bytes):
-            server_id = bytes_3(int(server_id))
-        speech = self.pkt_gen(bytes_3(5000), bytes_3(9), server_id, 1, _say)
+        speech = self.pkt_gen(bytes_3(5000), bytes_3(9), bytes_4(9), 1, _say)
         time.sleep(1)
         _slot = protocol.STATUS.get(2)
         if not _slot:

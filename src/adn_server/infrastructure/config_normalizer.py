@@ -162,3 +162,4 @@ def normalize_obp_config(config: dict) -> None:
         sys_cfg.setdefault("ENHANCED_OBP", True)
         if "TG1_ACL" not in sys_cfg and "TGID_ACL" in sys_cfg:
             sys_cfg["TG1_ACL"] = sys_cfg["TGID_ACL"]
+        sys_cfg.setdefault("TG2_ACL", "PERMIT:ALL")

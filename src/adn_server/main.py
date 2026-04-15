@@ -134,8 +134,10 @@ def _make_echo_bridges(config: dict) -> dict:
 
 
 def _looping_errback(logger: logging.Logger, failure):
-    """Errback for LoopingCalls (legacy loopingErrHandle)."""
-    logger.error("(GLOBAL) Unhandled error in timed loop: %s", failure.getTraceback())
+    """Errback for LoopingCalls (legacy loopingErrHandle). Stops reactor to avoid memory leaks."""
+    logger.error("(GLOBAL) STOPPING REACTOR TO AVOID MEMORY LEAK: Unhandled error in timed loop.\n %s", failure)
+    from twisted.internet import reactor as _reactor
+    _reactor.stop()
 
 
 def main() -> None:
@@ -174,6 +176,8 @@ def main() -> None:
     peer_ids, subscriber_ids, talkgroup_ids, local_subscriber_ids, server_ids, checksums = (
         alias_loader.load_aliases(config)
     )
+    subscriber_ids[900999] = "D-APRS"
+    subscriber_ids[4294967295] = "SC"
     config["_SUB_IDS"] = subscriber_ids
     config["_PEER_IDS"] = peer_ids
     config["_TG_IDS"] = talkgroup_ids
@@ -323,9 +327,10 @@ def main() -> None:
     task.LoopingCall(lambda: threads.deferToThread(reporting_use_cases.ka_reporting_loop)).start(60).addErrback(_looping_errback, logger)
 
     # bridgeDebug (legacy 66s) — remove invalid bridges, fix >1 active dial per MASTER
-    task.LoopingCall(
-        lambda: (bridge_use_cases.bridge_debug_loop(), report_factory.set_bridges(bridge_router.get_bridges()), report_factory.send_bridge())
-    ).start(66).addErrback(_looping_errback, logger)
+    if config.get("GLOBAL", {}).get("DEBUG_BRIDGES"):
+        task.LoopingCall(
+            lambda: (bridge_use_cases.bridge_debug_loop(), report_factory.set_bridges(bridge_router.get_bridges()), report_factory.send_bridge())
+        ).start(66).addErrback(_looping_errback, logger)
 
     # Alias reload (STALE_DAYS -> seconds)
     alias_interval = (aliases_cfg.get("STALE_DAYS") or 1) * 86400
@@ -401,6 +406,12 @@ def main() -> None:
 
     def sig_handler(sig, frame):
         logger.info("(GLOBAL) SHUTDOWN: CONFBRIDGE IS TERMINATING WITH SIGNAL %s", sig)
+        for _sys_name in protocols:
+            logger.info("(GLOBAL) SHUTDOWN: DE-REGISTER SYSTEM: %s", _sys_name)
+            try:
+                protocols[_sys_name].dereg()
+            except Exception:
+                pass
         config["GLOBAL"]["_KILL_SERVER"] = True
         if reactor.running:
             reactor.stop()
@@ -463,6 +474,7 @@ def main() -> None:
         logger.info("(GLOBAL) UDP %s listening on %s:%s", system_name, ip or "*", udp_port)
 
     logger.info("(GLOBAL) ADN DMR Peer Server started. Use adn-dmr-server as reference.")
+    reactor.suggestThreadPoolSize(100)
     reactor.run()
 
 
