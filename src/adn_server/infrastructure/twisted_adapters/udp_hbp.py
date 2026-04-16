@@ -536,6 +536,8 @@ class HBPProtocol(DatagramProtocol):
                 ):
                     reactor.callInThread(self._on_play_file_request, str(_int_dst_id), self._system)
                 if (
+                    _call_type in ("group", "vcsbk")
+                    and
                     _frame_type == HBPF_DATA_SYNC
                     and _dtype_vseq == HBPF_SLT_VTERM
                     and _slot in self.STATUS
@@ -886,6 +888,8 @@ class HBPProtocol(DatagramProtocol):
                 ):
                     reactor.callInThread(self._on_play_file_request, str(_int_dst_id), self._system)
                 if (
+                    _call_type in ("group", "vcsbk")
+                    and
                     _frame_type == HBPF_DATA_SYNC
                     and _dtype_vseq == HBPF_SLT_VTERM
                     and _slot in self.STATUS

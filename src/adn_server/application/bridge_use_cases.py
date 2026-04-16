@@ -1692,7 +1692,7 @@ class BridgeUseCases:
                     ((st["loss"] / st["packets"]) * 100) if st.get("packets") else 0.0,
                 )
                 return False
-            if _pkt_crc in st["crcs"]:
+            if seq > 0 and _pkt_crc in st["crcs"]:
                 st["loss"] += 1
                 logger.debug(
                     "(%s) *PacketControl* DMR packet payload with hash: %s seen before in this stream, disgarding. Stream ID:, %s TGID: %s: SEQ:%s PACKETS: %s, LOSS: %.2f%% ",
@@ -1983,20 +1983,18 @@ class BridgeUseCases:
                 if seq and _slot_st.get("lastSeq") and seq != 1 and seq < _slot_st.get("lastSeq", 0):
                     _slot_st["loss"] = _slot_st.get("loss", 0) + 1
                     return
-                _pkt_crc = None
-                if seq > 0:
-                    _h = blake2b(digest_size=16)
-                    _h.update(data)
-                    _pkt_crc = _h.digest()
-                    if "crcs" in _slot_st and _pkt_crc in _slot_st["crcs"]:
-                        _slot_st["loss"] = _slot_st.get("loss", 0) + 1
-                        return
+                _h = blake2b(digest_size=16)
+                _h.update(data)
+                _pkt_crc = _h.digest()
+                if seq > 0 and "crcs" in _slot_st and _pkt_crc in _slot_st["crcs"]:
+                    _slot_st["loss"] = _slot_st.get("loss", 0) + 1
+                    return
                 # Missed packets (legacy ~3392-3394): just increment loss, don't drop
                 if seq and _slot_st.get("lastSeq") and seq > (_slot_st.get("lastSeq", 0) + 1):
                     _slot_st["loss"] = _slot_st.get("loss", 0) + 1
                 _slot_st["lastSeq"] = seq
                 _slot_st["lastData"] = data
-                if _pkt_crc and "crcs" in _slot_st:
+                if "crcs" in _slot_st:
                     _slot_st["crcs"].add(_pkt_crc)
 
         # Legacy bridge.py: BRDG_EVENT (OBP group/vcsbk START/END handled in _obp_group_voice_router_obp / post-forward VTERM)
