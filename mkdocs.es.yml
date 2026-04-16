@@ -1,0 +1,84 @@
+# MkDocs — documentación en español. Build: mkdocs build -f mkdocs.es.yml
+site_name: ADN Systems
+site_description: ADN DMR Peer Server, ADN Monitor, HBP, OpenBridge, self-service.
+site_author: ADN Server contributors
+
+docs_dir: docs/es
+site_dir: site/es
+
+theme:
+  name: material
+  language: es
+  features:
+    - navigation.tabs
+    - navigation.sections
+    - navigation.expand
+    - content.code.copy
+    - search.suggest
+    - search.highlight
+  palette:
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      primary: indigo
+      toggle:
+        icon: material/brightness-7
+        name: Modo oscuro
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      primary: indigo
+      toggle:
+        icon: material/brightness-4
+        name: Modo claro
+
+plugins:
+  - search
+
+markdown_extensions:
+  - attr_list
+  - pymdownx.superfences
+  - pymdownx.tabbed:
+      alternate_style: true
+  - admonition
+  - tables
+  - toc:
+      permalink: true
+  - pymdownx.details
+
+nav:
+  - Inicio: README.md
+  - Servidor (peer):
+      - Guía de usuario:
+          - Introducción: server/user-guide/introduction.md
+          - Configuración: server/user-guide/configuration.md
+          - Bridges y talkgroups: server/user-guide/bridges-and-talkgroups.md
+          - Números especiales (4000, 999x, eco): server/user-guide/special-numbers.md
+          - Llamadas privadas: server/user-guide/private-calls.md
+          - Voz, anuncios y TTS: server/user-guide/voice-and-tts.md
+          - Monitor e informes: server/user-guide/monitoring.md
+          - Parrot (reproducción): server/user-guide/parrot.md
+          - Créditos y licencia: server/user-guide/attribution.md
+      - Protocolos:
+          - HBP (DMRD): server/protocols/hbp.md
+          - OpenBridge (DMRE): server/protocols/openbridge.md
+          - Trama DMRE v5: server/protocols/dmre-v5.md
+      - Desarrollo:
+          - Arquitectura: server/development/architecture.md
+          - Comportamiento y temporizadores: server/development/behaviour-and-timers.md
+      - Contribuir:
+          - Traducciones: server/contributing/translations.md
+  - Monitor:
+      - Descripción general: monitor/index.md
+      - Configuración (adn-mon.yaml): monitor/configuration.md
+      - Proxy hotspot: monitor/hotspot-proxy.md
+      - Arquitectura e implantación: monitor/architecture.md
+      - Self-service: monitor/self-service.md
+
+extra:
+  alternate:
+    - name: English
+      link: /en/
+      lang: en
+    - name: Español
+      link: /es/
+      lang: es
+  social: []

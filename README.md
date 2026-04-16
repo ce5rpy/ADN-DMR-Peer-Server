@@ -1,6 +1,6 @@
 # ADN DMR Peer Server
 
-Clean Architecture rewrite of the ADN DMR conference bridge. Same behaviour as the original server; configuration is YAML.
+ADN DMR conference bridge server. Configuration is YAML; the codebase follows clean architecture (domain, application, infrastructure).
 
 ## License
 
@@ -25,7 +25,21 @@ Voice features (announcements, TTS, recording) use a separate config file. Copy 
 
 - **Each item** (ANNOUNCEMENTS, TTS_ANNOUNCEMENTS) has its own `LANGUAGE` and `ENABLED: true` to activate.
 - **ANNOUNCEMENT_LANGUAGES** is optional (for voice ident only); announcements/TTS work without it.
-- **TTS** requires ffmpeg + vocoder (TTS_VOCODER_CMD or TTS_AMBESERVER_HOST). Pipeline: `.txt` → gTTS → `.mp3` → ffmpeg → `.wav` → vocoder → `.ambe`. First time: create `Audio/<LANG>/ondemand/<FILE>.txt` with the text. See [docs/TTS_SETUP.md](docs/TTS_SETUP.md).
+- **TTS** requires ffmpeg + vocoder (TTS_VOCODER_CMD or TTS_AMBESERVER_HOST). Pipeline: `.txt` → gTTS → `.mp3` → ffmpeg → `.wav` → vocoder → `.ambe`. First time: create `Audio/<LANG>/ondemand/<FILE>.txt` with the text. See [Voice, announcements, and TTS](docs/en/server/user-guide/voice-and-tts.md).
+
+## Documentation (MkDocs)
+
+Documentation (MkDocs): English under **`docs/en/`**, Spanish under **`docs/es/`** (`server/` and `monitor/` in each). **Install the doc stack first** (includes **Material**); otherwise you may see `Unrecognised theme name: 'material'` if `mkdocs` on your `PATH` is not the same environment.
+
+```bash
+python3 -m pip install -r requirements-docs.txt
+python3 -m mkdocs build -f mkdocs.yml          # → site/en/
+python3 -m mkdocs build -f mkdocs.es.yml       # → site/es/
+```
+
+Use the same `python3` you use for the project (e.g. pyenv’s `3.11.8`). Preview the combined tree: `cd site && python3 -m http.server` then open **`/en/`** and **`/es/`**, or run `python3 -m mkdocs serve -f mkdocs.yml` for English only.
+
+Output: **`site/en/`** and **`site/es/`** under gitignored **`site/`**.
 
 ## Run
 
@@ -50,4 +64,4 @@ cp adn-parrot.example.yaml adn-parrot.yaml
 python adn-parrot.py
 ```
 
-See [docs/PARROT.md](docs/PARROT.md) for architecture, configuration and systemd setup.
+See [Parrot (playback)](docs/en/server/user-guide/parrot.md) in the docs site for an overview; extended notes may exist in private `docs-priv/` checkouts.

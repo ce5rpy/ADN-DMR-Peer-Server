@@ -131,6 +131,7 @@ SYSTEMS:
     PROXY_CONTROL: false
     OVERRIDE_IDENT_TG: ""
 
+  # OpenBridge: use DMRE embedded version 5 ("OpenBridge v5") + ENHANCED_OBP on all ADN Systems peers.
   OBP-TEST:
     MODE: OPENBRIDGE
     ENABLED: false
@@ -144,5 +145,5 @@ SYSTEMS:
     SUB_ACL: DENY:1
     TGID_ACL: DENY:0-82,92-199,800-899,9990-9999,730999
     RELAX_CHECKS: true
-    ENHANCED_OBP: true
-    PROTO_VER: 5
+    ENHANCED_OBP: true   # BCSQ/BCKA + loop control — recommended true for ADN mesh
+    PROTO_VER: 5         # DMRE v5 (89-byte BLAKE2b); match remote peer

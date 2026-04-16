@@ -1,0 +1,103 @@
+# Números especiales (TG / IDs)
+
+Varios **IDs de destino** están reservados para **control o servicios**. Se gestionan en capas de protocolo y/o en el router de bridges, no como tráfico de grupo normal.
+
+## ID 5000 — fuente de voz del servidor (no es «TG de anuncio») {#id-5000--server-voice-source-not-announcement-tg}
+
+**Importante:** **5000** es el **ID de fuente RF** que el servidor usa cuando **transmite** voz automatizada. Las radios y paneles muestran **ID de llamada 5000** en ese tráfico.
+
+| Tráfico | Destino en el paquete DMR | Notas |
+|---------|---------------------------|--------|
+| **AMBE programado** (`ANNOUNCEMENTS`) | El **`TG`** que definas en `adn-voice.yaml` | ID de fuente **5000**. |
+| **TTS** (`TTS_ANNOUNCEMENTS`) | Igual — **`TG`** configurado | ID de fuente **5000**. |
+| **Bajo demanda** (TG **9991–9999**) | **TG 9** | Clips informativos cortos; fuente **5000** (ver [Voz, anuncios y TTS](voice-and-tts.md)). |
+| **Desconectado / reflector** | **TG 9** | Fuente **5000**. |
+| **Ident por voz** | **All-call** (`16777215`) o **`OVERRIDE_IDENT_TG`** si está definido | Fuente **5000**. |
+
+**No** «monitorizas TG 5000» para oír anuncios programados: monitorizas el **TG de anuncio configurado** (p. ej. 2, 9, 26811). **5000** aparece como **ID del transmisor** en esas llamadas.
+
+### TG de destino 5000 (grupo entrante)
+
+Si llega una llamada de grupo con **TG de destino 5000** y **no** hay fila `BRIDGES` existente, el servidor **no** crea automáticamente un bridge activado por usuario para esa TG (misma clase que IDs **0–4**, **9**, **4000**). Para llevar tráfico a TG 5000 necesitas una fila de bridge **explícita**.
+
+## TG 9 — carril de servicio local (mensajes y cableado de bridge) {#tg-9-local-service-lane-prompts-and-bridge-plumbing}
+
+**TG 9** se usa de dos formas: lo que **oyen** los operadores con mensajes cortos del servidor, y cómo se **conectan** filas internas del bridge.
+
+### Lo que oyes (voz de salida del servidor)
+
+Para reproducción **bajo demanda** (tras marcar **9991–9999**) y para líneas de voz de **desconectado / reflector**, el servidor transmite paquetes de **grupo** con:
+
+- **ID de fuente 5000**
+- **TG de destino 9**
+- **Timeslot 2** (el código usa el slot **TS2** para ese hotspot)
+
+Sigue una convención habitual **HomeBrew / conferencia**: mantener el audio **local de servicio** corto en **TG 9 / TS2** para separarlo del tráfico QSO normal en tu TG principal (a menudo TS1). Los hotspots deben pasar **TS2** y estar en una configuración donde **TG 9** no esté bloqueado, o esos mensajes no se oirán.
+
+**Rojo frente a local:** En **OpenBridge**, el tráfico de **grupo entrante** a **TG 9** está en el rango **≤ 79** «local / repetidor» y **no** entra al bridge desde la malla IP (se descarta en ingreso). Los mensajes del servidor usan el **camino HBP local** hacia el hotspot/repetidor, no un TG de área amplia puenteado. Excepción: solo si **añades** filas `BRIDGES` que reenvíen TG 9 podría salir ese tráfico a otro sitio — no es lo por defecto.
+
+Los **anuncios programados** y **TTS** usan el **`TG`** que configures en `adn-voice.yaml` — **no** se fuerzan a TG 9 salvo que tú configures ese TG.
+
+### Comportamiento del router (TG reservada)
+
+- **No** hay bridge activado por usuario automático si alguien transmite a **TG 9** y no existe fila `BRIDGES` (misma clase que **0–4**, **4000**, **5000**, etc.).
+- Con **`GEN_STAT_BRIDGES`**, la creación automática de bridge **STAT** desde OpenBridge **no** aplica al TG de destino **9** (excluido a propósito).
+- El **bucle de depuración de bridges** elimina bridges de conferencia inválidos keyed en **9** (y **0**–**8**) para que no se acumulen bridges de un dígito erróneos.
+
+### Tabla de bridges (avanzado)
+
+Muchas filas **reflector / marcado** guardan **`TGID` = 9** en **TS2** como **destino de pata** interno para enganchar el camino dinámico al TG real — es cableado dentro de `BRIDGES`, no un «número al que llamar» como un TG nacional normal.
+
+## TG / ID 4000 — desactivar bridges dinámicos
+
+**Propósito:** borrar **bridges dinámicos activados por usuario** para el sistema que recibe la llamada.
+
+**Comportamiento:**
+
+- Implementado para tráfico de **grupo** con destino **4000** (y comprobaciones relacionadas en el router).
+- Se ejecuta **antes** que la ACL normal de TG en la ruta OpenBridge para que el comando no quede bloqueado por listas permitidas.
+- Invoca **`deactivate_all_dynamic_bridges`**: desactiva filas dinámicas que no sean stat ni reflector.
+
+Úsalo cuando los operadores necesiten **reiniciar** el enrutado dinámico sin reiniciar el servidor.
+
+## TG 9991–9999 — audio informativo / bajo demanda
+
+**Propósito:** **reproducir** ficheros AMBE pregenerados («ondemand») (p. ej. información de la estación, ayuda).
+
+**Comportamiento:**
+
+- Dispara manejo tipo **`playFileOnRequest`**: mapea los últimos dígitos al nombre de fichero bajo el árbol de audio configurado.
+- Funciona desde rutas **MASTER** y **PEER**.
+
+El **audio** se envía con **ID de fuente 5000** y **TG de destino 9** en el flujo generado. Estructura de ficheros: [Voz, anuncios y TTS](voice-and-tts.md).
+
+## TG 9990 — eco / parrot (en banda)
+
+**Propósito:** las filas de bridge para **eco** suelen usar **9990** con el sistema **ECHO** (ver `BRIDGES` y opciones en tu YAML).
+
+**Nota:** Un **parrot independiente** también está disponible como proceso aparte — [Parrot](parrot.md).
+
+## Llamada privada al ID 4000
+
+Una llamada **unitaria** a **4000** se trata solo como **desconexión de dinámicos**; **no** se enruta como llamada privada normal.
+
+## Ingreso OpenBridge — filtros de TG de grupo {#openbridge-ingress--group-tg-filters}
+
+En **OpenBridge** (**DMRD** v1 y **DMRE**), el tráfico de **grupo** **no unitario** hacia ciertas TG puede **descartarse** antes del bridge (con **BCSQ** donde aplique). Las reglas difieren ligeramente entre DMRD y DMRE; incluyen TG de número bajo (p. ej. **≤ 79**), **9990–9999**, **900999**, rangos **92–199** (frente al servidor de origen), y rangos relacionados con MCC (**80–89**, **800–899**). Detalle: [Protocolo OpenBridge](../protocols/openbridge.md#ingress-filters-group-tg).
+
+## TG prohibidos / reservados (creación de bridges)
+
+Muchos IDs pequeños (0–5, 9, etc.) y el rango de **servicio 999x** quedan excluidos de ciertos caminos **automáticos** de creación de bridges; **5000** y **4000** están en el conjunto «sin bridge UA automático» si no existe fila. Los conjuntos exactos están definidos en el router de bridges y el manejo de opciones en el código.
+
+## Tabla resumen
+
+| ID / rango | Rol |
+|------------|-----|
+| **5000** (fuente) | Voz generada por el servidor (anuncios, TTS, mensajes, ident) — **ID de llamada** en receptores |
+| **5000** (destino) | Sin bridge UA automático si falta en `BRIDGES` |
+| **4000** (grupo) | Desactivar bridges dinámicos |
+| **4000** (unitaria) | Desconectar dinámicos; no enrutada como PC |
+| **9991–9999** | Audio informativo / bajo demanda (TG de disparo); reproducción usa fuente **5000** → TG **9** (TS2) |
+| **9** | Carril de servicio/mensajes (audio corto del servidor); reservada para auto-bridges; **TGID** interno en patas TS2 |
+| **9990** | TG de bridge de eco (con sistema ECHO) |
+| **16777215** | All-call (destino por defecto de ident por voz salvo sobrescritura) |
