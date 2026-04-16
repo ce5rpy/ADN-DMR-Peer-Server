@@ -5,7 +5,7 @@
 This service is a **DMR peer and bridge**. It implements:
 
 - **HBP** over UDP to **MASTER** and **PEER** systems (DMRD frames, authentication, pings).
-- **OpenBridge** over UDP to other networks — **DMRE v5** (embedded version 5, BLAKE2b, hops) is the **recommended** inter-server mode on ADN; **DMRD** v1 remains for legacy interop (see [OpenBridge](../protocols/openbridge.md#dmre-and-openbridge-v5)).
+- **OpenBridge** over UDP to other networks — **DMRE v5** (embedded version 5, BLAKE2b, hops) is the **recommended** inter-server mode on ADN; **DMRD** v1 remains available for compatibility (see [OpenBridge](../protocols/openbridge.md#dmre-and-openbridge-v5)).
 
 Configuration is **YAML** (`adn-server.yaml`), merged at runtime with optional voice settings (`adn-voice.yaml`). The shipped template is `adn-server.example.yaml`.
 

@@ -9,8 +9,8 @@ adn-voice.yaml
 *.local.yaml
 *.local.yml
 
-# Local/helper scripts (not for prod repo; users use their own run method)
-scripts/run.sh
+# Local/helper scripts (keep scripts out of git)
+scripts/
 
 # Env and secrets
 .env
@@ -33,8 +33,12 @@ data/*.bak
 json/*
 !json/.gitkeep
 
-# Internal 
+# Internal
 docs-priv/
+
+# Docs policy: keep source markdown + mkdocs configs in git; ignore generated assets
+docs/build-assets/
+requirements-docs.txt
 
 # MkDocs build output (site/en, site/es)
 site/

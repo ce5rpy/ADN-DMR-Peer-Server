@@ -11,7 +11,7 @@ El **ADN DMR Peer Server** es un puente de conferencia [GPL-3.0](https://www.gnu
 ### Qué hace el servidor
 
 - Termina enlaces **HBP** (HomeBrew Protocol) hacia sistemas **MASTER** y **PEER** (hotspots, repetidores).
-- Termina enlaces **OpenBridge** hacia otros servidores por UDP — **DMRE v5** (recomendado en ADN) o **DMRD** v1 heredado.
+- Termina enlaces **OpenBridge** hacia otros servidores por UDP — **DMRE v5** (recomendado en ADN) o **DMRD** v1 en modo de compatibilidad.
 - Ejecuta **enrutado de bridges** (`BRIDGES`): voz de grupo, control de bucle, ACL, **BCSQ** / **BCKA** opcionales.
 - Soporta **llamadas privadas** (`SUB_MAP`), **voz**, **TTS**, **grabación** e **informes TCP** al monitor.
 

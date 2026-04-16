@@ -48,6 +48,14 @@ Los **anuncios programados** y **TTS** usan el **`TG`** que configures en `adn-v
 
 Muchas filas **reflector / marcado** guardan **`TGID` = 9** en **TS2** como **destino de pata** interno para enganchar el camino dinámico al TG real — es cableado dentro de `BRIDGES`, no un «número al que llamar» como un TG nacional normal.
 
+### Reglas in-band de VTERM que afectan TG 9 / reflectores
+
+La activación/desactivación in-band de bridges se aplica sobre **voice terminator (VTERM)** con este alcance:
+
+- Solo corre para tipos de llamada **`group`** y **`vcsbk`** (no para VTERM **unit/private**).
+- En bridges reflector (`#...`), el manejo in-band solo se evalúa cuando el destino es **TG 9**.
+- Por eso los mensajes de reflector y el cableado de marcado usan TG 9, mientras que llamadas privadas no disparan esa lógica de temporizadores de bridge.
+
 ## TG / ID 4000 — desactivar bridges dinámicos
 
 **Propósito:** borrar **bridges dinámicos activados por usuario** para el sistema que recibe la llamada.
@@ -60,6 +68,15 @@ Muchas filas **reflector / marcado** guardan **`TGID` = 9** en **TS2** como **de
 
 Úsalo cuando los operadores necesiten **reiniciar** el enrutado dinámico sin reiniciar el servidor.
 
+### Impacto de `SINGLE_MODE` en la lógica de desactivación
+
+Cuando las reglas in-band evalúan desactivación en un slot MASTER:
+
+- **`SINGLE_MODE: true`**: la desactivación es agresiva. Una pata puede apagarse por triggers OFF/RESET, por **TG 4000** o por tráfico que no coincide con el TG de la pata.
+- **`SINGLE_MODE: false`**: la desactivación es conservadora. **TG 4000** es el trigger principal de apagado forzado; filas de TG estática y filas reflector se preservan según los chequeos actuales del bridge.
+
+A nivel operativo: si usuarios reportan «bridges que se caen demasiado fácil» tras cambios de OPTIONS, verifica el valor actual de `SINGLE_MODE` y el payload OPTIONS del hotspot.
+
 ## TG 9991–9999 — audio informativo / bajo demanda
 
 **Propósito:** **reproducir** ficheros AMBE pregenerados («ondemand») (p. ej. información de la estación, ayuda).
@@ -67,6 +84,7 @@ Muchas filas **reflector / marcado** guardan **`TGID` = 9** en **TS2** como **de
 **Comportamiento:**
 
 - Dispara manejo tipo **`playFileOnRequest`**: mapea los últimos dígitos al nombre de fichero bajo el árbol de audio configurado.
+- La ruta de disparo es **private VTERM** para destino **9991–9999**, seguida de generación/reproducción asíncrona.
 - Funciona desde rutas **MASTER** y **PEER**.
 
 El **audio** se envía con **ID de fuente 5000** y **TG de destino 9** en el flujo generado. Estructura de ficheros: [Voz, anuncios y TTS](voice-and-tts.md).

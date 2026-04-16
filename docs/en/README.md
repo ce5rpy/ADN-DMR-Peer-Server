@@ -12,7 +12,7 @@ The **ADN DMR Peer Server** is a [GPL-3.0](https://www.gnu.org/licenses/gpl-3.0.
 ### What the server does
 
 - Terminates **HBP** (HomeBrew Protocol) links to **MASTER** and **PEER** systems (hotspots, repeaters).
-- Terminates **OpenBridge** links to other servers over UDP — **DMRE v5** (recommended on ADN) or legacy **DMRD** v1.
+- Terminates **OpenBridge** links to other servers over UDP — **DMRE v5** (recommended on ADN) or **DMRD** v1 compatibility mode.
 - Runs **bridge routing** (`BRIDGES`): forwards group voice, loop control, ACLs, optional **BCSQ** / **BCKA**.
 - Supports **private calls** (`SUB_MAP`), **voice**, **TTS**, **recording**, and **TCP reporting** to the monitor.
 

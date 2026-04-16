@@ -17,6 +17,12 @@ The router scans `BRIDGES` for an **ACTIVE** row matching the **current source s
 - **User-activated** bridges are created when a user keys a TG without a pre-built row (subject to `DEFAULT_UA_TIMER` and options).
 - **Static** TGs and **STAT** bridges are created from **OPTIONS** / `make_static_tg` / `GEN_STAT_BRIDGES` flows.
 
+## Source-row guard and safe iteration
+
+Forwarding is allowed only when the current system has a matching **ACTIVE source row** for that TG/slot context. This prevents accidental forwarding from rows that are present but not currently eligible as source legs.
+
+`BRIDGES` scans and updates are also protected against concurrent row mutations during runtime loops, so timer/debug passes do not corrupt active iteration state.
+
 ## OpenBridge and TG display
 
 For OpenBridge, the **DMR destination** in the packet may differ from the **TGID** in a bridge row (remap). Monitoring may show **RX TG** (as received) vs **TX TG** (as rewritten for a destination); correlate by **`stream_id`**, not TG alone.

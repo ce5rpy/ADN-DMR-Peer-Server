@@ -17,6 +17,12 @@ El router recorre `BRIDGES` buscando una fila **ACTIVE** que coincida con el **s
 - Los bridges **activados por usuario** se crean cuando alguien pulsa una TG sin fila previa (sujeto a `DEFAULT_UA_TIMER` y opciones).
 - Las TG **estáticas** y bridges **STAT** se crean desde flujos **OPTIONS** / `make_static_tg` / `GEN_STAT_BRIDGES`.
 
+## Guardia de fila de origen e iteración segura
+
+El reenvío solo se permite cuando el sistema actual tiene una **fila de origen ACTIVE** que coincide con ese contexto TG/slot. Esto evita reenviar desde filas presentes pero no elegibles como patas de origen.
+
+Los recorridos y actualizaciones de `BRIDGES` también están protegidos frente a mutaciones concurrentes de filas durante bucles en ejecución, de forma que los pases de temporizador/debug no corrompan el estado de iteración activa.
+
 ## OpenBridge y visualización de TG
 
 En OpenBridge, el **destino DMR** en el paquete puede diferir del **TGID** en una fila de bridge (remap). El monitor puede mostrar **TG RX** (recibida) frente a **TG TX** (reescrita para un destino); correlaciona por **`stream_id`**, no solo por TG.

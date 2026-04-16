@@ -4,13 +4,13 @@
 
 On the wire, extended OpenBridge uses the **`DMRE`** opcode. The **embedded protocol version** byte inside the frame (see [DMRE v5 layout](dmre-v5.md)) selects the layout: **version > 4** is the **89-byte v5** format (hops, source repeater field, BLAKE2b MAC). In documentation and operator discussions, **“DMRE v5”** and **“OpenBridge v5”** refer to the same thing: **DMRE frames with embedded version 5** (not the older short DMRD-only path).
 
-**Recommendation (ADN Systems network):** All inter-server links that participate in the **ADN Systems** mesh should use **DMRE v5** (`PROTO_VER: 5` in YAML, which sets the negotiated **VER** / embedded version) and **`ENHANCED_OBP: true`** so **BCSQ**, **BCKA**, and multi-path loop control behave consistently. **Peers** (other servers) should be configured the same way. **DMRD v1** (HMAC-only) remains supported for interoperability with older stacks, but it is **not** the preferred mode for new ADN deployments.
+**Recommendation (ADN Systems network):** All inter-server links that participate in the **ADN Systems** mesh should use **DMRE v5** (`PROTO_VER: 5` in YAML, which sets the negotiated **VER** / embedded version) and **`ENHANCED_OBP: true`** so **BCSQ**, **BCKA**, and multi-path loop control behave consistently. **Peers** (other servers) should be configured the same way. **DMRD v1** (HMAC-only) remains available as a compatibility mode, but it is **not** the preferred mode for new ADN deployments.
 
 ## What OpenBridge is
 
 **OpenBridge** is a UDP protocol between **servers** (and some gateways). It carries DMR voice using:
 
-- **`DMRD`** version 1 — HMAC-SHA1 authenticated payload (legacy interop); or
+- **`DMRD`** version 1 — HMAC-SHA1 authenticated payload (compatibility mode); or
 - **`DMRE`** — extended frame with **BLAKE2b** MAC, embedded version, timestamps, **hops**, source server/repeater IDs, etc. (**DMRE v5** = embedded version 5, recommended above).
 
 This stack implements the **OPENBRIDGE** peer mode in **`udp_hbp.py`** and bridge routing in **`BridgeUseCases`**.

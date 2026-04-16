@@ -48,6 +48,14 @@ That follows a common **HomeBrew / conference** convention: keep short **local s
 
 Many **reflector / dial** rows store **`TGID` = 9** on **TS2** as the **leg destination** used internally to attach the dynamic path to the real talkgroup — that is wiring inside `BRIDGES`, not something you “call” like a normal national TG.
 
+### In-band VTERM rules that affect TG 9 / reflector behavior
+
+In-band bridge activation/deactivation is applied on **voice terminator (VTERM)** with this scope:
+
+- It runs only for call types **`group`** and **`vcsbk`** (not for **unit/private** VTERM).
+- For reflector bridges (`#...`), in-band handling is evaluated only when the destination is **TG 9**.
+- This is why reflector prompts and dial wiring are tied to TG 9 while private calls do not trigger that bridge-timer logic.
+
 ## TG / ID 4000 — deactivate dynamic bridges
 
 **Purpose:** Clear **user-activated (dynamic) bridges** for the system that receives the call.
@@ -60,6 +68,15 @@ Many **reflector / dial** rows store **`TGID` = 9** on **TS2** as the **leg dest
 
 Use this when operators need to **reset** dynamic routing without restarting the server.
 
+### `SINGLE_MODE` impact on deactivation logic
+
+When in-band rules evaluate deactivation on a MASTER slot:
+
+- **`SINGLE_MODE: true`**: deactivation is aggressive. A bridge leg can be turned off by OFF/RESET triggers, **TG 4000**, or traffic that does not match the leg TG.
+- **`SINGLE_MODE: false`**: deactivation is conservative. **TG 4000** is the primary forced-deactivate trigger; static TG rows and reflector rows are preserved according to current bridge checks.
+
+Operationally: if users report “bridges drop too easily” after OPTIONS updates, verify the current `SINGLE_MODE` value and hotspot OPTIONS payload.
+
 ## TG 9991–9999 — information / on-demand audio
 
 **Purpose:** **Play back** pre-generated AMBE (“ondemand”) files (e.g. station info, help).
@@ -67,6 +84,7 @@ Use this when operators need to **reset** dynamic routing without restarting the
 **Behaviour:**
 
 - Triggers **`playFileOnRequest`**-style handling: maps the last digits to a file name under the configured audio tree.
+- Trigger path is **private VTERM** for destination **9991–9999**, then async playback generation.
 - Works from **MASTER** and **PEER** paths.
 
 The **audio** is sent with **source ID 5000** and **destination TG 9** in the generated stream. File layout: [Voice, announcements, and TTS](voice-and-tts.md).

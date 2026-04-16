@@ -2,15 +2,15 @@
 
 ## DMRE y «OpenBridge v5» {#dmre-and-openbridge-v5}
 
-En cable, OpenBridge extendido usa el opcode **`DMRE`**. El **byte de versión de protocolo embebido** dentro de la trama (ver [disposición DMRE v5](dmre-v5.md)) selecciona el diseño: **versión > 4** es el formato **v5 de 89 bytes** (saltos, campo repetidor fuente, MAC BLAKE2b). En documentación y conversaciones de operadores, **«DMRE v5»** y **«OpenBridge v5»** son lo mismo: **tramas DMRE con versión embebida 5** (no el camino corto solo DMRD antiguo).
+En cable, OpenBridge extendido usa el opcode **`DMRE`**. El **byte de versión de protocolo embebido** dentro de la trama (ver [disposición DMRE v5](dmre-v5.md)) selecciona el diseño: **versión > 4** es el formato **v5 de 89 bytes** (saltos, campo repetidor fuente, MAC BLAKE2b). En documentación y conversaciones de operadores, **«DMRE v5»** y **«OpenBridge v5»** son lo mismo: **tramas DMRE con versión embebida 5** (no el camino corto solo DMRD).
 
-**Recomendación (red ADN Systems):** todos los enlaces inter-servidor que participen en la malla **ADN Systems** deberían usar **DMRE v5** (`PROTO_VER: 5` en YAML, que fija **VER** / versión embebida negociada) y **`ENHANCED_OBP: true`** para que **BCSQ**, **BCKA** y el control de bucle multipath se comporten igual. Los **pares** (otros servidores) deben configurarse igual. **DMRD v1** (solo HMAC) sigue soportado para interoperar con pilas antiguas, pero **no** es el modo preferido para nuevos despliegues ADN.
+**Recomendación (red ADN Systems):** todos los enlaces inter-servidor que participen en la malla **ADN Systems** deberían usar **DMRE v5** (`PROTO_VER: 5` en YAML, que fija **VER** / versión embebida negociada) y **`ENHANCED_OBP: true`** para que **BCSQ**, **BCKA** y el control de bucle multipath se comporten igual. Los **pares** (otros servidores) deben configurarse igual. **DMRD v1** (solo HMAC) permanece como modo de compatibilidad, pero **no** es el modo preferido para nuevos despliegues ADN.
 
 ## Qué es OpenBridge
 
 **OpenBridge** es un protocolo UDP entre **servidores** (y algunos gateways). Transporta voz DMR usando:
 
-- **`DMRD`** versión 1 — carga autenticada HMAC-SHA1 (interop heredada); o
+- **`DMRD`** versión 1 — carga autenticada HMAC-SHA1 (modo de compatibilidad); o
 - **`DMRE`** — trama extendida con MAC **BLAKE2b**, versión embebida, marcas de tiempo, **saltos**, IDs servidor/repetidor de origen, etc. (**DMRE v5** = versión embebida 5, recomendada arriba).
 
 Esta pila implementa el modo par **OPENBRIDGE** en **`udp_hbp.py`** y el enrutado de bridges en **`BridgeUseCases`**.
