@@ -25,6 +25,7 @@
 
 from __future__ import annotations
 
+import json
 import logging
 import pickle
 from typing import Any
@@ -34,7 +35,6 @@ from twisted.protocols.basic import NetstringReceiver
 
 logger = logging.getLogger(__name__)
 
-# Same opcodes as legacy reporting_const
 REPORT_OPCODES = {
     "CONFIG_REQ": b"\x00",
     "CONFIG_SND": b"\x01",
@@ -44,7 +44,24 @@ REPORT_OPCODES = {
     "BRIDGE_UPD": b"\x05",
     "LINK_EVENT": b"\x06",
     "BRDG_EVENT": b"\x07",
+    "HELLO": b"\xff",
 }
+
+SERVER_NAME = "adn-server"
+PROTOCOL_VERSION = 1
+SERVER_FEATURES = ("INGRESS", "END_TX_FORWARD", "PUSH_ON_CONNECT")
+
+
+def _server_version() -> str:
+    try:
+        from importlib.metadata import PackageNotFoundError, version
+
+        try:
+            return version("adn-server")
+        except PackageNotFoundError:
+            return "0.0.0"
+    except Exception:
+        return "0.0.0"
 
 
 class ReportProtocol(NetstringReceiver):
@@ -58,7 +75,7 @@ class ReportProtocol(NetstringReceiver):
         peer = self.transport.getPeer() if self.transport else None
         addr = f"{peer.host}:{peer.port}" if peer else "?"
         logger.info("(REPORT) Client connected from %s (%s client(s))", addr, len(self._factory.clients))
-        # Send CONFIG_SND and BRIDGE_SND immediately so monitor gets systems/bridges without waiting for loop
+        self._factory._send_hello_to(self)
         self._factory._send_config_to(self)
         self._factory._send_bridge_to(self)
 
@@ -98,6 +115,20 @@ class ReportServerFactory(Factory):
 
     def set_bridges(self, bridges: dict[str, Any]) -> None:
         self._bridges = bridges
+
+    def _send_hello_to(self, client: ReportProtocol) -> None:
+        info = {
+            "server": SERVER_NAME,
+            "version": _server_version(),
+            "protocol": PROTOCOL_VERSION,
+            "features": list(SERVER_FEATURES),
+        }
+        payload = json.dumps(info, separators=(",", ":")).encode("utf-8")
+        try:
+            client.sendString(REPORT_OPCODES["HELLO"] + payload)
+            logger.debug("(REPORT) Sent HELLO to client: %s", info)
+        except Exception as e:
+            logger.warning("(REPORT) Failed to send HELLO: %s", e)
 
     def _send_config_to(self, client: ReportProtocol) -> None:
         """Send CONFIG_SND to a single client (e.g. on connect or CONFIG_REQ)."""
