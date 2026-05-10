@@ -36,6 +36,39 @@ En **WARNING**: JSON HELLO inválido (`(REPORT) HELLO payload not valid JSON`), 
 
 El panel muestra el estado **operativo** desde **START** (canónico); el **log del Monitor** muestra **INGRESS** más **START** para depurar duplicados en malla.
 
+## Rotación de logs (logrotate)
+
+Tras que **logrotate** renombre o mueva el fichero de log (patrón habitual: **`create`** — el fichero antiguo rota y aparece uno **nuevo vacío** en la ruta configurada), el proceso puede seguir con el descriptor abierto sobre el **inodo anterior**. Los logs parecen “no escribirse” en la ruta actual hasta que el proceso **reabra** los `FileHandler`.
+
+**Recomendado:** usar **`create`** (evitar **`copytruncate`** si el servicio admite señal): **`copytruncate`** puede competir con escrituras concurrentes y **perder líneas**; **`WatchedFileHandler`** evita la señal pero tiene coste **por cada línea** de log.
+
+Estos procesos tratan **`SIGUSR2`** solo para **reabrir** los ficheros de log (`logging.FileHandler`). **No recargan YAML**, bases de datos ni la configuración de Twisted.
+
+| Proceso | Claves típicas de configuración |
+|---------|-----------------------------------|
+| **`adn-server`** / **`adn-parrot`** | **`LOGGER.LOG_FILE`** (ver `adn-server.example.yaml`) |
+| **`adn-proxy`** | **`LOG.PATH`** + **`LOG.LOG_FILE`** en `adn-proxy.yaml` |
+| **`adn-monitor`** | **`LOG.PATH`** + **`LOG.LOG_FILE`** en `adn-monitor.yaml` |
+
+Ejemplo de fragmento en **`/etc/logrotate.d/adn`** (adaptar rutas y nombres de unidad):
+
+```text
+/var/log/adn-server/adn-server.log {
+    weekly
+    rotate 12
+    compress
+    delaycompress
+    missingok
+    notifempty
+    create 0640 adn adn
+    postrotate
+        /bin/kill -USR2 "$(systemctl show adn-server.service -p MainPID --value)" 2>/dev/null || true
+    endscript
+}
+```
+
+Repite **`postrotate`** con **`kill -USR2`** para las unidades **`adn-parrot`**, **`adn-proxy`** y **`adn-monitor`** si rotas sus logs en el mismo host. Usa el **PID** correcto (**`MainPID`** de systemd, pidfile, o el proceso que gestiones).
+
 ## Requisitos
 
 - Conectividad de red desde el **host del monitor** al **`REPORTS.REPORT_PORT`** del servidor (y la lista **`REPORT_CLIENTS`** del servidor debe incluir al monitor si se usa).

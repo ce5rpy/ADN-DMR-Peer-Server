@@ -48,7 +48,7 @@ if str(_ROOT) not in sys.path:
 
 from twisted.internet import reactor, task
 
-from .infrastructure import YamlConfigLoader, setup_logging
+from .infrastructure import YamlConfigLoader, reopen_file_handlers, setup_logging
 from .infrastructure.config_normalizer import (
     ensure_system_runtime_config,
     normalize_peer_config,
@@ -122,8 +122,14 @@ def main() -> None:
         if reactor.running:
             reactor.stop()
 
+    def sigusr2_reopen_logs(_sig, _frame):
+        """Logrotate: reopen file log handlers (does not reload config)."""
+        n = reopen_file_handlers()
+        logger.info("(LOGGER) Reopened %s file log handler(s) after SIGUSR2", n)
+
     signal.signal(signal.SIGTERM, sig_handler)
     signal.signal(signal.SIGINT, sig_handler)
+    signal.signal(signal.SIGUSR2, sigusr2_reopen_logs)
 
     logger.info("ADN Parrot -- SYSTEM STARTING...")
     for system_name, sys_cfg in systems_cfg.items():

@@ -48,7 +48,7 @@ if str(_ROOT) not in sys.path:
 from twisted.internet import reactor, task, threads
 
 from .domain import bytes_3
-from .infrastructure import YamlConfigLoader, setup_logging
+from .infrastructure import YamlConfigLoader, reopen_file_handlers, setup_logging
 from .infrastructure.config_normalizer import (
     expand_generator as _expand_generator,
     ensure_system_runtime_config as _ensure_system_runtime_config,
@@ -416,8 +416,14 @@ def main() -> None:
         if reactor.running:
             reactor.stop()
 
+    def sigusr2_reopen_logs(_sig, _frame):
+        """Logrotate: reopen file log handlers (does not reload config)."""
+        n = reopen_file_handlers()
+        logger.info("(LOGGER) Reopened %s file log handler(s) after SIGUSR2", n)
+
     signal.signal(signal.SIGTERM, sig_handler)
     signal.signal(signal.SIGINT, sig_handler)
+    signal.signal(signal.SIGUSR2, sigusr2_reopen_logs)
     reactor.addSystemEventTrigger("before", "shutdown", shutdown_handler)
 
     # Voice config reload (15s): re-read adn-voice.yaml, start/stop announcement LoopingCalls on change

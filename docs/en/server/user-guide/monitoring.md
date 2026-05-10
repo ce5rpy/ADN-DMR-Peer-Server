@@ -36,6 +36,39 @@ At **WARNING**: invalid HELLO JSON (`(REPORT) HELLO payload not valid JSON`), or
 
 The dashboard shows **operational** state from **START** (canonical); the **Monitor** log shows **INGRESS** plus **START** for troubleshooting mesh duplicates.
 
+## Log file rotation (logrotate)
+
+After **logrotate** renames or moves a log file (common pattern: **`create`** so the old path is rotated away and a **new empty file** appears at the configured path), the process may still hold an open file descriptor on the **previous inode**. Logs then appear “missing” from the current path until the process **reopens** its file handlers.
+
+**Recommended:** use **`create`** (not **`copytruncate`** when the service supports signaling): **`copytruncate`** can race with concurrent writes and drop lines; **`WatchedFileHandler`** avoids signals but adds overhead per log record.
+
+These processes handle **`SIGUSR2`** by reopening **`logging.FileHandler`** streams only — **they do not reload YAML**, databases, or Twisted configuration.
+
+| Process | Typical config keys |
+|---------|---------------------|
+| **`adn-server`** / **`adn-parrot`** | **`LOGGER.LOG_FILE`** (see `adn-server.example.yaml`) |
+| **`adn-proxy`** | **`LOG.PATH`** + **`LOG.LOG_FILE`** in `adn-proxy.yaml` |
+| **`adn-monitor`** | **`LOG.PATH`** + **`LOG.LOG_FILE`** in `adn-monitor.yaml` |
+
+Example **`/etc/logrotate.d/adn`** fragment (adjust paths and service names):
+
+```text
+/var/log/adn-server/adn-server.log {
+    weekly
+    rotate 12
+    compress
+    delaycompress
+    missingok
+    notifempty
+    create 0640 adn adn
+    postrotate
+        /bin/kill -USR2 "$(systemctl show adn-server.service -p MainPID --value)" 2>/dev/null || true
+    endscript
+}
+```
+
+Repeat **`postrotate`** with **`kill -USR2`** for **`adn-parrot`**, **`adn-proxy`**, and **`adn-monitor`** units if those logs are rotated on the same host. Use the correct **PID** (systemd **`MainPID`**, a pidfile, or **`kill`** targeting the process you manage).
+
 ## Requirements
 
 - Network reachability from the **monitor host** to the server’s **`REPORTS.REPORT_PORT`** (and the server’s **`REPORT_CLIENTS`** allow list must include the monitor if used).

@@ -22,6 +22,6 @@
 ###############################################################################
 
 from .config_loader import YamlConfigLoader
-from .logging_config import setup_logging
+from .logging_config import reopen_file_handlers, setup_logging
 
-__all__ = ["YamlConfigLoader", "setup_logging"]
+__all__ = ["YamlConfigLoader", "reopen_file_handlers", "setup_logging"]
