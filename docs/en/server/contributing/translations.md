@@ -10,7 +10,7 @@
 | Spanish | **`docs/es/`** | **`mkdocs.es.yml`** → **`site/es/`** |
 
 - **`docs/en/server/`** — ADN DMR Peer Server (user guide, protocols, development, contributing).
-- **`docs/en/monitor/`** — ADN Monitor (dashboard, `adn-mon.yaml`, self-service).
+- **`docs/en/monitor/`** — ADN Monitor (dashboard, `adn-monitor.yaml`, self-service).
 
 Spanish mirrors the same relative paths under **`docs/es/`**.
 

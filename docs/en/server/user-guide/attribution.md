@@ -2,7 +2,7 @@
 
 ## Credits and lineage
 
-**ADN Systems DMR Peer Server** is derived from **FreeDMR**, reorganised with **clean architecture** (domain, application, infrastructure) and ADN-specific features: scheduled announcements, **TTS**, on-demand voice, **`adn-voice.yaml`** merge, TCP reporting to **ADN Monitor**, integration with **`adn-mon.yaml`**, self-service, hotspot proxy, and more.
+**ADN Systems DMR Peer Server** is derived from **FreeDMR**, reorganised with **clean architecture** (domain, application, infrastructure) and ADN-specific features: scheduled announcements, **TTS**, on-demand voice, **`adn-voice.yaml`** merge, TCP reporting to **ADN Monitor**, integration with **`adn-monitor.yaml`**, self-service, hotspot proxy, and more.
 
 **[FreeDMR Peer Server](https://gitlab.hacknix.net/hacknix/FreeDMR)** is by **Simon Adlem, G7RZU** ([hacknix](https://gitlab.hacknix.net/hacknix/FreeDMR)).
 

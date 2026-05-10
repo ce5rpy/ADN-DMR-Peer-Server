@@ -32,5 +32,5 @@ Routing, timers, OpenBridge loop control, and protocol handling are implemented 
 - [Configuration](configuration.md) — files, `GLOBAL`, **MASTER** / **PEER** / **OPENBRIDGE**, ACLs, reports, aliases, voice merge.
 - [Bridges and talkgroups](bridges-and-talkgroups.md) — how `BRIDGES` works.
 - [Special numbers](special-numbers.md) — TG 4000, information services, echo.
-- [ADN Monitor](../../monitor/index.md) — dashboard, `adn-mon.yaml`, self-service (separate repo, deployed with the server).
+- [ADN Monitor](../../monitor/index.md) — dashboard, `adn-monitor.yaml`, self-service (separate repo, deployed with the server).
 - [Credits & license](attribution.md) — ADN → FreeDMR → hblink3, license.

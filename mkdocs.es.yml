@@ -68,7 +68,7 @@ nav:
           - Traducciones: server/contributing/translations.md
   - Monitor:
       - Descripción general: monitor/index.md
-      - Configuración (adn-mon.yaml): monitor/configuration.md
+      - Configuración (adn-monitor.yaml): monitor/configuration.md
       - Proxy hotspot: monitor/hotspot-proxy.md
       - Arquitectura e implantación: monitor/architecture.md
       - Self-service: monitor/self-service.md

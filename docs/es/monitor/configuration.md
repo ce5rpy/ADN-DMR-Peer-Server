@@ -1,6 +1,10 @@
-# Configuración (`adn-mon.yaml`)
+# Configuración (`adn-monitor.yaml`)
 
-Todos los componentes leen el **mismo** YAML (ruta por defecto a menudo `monitor/adn-mon.yaml`; se puede sobrescribir con **`ADN_CONFIG_PATH`**). El ejemplo del repositorio **adn-monitor** es la plantilla autoritativa; las claves siguientes coinciden con `monitor/adn-mon.yaml` y `monitor/src/adn_monitor/infrastructure/config_loader.py` (los nombres internos pueden diferir).
+Este documento describe **`adn-monitor.yaml`**, usado por el **monitor Python** (`monitor/monitor.py`) y el **backend PHP** (`backend/public/index.php`). La ruta por defecto suele ser **`monitor/adn-monitor.yaml`** (sobrescribible con **`ADN_CONFIG_PATH`**).
+
+El **proxy hotspot** carga por defecto **otro** fichero — **`proxy/adn-proxy.yaml`** — ver [Proxy hotspot](hotspot-proxy.md). La sección **`SELF_SERVICE`** (MySQL / PBKDF2) debe ser **idéntica** en ambos YAML cuando se usan los dos.
+
+El ejemplo del repositorio **adn-monitor** (`monitor/adn-monitor.yaml.example`) es la plantilla del monitor; las claves siguientes coinciden con ese fichero y `monitor/src/adn_monitor/infrastructure/config_loader.py` (los nombres internos pueden diferir).
 
 ---
 
@@ -27,6 +31,7 @@ Debe coincidir con la configuración de informes del **ADN DMR Peer Server**.
 |-------|-------------|
 | **ADN_IP** | Host/IP donde está el **listener TCP de informes** del peer server (vista de red desde el monitor). |
 | **ADN_PORT** | Puerto TCP — debe ser igual a **`REPORTS.REPORT_PORT`** en el servidor y ser alcanzable. |
+| **HELLO_TIMEOUT_MS** | Tras conectar por TCP, tiempo de espera del opcode **`0xFF` HELLO** (JSON) desde **new-adn-server**. Si no llega a tiempo, el monitor trata el peer como **legado** (solo CONFIG/BRIDGE pickle). Por defecto **1500** ms. Ver [Monitor e informes](../server/user-guide/monitoring.md). |
 
 ---
 
@@ -45,13 +50,16 @@ Si el backend PHP no puede conectar, las rutas de **auth** y **self-service** no
 
 ## `PROXY`
 
-**Proxy UDP hotspot** — guía completa: [Proxy hotspot](hotspot-proxy.md). Resumen: reenvía cada cliente a **`MASTER:DESTPORT_START`…`DEST_PORT_END`**; el peer server debe **escuchar** en esa IP y rango de puertos (ver también [Arquitectura](architecture.md)).
+**Proxy UDP hotspot** — guía completa: [Proxy hotspot](hotspot-proxy.md). En los despliegues actuales, estas claves están en **`proxy/adn-proxy.yaml`**, no en `adn-monitor.yaml`. **Legado:** un único fichero puede seguir incluyendo **PROXY** si el proxy se arranca con **`ADN_CONFIG_PATH`** apuntando a ese fichero (ver orden de resolución en [Proxy hotspot](hotspot-proxy.md#configuration-file)).
+
+Resumen: **`PORT`** + **`GENERATOR`** deben coincidir con **`SYSTEM.PORT`** + **`SYSTEM.GENERATOR`** en `adn-server`; cada cliente se reenvía a **`MASTER`** en un puerto UDP dentro de **`PORT`…`PORT+GENERATOR-1`** (ver también [Arquitectura](architecture.md)).
 
 | Clave | Significado |
 |-------|-------------|
 | **MASTER** | Host del peer server (IP o DNS; resuelto al arrancar el proxy). |
 | **LISTEN_PORT** / **LISTEN_IP** | Dónde el proxy acepta UDP del hotspot (IP vacía suele significar todas las interfaces). |
-| **DESTPORT_START** / **DEST_PORT_END** | Un puerto por cliente proxy hacia **`MASTER`**. |
+| **PORT** / **DESTPORT_START** | Puerto UDP base en **`MASTER`** (el mismo que **PORT** del SYSTEM en el servidor). |
+| **GENERATOR** | Cantidad de puertos UDP consecutivos en **`MASTER`** (el mismo entero que **GENERATOR** del SYSTEM en el servidor). |
 | **TIMEOUT**, **STATS**, **DEBUG**, **CLIENT_INFO** | Comportamiento y registro. |
 | **BLACK_LIST** / **IP_BLACK_LIST** | Listas de bloqueo opcionales. |
 
@@ -74,9 +82,10 @@ Misma idea que en el peer server: descargar JSON de **peer / subscriber / TGID**
 | Clave | Significado |
 |-------|-------------|
 | **LOG_PATH** | Directorio de ficheros de log. |
-| **LOG_FILE** | Nombre del log del monitor (p. ej. `adn-mon.log`). |
-| **PROXY_LOG_FILE** | Nombre de log separado para el proxy (cuando se ejecuta con logging del proxy). |
+| **LOG_FILE** | Nombre del log del monitor (p. ej. `adn-monitor.log`). |
 | **LOG_LEVEL** | p. ej. `INFO`, `DEBUG`. |
+
+El nombre del fichero de log del **proxy hotspot** se define en **`proxy/adn-proxy.yaml`** dentro de **LOGGER** como **`PROXY_LOG_FILE`** (ver [Proxy hotspot](hotspot-proxy.md)).
 
 ---
 
@@ -107,7 +116,8 @@ Misma idea que en el peer server: descargar JSON de **peer / subscriber / TGID**
 
 ## Entorno
 
-- **`ADN_CONFIG_PATH`**: ruta absoluta a `adn-mon.yaml` para monitor, backend y proxy.
+- **`ADN_CONFIG_PATH`**: ruta absoluta a **`adn-monitor.yaml`** para el **monitor** y el **backend PHP**.
+- **`ADN_PROXY_CONFIG_PATH`** (opcional): ruta absoluta a **`adn-proxy.yaml`** para el proxy hotspot. Si no está definida, el proxy usa **`ADN_CONFIG_PATH`** (fichero combinado legado), luego **`proxy/adn-proxy.yaml`** por defecto — detalles en [Proxy hotspot](hotspot-proxy.md#configuration-file).
 - El backend puede usar **`API_BASE_PATH`** si la API va bajo un prefijo.
 
 ---

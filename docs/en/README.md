@@ -47,7 +47,7 @@ Dashboard, WebSocket live view, optional **PHP API**, **MySQL** self-service, an
 
 | I want to… | Start here |
 |------------|------------|
-| `adn-mon.yaml` and layout | [Monitor configuration](monitor/configuration.md) |
+| `adn-monitor.yaml`, `adn-proxy.yaml`, layout | [Monitor configuration](monitor/configuration.md), [Hotspot proxy](monitor/hotspot-proxy.md) |
 | Hotspot proxy (UDP, `PROXY`, peer port range) | [Hotspot proxy](monitor/hotspot-proxy.md) |
 | Self-service | [Self-service](monitor/self-service.md) |
 | How it connects to the server | [Monitoring and reports](server/user-guide/monitoring.md) |

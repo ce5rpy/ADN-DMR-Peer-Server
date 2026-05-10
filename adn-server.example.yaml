@@ -49,6 +49,10 @@ ALIASES:
   KEYS_FILE: keys.json
 
 # Systems: MASTER, PEER, OPENBRIDGE. Names match legacy [SYSTEM], [D-APRS], [ECHO], [OBP-*].
+#
+# SYSTEM + GENERATOR>1 expands to SYSTEM-0..SYSTEM-(GENERATOR-1), each with UDP PORT+n
+# (e.g. PORT 56400 + GENERATOR 102 → listeners 56400–56501). Hotspot proxy must use the same
+# PROXY.PORT and PROXY.GENERATOR in adn-monitor/proxy/adn-proxy.example.yaml.
 SYSTEMS:
   SYSTEM:
     MODE: MASTER

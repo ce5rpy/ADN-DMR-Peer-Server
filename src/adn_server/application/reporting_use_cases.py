@@ -59,6 +59,8 @@ class ReportingUseCases:
         systems_cfg = self._config.get("SYSTEMS", {})
         now = time.time()
         for system_name, sys_cfg in systems_cfg.items():
+            if not sys_cfg.get("ENABLED", True):
+                continue
             if sys_cfg.get("MODE") == "OPENBRIDGE" and sys_cfg.get("ENHANCED_OBP"):
                 if "_bcka" not in sys_cfg:
                     logger.warning("(ROUTER) not sending to system %s as KeepAlive never seen", system_name)

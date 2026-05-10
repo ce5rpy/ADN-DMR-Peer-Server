@@ -21,7 +21,7 @@ Same opcodes as documented for the server: **CONFIG_SND**, **BRIDGE_SND**, **BRD
 ## PHP backend
 
 - **Slim 4** front controller: `backend/public/index.php`.
-- Loads **`adn-mon.yaml`** via **`ADN_CONFIG_PATH`** (same as monitor).
+- Loads **`adn-monitor.yaml`** via **`ADN_CONFIG_PATH`** (same as monitor).
 - **`/api/config/dashboard`** — title, language, feature flags (`selfService`, `showConsole`, …) from **`DASHBOARD`**.
 - **`/api/auth/*`** — session cookie auth when **SELF_SERVICE** DB is available.
 - **`/api/self-service/*`** — device options (see [Self-service](self-service.md)).
@@ -35,18 +35,18 @@ Same opcodes as documented for the server: **CONFIG_SND**, **BRIDGE_SND**, **BRD
 ## Hotspot proxy
 
 - Entry: `proxy/proxy.py`; package `src/adn_proxy/` (domain / application / infrastructure).
-- Reads **`PROXY`** and **`SELF_SERVICE`** from the same YAML.
-- For each hotspot client, allocates a port in **`DESTPORT_START`…`DEST_PORT_END`** and forwards UDP to **`MASTER`**.
+- Reads **`PROXY`** and **`SELF_SERVICE`** from **`adn-proxy.yaml`** by default (or from the same file as the monitor when **`ADN_CONFIG_PATH`** is used without **`ADN_PROXY_CONFIG_PATH`** — see [Hotspot proxy](hotspot-proxy.md#configuration-file)).
+- For each hotspot client, allocates a UDP port in **`PORT`…`PORT+GENERATOR-1`** (YAML **`PORT`** + **`GENERATOR`**, matching **`adn-server`**) and forwards to **`MASTER`**.
 - When **self-service** updates **`Clients.options`** and sets **`modified=1`**, the proxy sends **RPTO** to the **master** on a timer (~10 s). The **peer server** then applies options to the hotspot path (see [Self-service](self-service.md)).
 
-**Why it is not part of the peer server binary:** it shares **`adn-mon.yaml`**, MySQL self-service, and deployment with the monitor stack — see [Why it ships with the monitor](hotspot-proxy.md#why-it-ships-with-the-monitor-not-inside-the-peer-server).
+**Why it is not part of the peer server binary:** it shares deployment, **`SELF_SERVICE`** MySQL, and packaging with the monitor stack — see [Why it ships with the monitor](hotspot-proxy.md#why-it-ships-with-the-monitor-not-inside-the-peer-server).
 
 **Details:** [Hotspot proxy](hotspot-proxy.md) (config keys, peer server port range, startup).
 
 ## Typical deployment topology
 
 ```text
-[Hotspots] --UDP--> [Proxy :LISTEN_PORT] --UDP--> [Peer server :DESTPORT range]
+[Hotspots] --UDP--> [Proxy :LISTEN_PORT] --UDP--> [Peer server :PORT..PORT+GENERATOR-1]
                            |
                            v
                     MySQL (Clients)

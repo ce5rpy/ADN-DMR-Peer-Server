@@ -9,32 +9,31 @@ Este capítulo documenta la pila **adn-monitor** con el mismo nivel de detalle q
 | Parte | Rol |
 |-------|-----|
 | **`monitor/monitor.py`** | Python (Twisted): se conecta al **puerto TCP de informes** del peer server, decodifica cargas netstring (`CONFIG_SND`, `BRIDGE_SND`, `BRDG_EVENT`), mantiene **CTABLE** / **BTABLE**, escribe **Last Heard** / estadísticas de TG en **MySQL** si está configurado, sirve JSON **WebSocket** al panel. |
-| **`backend/`** | PHP **Slim**: `/api/config/dashboard`, auth, APIs **self-service** opcionales, proxy de alias. Lee el **mismo** `adn-mon.yaml` vía **`ADN_CONFIG_PATH`**. |
+| **`backend/`** | PHP **Slim**: `/api/config/dashboard`, auth, APIs **self-service** opcionales, proxy de alias. Lee **`adn-monitor.yaml`** vía **`ADN_CONFIG_PATH`**. |
 | **`frontend/`** | React (Vite): UI del panel; consume API del backend + WebSocket. |
-| **`proxy/`** | Python (Twisted): **proxy hotspot** UDP; reenvía Homebrew entre hotspots y el peer server; lee **`Clients`** en MySQL para opciones **RPTO** (self-service). |
+| **`proxy/`** | Python (Twisted): **proxy hotspot** UDP; reenvía Homebrew entre hotspots y el peer server; lee **`Clients`** en MySQL para opciones **RPTO** (self-service). Carga **`adn-proxy.yaml`** por defecto (ver [Proxy hotspot](hotspot-proxy.md)). |
 
-## Un solo fichero de configuración
+## Ficheros de configuración
 
-**`adn-mon.yaml`** (ruta a menudo con **`ADN_CONFIG_PATH`** en `.env`) lo comparten:
+| Fichero | Quién lo usa | Variable típica |
+|---------|----------------|-----------------|
+| **`monitor/adn-monitor.yaml`** | **`monitor.py`**, **backend PHP** | **`ADN_CONFIG_PATH`** |
+| **`proxy/adn-proxy.yaml`** | **`proxy/proxy.py`** | **`ADN_PROXY_CONFIG_PATH`** (opcional; valores por defecto y legado en [Proxy hotspot](hotspot-proxy.md#configuration-file)) |
 
-- Monitor Python (`monitor.py`)
-- Backend PHP (`backend/public/index.php`)
-- Proxy hotspot (`proxy/proxy.py`)
-
-Un **único** YAML define direcciones de informes, textos del panel, puerto WebSocket, credenciales **SELF_SERVICE** de la BD y ajustes **PROXY** de escucha/rango.
+**`SELF_SERVICE`** (MySQL / PBKDF2) debe **coincidir** entre ambos YAML cuando separas la config. **`ADN_CONNECTION`**, panel, WebSocket y alias van en **`adn-monitor.yaml`**; los ajustes **`PROXY`** de escucha/master/rango van en **`adn-proxy.yaml`**, salvo que uses un **fichero único legado** vía **`ADN_CONFIG_PATH`** para el proxy.
 
 ## Enlace con el peer server
 
-| Servidor (`adn-server.yaml`) | Monitor (`adn-mon.yaml`) |
+| Servidor (`adn-server.yaml`) | Monitor (`adn-monitor.yaml`) |
 |------------------------------|---------------------------|
 | **`REPORTS.REPORT_CLIENTS`** — lista de IPs permitidas para conectar **al** listener de informes, o el host del monitor | **`ADN_CONNECTION.ADN_IP`** / **`ADN_PORT`** — a dónde **se conecta** el monitor (debe coincidir con el bind y puerto de informes del servidor). |
 | **`REPORTS.REPORT_PORT`** — puerto TCP en el que el **servidor escucha** conexiones de informes | El mismo puerto que **`ADN_PORT`**. |
 
-Ver [Monitor e informes](../server/user-guide/monitoring.md) para los opcodes de informes y [Configuración del monitor](configuration.md) para cada sección de `adn-mon.yaml`.
+Ver [Monitor e informes](../server/user-guide/monitoring.md) para los opcodes de informes y [Configuración del monitor](configuration.md) para cada sección de `adn-monitor.yaml`.
 
 ## Ver también
 
 - [Proxy hotspot](hotspot-proxy.md) — `PROXY`, rango de puertos del peer, carga de config y arranque
 - [Arquitectura e implantación](architecture.md)
-- [Configuración (`adn-mon.yaml`)](configuration.md)
+- [Configuración (`adn-monitor.yaml`)](configuration.md)
 - [Self-service](self-service.md)

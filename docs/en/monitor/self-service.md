@@ -8,7 +8,7 @@ It involves **four** pieces: **MySQL** (`Clients` table), **PHP API** (session +
 
 ## Prerequisites
 
-1. **`SELF_SERVICE`** block in **`adn-mon.yaml`** with valid **MySQL** credentials and **PBKDF2** parameters matching your password tooling (same salt/iterations as **`hotspot_proxy_self_service.py`** when used).
+1. **`SELF_SERVICE`** block in **`adn-monitor.yaml`** with valid **MySQL** credentials and **PBKDF2** parameters matching your password tooling (same salt/iterations as **`hotspot_proxy_self_service.py`** when used).
 2. **`DASHBOARD.SELF_SERVICE: true`** so the UI shows the **Self-service** menu entry (and the backend exposes `/api/self-service/*` when DB connects).
 3. **`Clients`** table populated with rows: **`callsign`**, **`int_id`** (DMR ID), **`psswd`** (PBKDF2-SHA256 hex), **`options`** (semicolon-separated `KEY=value`), **`logged_in`**, **`host`**, **`modified`**, etc. (see adn-monitor DB schema / migration scripts in the repo).
 4. Hotspot traffic should pass through the **proxy** if you rely on **`modified`** and **RPTO** push (see flow below).

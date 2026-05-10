@@ -10,7 +10,7 @@ Las páginas **MkDocs** existen en árboles paralelos:
 | Español | **`docs/es/`** | **`mkdocs.es.yml`** → **`site/es/`** |
 
 - **`docs/en/server/`** — ADN DMR Peer Server (guía de usuario, protocolos, desarrollo, contribución).
-- **`docs/en/monitor/`** — ADN Monitor (panel, `adn-mon.yaml`, self-service).
+- **`docs/en/monitor/`** — ADN Monitor (panel, `adn-monitor.yaml`, self-service).
 
 El español replica las mismas rutas relativas bajo **`docs/es/`**.
 

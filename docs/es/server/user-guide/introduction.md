@@ -32,5 +32,5 @@ Enrutado, temporizadores, control de bucle OpenBridge y manejo de protocolo est�
 - [Configuración](configuration.md) — ficheros, `GLOBAL`, **MASTER** / **PEER** / **OPENBRIDGE**, ACL, informes, alias, fusión de voz.
 - [Bridges y talkgroups](bridges-and-talkgroups.md) — cómo funciona `BRIDGES`.
 - [Números especiales](special-numbers.md) — TG 4000, servicios de información, eco.
-- [ADN Monitor](../../monitor/index.md) — panel, `adn-mon.yaml`, self-service (repo aparte, desplegado con el servidor).
+- [ADN Monitor](../../monitor/index.md) — panel, `adn-monitor.yaml`, self-service (repo aparte, desplegado con el servidor).
 - [Créditos y licencia](attribution.md) — ADN → FreeDMR → hblink3, licencia.

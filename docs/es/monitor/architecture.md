@@ -21,7 +21,7 @@ Los mismos opcodes que en la documentación del servidor: **CONFIG_SND**, **BRID
 ## Backend PHP
 
 - **Slim 4** front controller: `backend/public/index.php`.
-- Carga **`adn-mon.yaml`** vía **`ADN_CONFIG_PATH`** (igual que el monitor).
+- Carga **`adn-monitor.yaml`** vía **`ADN_CONFIG_PATH`** (igual que el monitor).
 - **`/api/config/dashboard`** — título, idioma, flags (`selfService`, `showConsole`, …) desde **`DASHBOARD`**.
 - **`/api/auth/*`** — sesión por cookie cuando hay BD **SELF_SERVICE**.
 - **`/api/self-service/*`** — opciones de dispositivo (ver [Self-service](self-service.md)).
@@ -35,18 +35,18 @@ Los mismos opcodes que en la documentación del servidor: **CONFIG_SND**, **BRID
 ## Proxy hotspot
 
 - Entrada: `proxy/proxy.py`; paquete `src/adn_proxy/` (dominio / aplicación / infraestructura).
-- Lee **`PROXY`** y **`SELF_SERVICE`** del mismo YAML.
-- Por cada cliente hotspot, asigna un puerto en **`DESTPORT_START`…`DEST_PORT_END`** y reenvía UDP a **`MASTER`**.
+- Lee **`PROXY`** y **`SELF_SERVICE`** desde **`adn-proxy.yaml`** por defecto (o desde el mismo fichero que el monitor si se usa solo **`ADN_CONFIG_PATH`** sin **`ADN_PROXY_CONFIG_PATH`** — ver [Proxy hotspot](hotspot-proxy.md#configuration-file)).
+- Por cada cliente hotspot, asigna un puerto UDP en **`PORT`…`PORT+GENERATOR-1`** (**`PORT`** + **`GENERATOR`** en YAML, alineados con **`adn-server`**) y reenvía a **`MASTER`**.
 - Cuando **self-service** actualiza **`Clients.options`** y pone **`modified=1`**, el proxy envía **RPTO** al **master** en un temporizador (~10 s). El **peer server** aplica entonces las opciones al camino del hotspot (ver [Self-service](self-service.md)).
 
-**Por qué no forma parte del binario del peer server:** comparte **`adn-mon.yaml`**, self-service MySQL e implantación con la pila del monitor — ver [Por qué va con el monitor](hotspot-proxy.md#why-it-ships-with-the-monitor-not-inside-the-peer-server).
+**Por qué no forma parte del binario del peer server:** comparte implantación, **self-service** MySQL y empaquetado con la pila del monitor — ver [Por qué va con el monitor](hotspot-proxy.md#why-it-ships-with-the-monitor-not-inside-the-peer-server).
 
 **Detalle:** [Proxy hotspot](hotspot-proxy.md) (claves de config, rango de puertos del peer, arranque).
 
 ## Topología típica de despliegue
 
 ```text
-[Hotspots] --UDP--> [Proxy :LISTEN_PORT] --UDP--> [Peer server :rango DESTPORT]
+[Hotspots] --UDP--> [Proxy :LISTEN_PORT] --UDP--> [Peer server :PORT..PORT+GENERATOR-1]
                            |
                            v
                     MySQL (Clients)

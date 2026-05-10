@@ -46,7 +46,7 @@ Panel, **WebSocket** en vivo, **API PHP** opcional, **MySQL** self-service y **p
 
 | Quiero… | Empieza aquí |
 |---------|----------------|
-| `adn-mon.yaml` y despliegue | [Configuración del monitor](monitor/configuration.md) |
+| `adn-monitor.yaml`, `adn-proxy.yaml`, despliegue | [Configuración del monitor](monitor/configuration.md), [Proxy hotspot](monitor/hotspot-proxy.md) |
 | Proxy hotspot (UDP, `PROXY`, rango de puertos) | [Proxy hotspot](monitor/hotspot-proxy.md) |
 | Self-service | [Self-service](monitor/self-service.md) |
 | Cómo encaja con el servidor | [Monitor e informes](server/user-guide/monitoring.md) |
