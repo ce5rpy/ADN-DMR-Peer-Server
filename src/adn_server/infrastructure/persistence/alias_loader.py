@@ -218,3 +218,50 @@ class DefaultAliasLoader(AliasLoader):
                 logger.error("(ALIAS) ID ALIAS MAPPER: problem with blake2bsum of server_ids file: %s", e)
                 return {}
         return self._load_server_tsv(path, file_name)
+
+    def load_subscriber_profiles(self, config: dict[str, Any]) -> dict[int, dict[str, str]]:
+        """Load {id: {callsign, fname, surname, talker_alias?}} from subscriber JSON files."""
+        aliases = config.get("ALIASES", {})
+        path = Path(aliases.get("PATH", "./data/")).resolve()
+        sub_file = aliases.get("SUBSCRIBER_FILE", "subscriber_ids.json")
+        local_file = aliases.get("LOCAL_SUBSCRIBER_FILE", "subscriber_ids.json")
+        profiles: dict[int, dict[str, str]] = {}
+        for file_name in (sub_file, local_file):
+            self._merge_subscriber_profiles(path / file_name, profiles)
+        return profiles
+
+    def _merge_subscriber_profiles(self, file_path: Path, out: dict[int, dict[str, str]]) -> None:
+        if not file_path.is_file():
+            return
+        try:
+            with open(file_path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+        except (json.JSONDecodeError, OSError):
+            return
+        if not isinstance(data, dict):
+            return
+        if "count" in data:
+            data = {k: v for k, v in data.items() if k != "count"}
+        for _key, val in data.items():
+            if not isinstance(val, list):
+                continue
+            for record in val:
+                if not isinstance(record, dict) or "id" not in record:
+                    continue
+                try:
+                    rid = int(record["id"])
+                except (ValueError, TypeError):
+                    continue
+                entry: dict[str, str] = {}
+                if record.get("callsign"):
+                    entry["callsign"] = str(record["callsign"])
+                if record.get("fname"):
+                    entry["fname"] = str(record["fname"])
+                if record.get("surname"):
+                    entry["surname"] = str(record["surname"])
+                if record.get("talker_alias"):
+                    entry["talker_alias"] = str(record["talker_alias"])
+                if entry:
+                    prev = out.get(rid, {})
+                    prev.update(entry)
+                    out[rid] = prev

@@ -50,6 +50,7 @@ from twisted.internet import reactor, task, threads
 from .domain import bytes_3
 from .infrastructure import YamlConfigLoader, reopen_file_handlers, setup_logging
 from .infrastructure.config_normalizer import (
+    apply_talker_alias_defaults as _apply_talker_alias_defaults,
     expand_generator as _expand_generator,
     ensure_system_runtime_config as _ensure_system_runtime_config,
     normalize_peer_config as _normalize_peer_config,
@@ -153,6 +154,7 @@ def main() -> None:
 
     loader = YamlConfigLoader(project_root)
     config = loader.load(config_path)
+    _apply_talker_alias_defaults(config)
 
     # Voice config lives in a separate file for hot-reload without restart
     voice_config_path = os.path.join(os.path.dirname(os.path.abspath(config_path)), "adn-voice.yaml")
@@ -179,6 +181,7 @@ def main() -> None:
     subscriber_ids[900999] = "D-APRS"
     subscriber_ids[4294967295] = "SC"
     config["_SUB_IDS"] = subscriber_ids
+    config["_SUB_PROFILES"] = alias_loader.load_subscriber_profiles(config)
     config["_PEER_IDS"] = peer_ids
     config["_TG_IDS"] = talkgroup_ids
     config["_LOCAL_SUBSCRIBER_IDS"] = local_subscriber_ids
@@ -216,6 +219,22 @@ def main() -> None:
         p = protocols.get(system_name)
         if p is not None and hasattr(p, "send_system"):
             p.send_system(packet, **kwargs)
+
+    def send_dmra_to_system(
+        system_name: str,
+        packets: list[bytes],
+        exclude_peer: bytes | None = None,
+    ) -> int:
+        p = protocols.get(system_name)
+        if p is not None and hasattr(p, "send_dmra_system"):
+            return int(p.send_dmra_system(packets, exclude_peer=exclude_peer) or 0)
+        return 0
+
+    def get_dmra_blocks(system_name: str, stream_id: bytes) -> dict[int, bytes] | None:
+        p = protocols.get(system_name)
+        if p is not None and hasattr(p, "get_dmra_blocks"):
+            return p.get_dmra_blocks(stream_id)
+        return None
 
     def send_bcsq(system_name: str, tgid: bytes, stream_id: bytes) -> None:
         """Legacy: bridge calls send_bcsq (e.g. loop control first OBP). OBP protocol only."""
@@ -281,6 +300,8 @@ def main() -> None:
         report_factory=report_factory,
         on_bridge_deactivated=lambda sys: reactor.callInThread(voice_use_cases.disconnected_voice, sys),
         send_bcsq=send_bcsq,
+        send_dmra_to_system=send_dmra_to_system,
+        get_dmra_blocks=get_dmra_blocks,
     )
     bridge_use_cases.apply_startup_bridges()
     report_factory.set_bridges(bridge_router.get_bridges())
@@ -340,6 +361,7 @@ def main() -> None:
         try:
             p, s, t, l, sv, ch = alias_loader.load_aliases(config)
             config["_SUB_IDS"] = s
+            config["_SUB_PROFILES"] = alias_loader.load_subscriber_profiles(config)
             config["_PEER_IDS"] = p
             config["_TG_IDS"] = t
             config["_LOCAL_SUBSCRIBER_IDS"] = l
@@ -473,6 +495,8 @@ def main() -> None:
             on_options_received=bridge_use_cases.options_config_for_system,
             on_deactivate_dynamic_bridges=bridge_use_cases.deactivate_all_dynamic_bridges,
             on_obp_bcsq_received=bridge_use_cases.on_obp_bcsq_received,
+            on_talker_alias_local_repeat=bridge_use_cases.send_talker_alias_local_repeat,
+            on_talker_alias_stream_end=bridge_use_cases.clear_talker_alias_stream,
         )
         protocols[system_name] = protocol
         reactor.listenUDP(udp_port, protocol, interface=ip or "0.0.0.0")

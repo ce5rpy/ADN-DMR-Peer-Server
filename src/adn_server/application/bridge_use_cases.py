@@ -40,9 +40,15 @@ from dmr_utils3 import decode
 from dmr_utils3.const import LC_OPT
 
 from ..domain import int_id, bytes_3, bytes_4, HBPF_DATA_SYNC, HBPF_SLT_VHEAD, HBPF_SLT_VTERM, STREAM_TO
+from ..domain.talker_alias import DMRA_BLOCK_COUNT
 from .ports import BridgeRouter
+from .talker_alias_use_cases import TalkerAliasUseCases
 
 logger = logging.getLogger(__name__)
+
+# Embedded LC codeword sits at bits 116:148 inside the 48-bit EMB field (108:156).
+# Legacy bridge_master.py replaces dmrbits[116:148] on bursts B–E (dtype_vseq 1–4).
+_EMB_LC_SLICE = slice(116, 148)
 
 # While loop-control loser, re-send BCSQ periodically so peers stop forwarding if first UDP was lost (legacy sends once).
 _BCSQ_LOSER_RESEND_SEC = 2.0
@@ -91,6 +97,8 @@ class BridgeUseCases:
         report_factory: Any = None,
         on_bridge_deactivated: Any = None,
         send_bcsq: Any = None,
+        send_dmra_to_system: Any = None,
+        get_dmra_blocks: Any = None,
     ) -> None:
         self._router = bridge_router
         self._config = config
@@ -99,6 +107,129 @@ class BridgeUseCases:
         self._report_factory = report_factory
         self._on_bridge_deactivated = on_bridge_deactivated  # (system_name: str) -> None; legacy disconnectedVoice
         self._send_bcsq = send_bcsq  # (system_name, tgid, stream_id) -> None; legacy OBP send_bcsq from router
+        self._send_dmra_to_system = send_dmra_to_system
+        self._get_dmra_blocks = get_dmra_blocks
+        self._talker_alias = TalkerAliasUseCases(config)
+
+    def _send_talker_alias_to_target(
+        self,
+        source_system: str,
+        target_system: str,
+        rf_src: bytes,
+        stream_id: bytes,
+        source_peer: bytes,
+    ) -> None:
+        """Emit DMRA to an HBP target on VHEAD (once per target stream)."""
+        if not self._send_dmra_to_system:
+            return
+        tgt_mode = self._config.get("SYSTEMS", {}).get(target_system, {}).get("MODE")
+        if tgt_mode not in ("MASTER", "PEER"):
+            return
+        if not self._talker_alias.should_send_on_vhead(target_system, stream_id):
+            return
+        packets = self._talker_alias.packets_for_stream(
+            source_system,
+            rf_src,
+            stream_id,
+            self._get_dmra_blocks,
+            target_system=target_system,
+        )
+        if not packets:
+            return
+        exclude = source_peer if target_system == source_system else None
+        try:
+            peer_count = self._send_dmra_to_system(target_system, packets, exclude_peer=exclude)
+        except Exception as e:
+            logger.warning("(ROUTER) send_dmra_to_system %s failed: %s", target_system, e)
+            return
+        sid = int_id(stream_id)
+        if peer_count:
+            logger.debug(
+                "(%s) *TALKER ALIAS* stream %s sent %d DMRA block(s) to %d peer(s)",
+                target_system, sid, len(packets), peer_count,
+            )
+        elif exclude:
+            logger.debug(
+                "(%s) *TALKER ALIAS* stream %s no DMRA sent (source peer %s excluded on repeat)",
+                target_system, sid, int_id(exclude),
+            )
+
+    def send_talker_alias_local_repeat(
+        self,
+        system_name: str,
+        source_peer: bytes,
+        rf_src: bytes,
+        stream_id: bytes,
+    ) -> None:
+        """Inject/pass-through TA to other peers on this MASTER (REPEAT path)."""
+        self._send_talker_alias_to_target(
+            system_name, system_name, rf_src, stream_id, source_peer,
+        )
+
+    def clear_talker_alias_stream(self, system_name: str, stream_id: bytes) -> None:
+        """Release per-stream TA dedupe state after VTERM."""
+        self._talker_alias.clear_stream(system_name, stream_id)
+        if not self._get_protocols:
+            return
+        proto = self._get_protocols().get(system_name)
+        if proto is None:
+            return
+        status = getattr(proto, "STATUS", None)
+        if not isinstance(status, dict):
+            return
+        for slot in (1, 2):
+            st = status.get(slot)
+            if isinstance(st, dict) and st.get("TX_STREAM_ID") == stream_id:
+                self._clear_talker_alias_embed(st)
+
+    def _init_talker_alias_embed(
+        self,
+        st: dict[str, Any],
+        source_system: str,
+        target_system: str,
+        rf_src: bytes,
+        stream_id: bytes,
+    ) -> None:
+        """Prepare per-stream embedded TA state for DMRD voice injection."""
+        st.pop("TX_TA_EMB", None)
+        st.pop("TX_TA_PHASE", None)
+        st.pop("TX_TA_ON", None)
+        emblcs = self._talker_alias.embedded_emblc_for_stream(
+            source_system,
+            rf_src,
+            stream_id,
+            self._get_dmra_blocks,
+            target_system=target_system,
+        )
+        if emblcs:
+            st["TX_TA_EMB"], st["TX_TA_BLOCK_COUNT"] = emblcs
+            st["TX_TA_PHASE"] = 0
+            # First B1–B4 cycle carries group LC; TA on the next cycle.
+            st["TX_TA_ON"] = False
+
+    def _rewrite_embed_lc(self, dmrbits: bitarray, st: dict[str, Any], dtype_vseq: int, emb_key: str) -> None:
+        """Replace embedded LC on voice bursts B–E; alternate group LC and TA blocks."""
+        if dtype_vseq not in (1, 2, 3, 4):
+            return
+        ta_emb = st.get("TX_TA_EMB")
+        if ta_emb is not None and st.get("TX_TA_ON"):
+            phase = st.get("TX_TA_PHASE", 0)
+            block_count = st.get("TX_TA_BLOCK_COUNT", DMRA_BLOCK_COUNT)
+            frag = ta_emb[phase][dtype_vseq]
+            if dtype_vseq == 4:
+                st["TX_TA_ON"] = False
+                st["TX_TA_PHASE"] = (phase + 1) % block_count
+        else:
+            frag = st[emb_key][dtype_vseq]
+            if dtype_vseq == 4 and ta_emb is not None:
+                st["TX_TA_ON"] = True
+        dmrbits[_EMB_LC_SLICE] = frag
+
+    def _clear_talker_alias_embed(self, st: dict[str, Any]) -> None:
+        st.pop("TX_TA_EMB", None)
+        st.pop("TX_TA_PHASE", None)
+        st.pop("TX_TA_BLOCK_COUNT", None)
+        st.pop("TX_TA_ON", None)
 
     def get_bridges(self) -> dict[str, list[dict[str, Any]]]:
         """Return current BRIDGES."""
@@ -575,6 +706,8 @@ class BridgeUseCases:
                         _v = hbp_status.get(_k)
                         if isinstance(_v, dict) and _v.get("LAST", 0) < now - 180:
                             hbp_status.pop(_k, None)
+            if hasattr(protocol, "trim_dmra_streams"):
+                protocol.trim_dmra_streams()
 
     def bridge_reset_loop(self) -> None:
         """Bridge reset iteration (legacy bridge_reset, 6s). Clear _reset and remove_bridge_system."""
@@ -2177,6 +2310,13 @@ class BridgeUseCases:
                             _target_status[stream_id]["H_LC"] = bptc.encode_header_lc(dst_lc)
                             _target_status[stream_id]["T_LC"] = bptc.encode_terminator_lc(dst_lc)
                             _target_status[stream_id]["EMB_LC"] = bptc.encode_emblc(dst_lc)
+                            self._init_talker_alias_embed(
+                                _target_status[stream_id],
+                                system_name,
+                                entry["SYSTEM"],
+                                rf_src,
+                                stream_id,
+                            )
                             logger.debug(
                                 "(%s) Conference Bridge: %s, Call Bridged to OBP System: %s TS: %s, TGID: %s",
                                 system_name, _bridge_table_name, entry["SYSTEM"], entry.get("TS", 1), int_id(target_tgid),
@@ -2220,6 +2360,7 @@ class BridgeUseCases:
                             dmrbits = _target_status[stream_id]["H_LC"][0:98] + dmrbits[98:166] + _target_status[stream_id]["H_LC"][98:197]
                         elif frame_type == HBPF_DATA_SYNC and dtype_vseq == HBPF_SLT_VTERM:
                             dmrbits = _target_status[stream_id]["T_LC"][0:98] + dmrbits[98:166] + _target_status[stream_id]["T_LC"][98:197]
+                            self._clear_talker_alias_embed(_target_status[stream_id])
                             if self._report_factory and hasattr(self._report_factory, "send_bridge_event"):
                                 try:
                                     call_duration = pkt_time - _target_status[stream_id].get("START", pkt_time)
@@ -2231,7 +2372,9 @@ class BridgeUseCases:
                                 except Exception:
                                     pass
                         elif dtype_vseq in (1, 2, 3, 4):
-                            dmrbits = dmrbits[0:116] + _target_status[stream_id]["EMB_LC"][dtype_vseq] + dmrbits[148:264]
+                            self._rewrite_embed_lc(
+                                dmrbits, _target_status[stream_id], dtype_vseq, "EMB_LC",
+                            )
                         dmrpkt_out = dmrbits.tobytes()
                         _tmp_data = b"".join([_tmp_data, dmrpkt_out])
                     else:
@@ -2300,6 +2443,13 @@ class BridgeUseCases:
                         _ts_st["TX_H_LC"] = bptc.encode_header_lc(dst_lc)
                         _ts_st["TX_T_LC"] = bptc.encode_terminator_lc(dst_lc)
                         _ts_st["TX_EMB_LC"] = bptc.encode_emblc(dst_lc)
+                        self._init_talker_alias_embed(
+                            _ts_st,
+                            system_name,
+                            entry["SYSTEM"],
+                            rf_src,
+                            stream_id,
+                        )
                         logger.info(
                             "(%s) Conference Bridge: %s, Call Bridged to HBP System: %s TS: %s, TGID: %s",
                             system_name, _bridge_table_name, entry["SYSTEM"], entry_ts, int_id(entry_tgid_b),
@@ -2313,6 +2463,10 @@ class BridgeUseCases:
                                 )
                             except Exception:
                                 pass
+                        # First successful forward to HBP (may not be VHEAD if earlier frames were hangtime-blocked).
+                        self._send_talker_alias_to_target(
+                            system_name, entry["SYSTEM"], rf_src, stream_id, peer_id,
+                        )
                     _ts_st["TX_TIME"] = pkt_time
                     _ts_st["TX_TYPE"] = dtype_vseq
                     # Slot bit rewrite (legacy bridge.py 457-460 / 770-773)
@@ -2340,10 +2494,9 @@ class BridgeUseCases:
                             except Exception:
                                 pass
                     elif dtype_vseq in (1, 2, 3, 4):
-                        try:
-                            dmrbits = dmrbits[0:116] + _ts_st["TX_EMB_LC"][dtype_vseq] + dmrbits[148:264]
-                        except Exception:
-                            pass
+                        self._rewrite_embed_lc(
+                            dmrbits, _ts_st, dtype_vseq, "TX_EMB_LC",
+                        )
                     dmrpkt_out = dmrbits.tobytes()
                     # bridge_master.routerOBP.to_target HBP branch: _tmp_data + dmrpkt only (~2041-2042);
                     # HBP source adds BER/RSSI from payload (bridge.py routerHBP ~800).
@@ -2360,6 +2513,9 @@ class BridgeUseCases:
                         forwarded.append(entry["SYSTEM"])
                     except Exception as e:
                         logger.warning("(ROUTER) send_to_system %s failed: %s", entry.get("SYSTEM"), e)
+                    if frame_type == HBPF_DATA_SYNC and dtype_vseq == HBPF_SLT_VTERM:
+                        self._clear_talker_alias_embed(_ts_st)
+                        self._talker_alias.clear_stream(entry["SYSTEM"], stream_id)
         # Legacy bridge_master routerOBP ~2420-2434: after to_target, VTERM — CALL END log, END RX report, _fin, lastSeq
         if (
             source_is_obp

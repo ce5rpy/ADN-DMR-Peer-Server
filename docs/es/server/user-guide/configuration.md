@@ -61,6 +61,16 @@ Valores por defecto de todo el servidor. Muchas claves pueden sobrescribirse por
 | **USERS_PASS** | Nombre de fichero JSON de contraseñas por radio (opcional). |
 | **HASH_ENCRYPT** | Ruta a la clave de cifrado para el manejo del fichero de contraseñas. |
 
+### Talker Alias (`GLOBAL`)
+
+Talker Alias DMR opcional en HBP (paquetes `DMRA`). Guía completa: [Talker Alias](talker-alias.md).
+
+| Clave | Significado |
+|-------|-------------|
+| **TALKER_ALIAS** | Activa inyección/passthrough de TA (`false` por defecto). |
+| **TALKER_ALIAS_MODE** | `both` (por defecto), `passthrough` o `inject`. |
+| **TALKER_ALIAS_FORMAT** | Plantilla, p. ej. `{callsign} {fname}`. Máx. **29** caracteres (límite de protocolo, no YAML). |
+
 ---
 
 ## `SYSTEMS` — campos comunes

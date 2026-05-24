@@ -61,6 +61,16 @@ Server-wide defaults. Many keys can be overridden per system if `USE_ACL` (or si
 | **USERS_PASS** | Filename for per-radio password JSON (optional). |
 | **HASH_ENCRYPT** | Path to encryption key for password file handling. |
 
+### Talker Alias (`GLOBAL`)
+
+Optional DMR Talker Alias on HBP (`DMRA` packets). Full guide: [Talker Alias](talker-alias.md).
+
+| Key | Meaning |
+|-----|---------|
+| **TALKER_ALIAS** | Enable server TA inject/passthrough (`false` default). |
+| **TALKER_ALIAS_MODE** | `both` (default), `passthrough`, or `inject`. |
+| **TALKER_ALIAS_FORMAT** | Template, e.g. `{callsign} {fname}`. Max **29** chars (protocol limit, not YAML). |
+
 ---
 
 ## `SYSTEMS` — common fields

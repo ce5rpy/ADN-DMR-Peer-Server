@@ -17,6 +17,10 @@ GLOBAL:
   PASS_SECURITY: "<set-in-adn-server.yaml>"
   USERS_PASS: user_passwords.json
   HASH_ENCRYPT: encryption_key.secret
+  # Talker Alias (HBP DMRA): see docs/en/server/user-guide/talker-alias.md
+  TALKER_ALIAS: false
+  TALKER_ALIAS_MODE: both
+  TALKER_ALIAS_FORMAT: "{callsign} {fname}"
 
 REPORTS:
   REPORT: true

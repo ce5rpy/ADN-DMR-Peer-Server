@@ -84,6 +84,14 @@ def ensure_system_runtime_config(config: dict) -> None:
             })
 
 
+def apply_talker_alias_defaults(config: dict) -> None:
+    """Default GLOBAL Talker Alias keys (mode both; max length is protocol-fixed in code)."""
+    g = config.setdefault("GLOBAL", {})
+    g.setdefault("TALKER_ALIAS", False)
+    g.setdefault("TALKER_ALIAS_MODE", "both")
+    g.setdefault("TALKER_ALIAS_FORMAT", "{callsign} {fname}")
+
+
 def normalize_peer_config(config: dict) -> None:
     """Convert PEER systems from YAML to legacy format: MASTER_SOCKADDR, RADIO_ID/CALLSIGN/OPTIONS as bytes (config.py)."""
     for name, sys_cfg in config.get("SYSTEMS", {}).items():

@@ -41,6 +41,7 @@ from twisted.internet import reactor, task
 from twisted.internet.protocol import DatagramProtocol
 
 from ...domain import int_id, bytes_4
+from ...domain.talker_alias import DMRA_PACKET_LEN, parse_dmra_packet
 from dmr_utils3 import decode
 from dmr_utils3.const import LC_OPT
 
@@ -145,6 +146,8 @@ class HBPProtocol(DatagramProtocol):
         on_options_received: Callable[[str], None] | None = None,
         on_deactivate_dynamic_bridges: Callable[[str], None] | None = None,
         on_obp_bcsq_received: Callable[[str, bytes, bytes], None] | None = None,
+        on_talker_alias_local_repeat: Callable[[str, bytes, bytes, bytes], None] | None = None,
+        on_talker_alias_stream_end: Callable[[str, bytes], None] | None = None,
     ) -> None:
         self._CONFIG = config
         self._system = system_name
@@ -158,6 +161,8 @@ class HBPProtocol(DatagramProtocol):
         self._on_options_received = on_options_received
         self._on_deactivate_dynamic_bridges = on_deactivate_dynamic_bridges
         self._on_obp_bcsq_received = on_obp_bcsq_received
+        self._on_talker_alias_local_repeat = on_talker_alias_local_repeat
+        self._on_talker_alias_stream_end = on_talker_alias_stream_end
         self._config = config.get("SYSTEMS", {}).get(system_name, {})
         if self._config.get("MODE") == "OPENBRIDGE":
             self._laststrid = deque([], 20)
@@ -172,8 +177,14 @@ class HBPProtocol(DatagramProtocol):
             self.STATUS = {1: _make_slot_status(), 2: _make_slot_status()}
         if self._config.get("MODE") == "MASTER":
             self._peers = self._config.get("PEERS", {})
+            self._dmra_by_stream: dict[bytes, dict[str, Any]] = {}
+            self._dmra_rf_stream: dict[tuple[bytes, bytes], bytes] = {}
         else:
             self._peers = {}
+            self._dmra_by_stream = {}
+            self._dmra_rf_stream = {}
+        if self._config.get("MODE") == "PEER":
+            self._dmra_downlink: dict[bytes, dict[str, Any]] = {}
         if self._config.get("MODE") == "PEER":
             self._stats = self._config.get("STATS", {})
         else:
@@ -220,6 +231,72 @@ class HBPProtocol(DatagramProtocol):
         if _packet[:4] == DMRD:
             _packet = b"".join([_packet[:11], _peer, _packet[15:]])
         self.transport.write(_packet, self._peers[_peer]["SOCKADDR"])
+
+    def note_dmrd_stream(self, peer_id: bytes, rf_src: bytes, stream_id: bytes) -> None:
+        """Associate active stream with source for DMRA pass-through buffering."""
+        if self._config.get("MODE") != "MASTER" or not stream_id:
+            return
+        self._dmra_rf_stream[(peer_id, rf_src)] = stream_id
+
+    def store_dmra_packet(self, peer_id: bytes, data: bytes) -> None:
+        """Buffer one DMRA block from a hotspot (MASTER receive path)."""
+        parsed = parse_dmra_packet(data)
+        if not parsed:
+            return
+        rf_src, block_id, payload = parsed
+        if block_id > 3:
+            return
+        stream_id = self._dmra_rf_stream.get((peer_id, rf_src))
+        if not stream_id:
+            return
+        now = time.time()
+        entry = self._dmra_by_stream.setdefault(
+            stream_id,
+            {"blocks": {}, "rf_src": rf_src, "peer": peer_id, "last": now},
+        )
+        entry["blocks"][block_id] = payload
+        entry["last"] = now
+        entry["rf_src"] = rf_src
+
+    def get_dmra_blocks(self, stream_id: bytes) -> dict[int, bytes] | None:
+        """Return buffered DMRA block payloads for a stream, if any."""
+        entry = self._dmra_by_stream.get(stream_id)
+        if not entry:
+            return None
+        blocks = entry.get("blocks")
+        return dict(blocks) if isinstance(blocks, dict) else None
+
+    def trim_dmra_streams(self, max_age: float = 180.0) -> None:
+        """Drop stale DMRA buffers (same order of magnitude as stream trimmer)."""
+        if self._config.get("MODE") != "MASTER":
+            return
+        now = time.time()
+        cutoff = now - max_age
+        for stream_id in list(self._dmra_by_stream):
+            if self._dmra_by_stream[stream_id].get("last", 0) < cutoff:
+                del self._dmra_by_stream[stream_id]
+
+    def send_dmra_to_peers(self, packets: list[bytes], exclude_peer: bytes | None = None) -> int:
+        """Send DMRA packets to logged-in peers (MASTER downlink). Returns peer count."""
+        if self._config.get("MODE") != "MASTER":
+            return 0
+        sent = 0
+        for peer in self._peers:
+            if exclude_peer and peer == exclude_peer:
+                continue
+            for pkt in packets:
+                self.send_peer(peer, pkt)
+            sent += 1
+        return sent
+
+    def send_dmra_system(self, packets: list[bytes], exclude_peer: bytes | None = None) -> int:
+        """Send DMRA on this system link (MASTER → peers, PEER → upstream master)."""
+        if self._config.get("MODE") == "MASTER":
+            return self.send_dmra_to_peers(packets, exclude_peer=exclude_peer)
+        if self._config.get("MODE") == "PEER":
+            for pkt in packets:
+                self.send_master(pkt)
+        return 0
 
     def send_master(self, _packet: bytes, _hops: bytes = b"", _ber: bytes = b"\x00", _rssi: bytes = b"\x00", _source_server: bytes = b"\x00\x00\x00\x00", _source_rptr: bytes = b"\x00\x00\x00\x00") -> None:
         if _packet[:4] == DMRD:
@@ -467,12 +544,23 @@ class HBPProtocol(DatagramProtocol):
                 sub_map = self._CONFIG.get("_SUB_MAP")
                 if sub_map is not None:
                     sub_map[_rf_src] = (self._system, _slot, pkt_time)
+                self.note_dmrd_stream(_peer_id, _rf_src, _stream_id)
                 if self._config.get("REPEAT", True):
                     pkt = [_data[:11], b"", _data[15:]]
                     for _peer in self._peers:
                         if _peer != _peer_id:
                             pkt[1] = _peer
                             self.transport.write(b"".join(pkt), self._peers[_peer]["SOCKADDR"])
+                if (
+                    self._config.get("REPEAT", True)
+                    and _call_type in ("group", "vcsbk")
+                    and _frame_type == HBPF_DATA_SYNC
+                    and _dtype_vseq == HBPF_SLT_VHEAD
+                    and self._on_talker_alias_local_repeat
+                ):
+                    self._on_talker_alias_local_repeat(
+                        self._system, _peer_id, _rf_src, _stream_id,
+                    )
                 # TG 4000: deactivate after REPEAT so peers see the packet (legacy order)
                 if _int_dst_id == 4000 and self._on_deactivate_dynamic_bridges:
                     _kind = "Private call to ID" if _call_type == "unit" else "Group call to TG"
@@ -532,6 +620,13 @@ class HBPProtocol(DatagramProtocol):
                     and self._on_in_band_signalling
                 ):
                     self._on_in_band_signalling(self._system, _slot, _dst_id, pkt_time)
+                if (
+                    _call_type in ("group", "vcsbk")
+                    and _frame_type == HBPF_DATA_SYNC
+                    and _dtype_vseq == HBPF_SLT_VTERM
+                    and self._on_talker_alias_stream_end
+                ):
+                    self._on_talker_alias_stream_end(self._system, _stream_id)
                 if _slot in self.STATUS:
                     self.STATUS[_slot]["RX_PEER"] = _peer_id
                     self.STATUS[_slot]["RX_SEQ"] = _seq
@@ -712,7 +807,14 @@ class HBPProtocol(DatagramProtocol):
                 logger.info("(%s) Ping from Radio ID that is not logged in: %s", self._system, int_id(_peer_id))
 
         elif _command == DMRA:
-            logger.debug("(%s) Peer has sent Talker Alias packet %s", self._system, _data)
+            _peer_id = None
+            for pid, peer in self._peers.items():
+                if peer.get("SOCKADDR") == _sockaddr:
+                    _peer_id = pid
+                    break
+            if _peer_id is not None and len(_data) >= DMRA_PACKET_LEN:
+                logger.debug("(%s) Peer has sent Talker Alias packet %s", self._system, _data)
+                self.store_dmra_packet(_peer_id, _data)
 
         elif _command == PRIN:
             logger.info("(%s) *ProxyInfo* Connection from IP:Port: %s", self._system, _data.decode("utf8", errors="replace")[4:])
@@ -885,6 +987,21 @@ class HBPProtocol(DatagramProtocol):
                     self.STATUS[_slot]["RX_TGID"] = _dst_id
                     self.STATUS[_slot]["RX_TIME"] = pkt_time
                     self.STATUS[_slot]["RX_STREAM_ID"] = _stream_id
+
+        elif _command == DMRA:
+            if len(_data) >= DMRA_PACKET_LEN:
+                parsed = parse_dmra_packet(_data)
+                if parsed:
+                    rf_src, block_id, payload = parsed
+                    if block_id <= 3:
+                        now = time.time()
+                        entry = self._dmra_downlink.setdefault(
+                            rf_src,
+                            {"blocks": {}, "last": now},
+                        )
+                        entry["blocks"][block_id] = payload
+                        entry["last"] = now
+                logger.debug("(%s) Talker Alias from master (downlink)", self._system)
 
         elif _command == MSTN:
             _peer_id = _data[6:10]
@@ -1427,6 +1544,8 @@ def HBPProtocolFactory(
     on_options_received: Callable[[str], None] | None = None,
     on_deactivate_dynamic_bridges: Callable[[str], None] | None = None,
     on_obp_bcsq_received: Callable[[str, bytes, bytes], None] | None = None,
+    on_talker_alias_local_repeat: Callable[[str, bytes, bytes, bytes], None] | None = None,
+    on_talker_alias_stream_end: Callable[[str, bytes], None] | None = None,
 ) -> HBPProtocol:
     """Create HBP protocol instance (legacy: one HBSYSTEM per system)."""
     return HBPProtocol(
@@ -1442,4 +1561,6 @@ def HBPProtocolFactory(
         on_options_received=on_options_received,
         on_deactivate_dynamic_bridges=on_deactivate_dynamic_bridges,
         on_obp_bcsq_received=on_obp_bcsq_received,
+        on_talker_alias_local_repeat=on_talker_alias_local_repeat,
+        on_talker_alias_stream_end=on_talker_alias_stream_end,
     )
