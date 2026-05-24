@@ -31,6 +31,18 @@ from functools import partial, partialmethod
 from typing import Any
 
 
+def logging_enabled(log_config: dict[str, Any]) -> bool:
+    """LOGGER.ENABLED — default True when omitted (legacy configs unchanged)."""
+    if "ENABLED" not in log_config:
+        return True
+    val = log_config.get("ENABLED")
+    if isinstance(val, bool):
+        return val
+    if isinstance(val, str):
+        return val.strip().lower() in ("1", "true", "yes", "on")
+    return bool(val)
+
+
 def reopen_file_handlers(logger: logging.Logger | None = None) -> int:
     """Reopen all :class:`logging.FileHandler` streams on *logger* (default: root).
 
@@ -61,11 +73,22 @@ def reopen_file_handlers(logger: logging.Logger | None = None) -> int:
 
 
 def setup_logging(log_config: dict[str, Any]) -> logging.Logger:
-    """Configure logging from CONFIG['LOGGER']. Returns root logger."""
+    """Configure logging from CONFIG['LOGGER']. Returns application logger."""
+    log_name = log_config.get("LOG_NAME", "ADN")
+
+    if not logging_enabled(log_config):
+        logging.basicConfig(
+            level=logging.CRITICAL,
+            handlers=[logging.NullHandler()],
+            force=True,
+        )
+        logger = logging.getLogger(log_name)
+        logger.setLevel(logging.CRITICAL)
+        return logger
+
     level = getattr(logging, (log_config.get("LOG_LEVEL", "INFO")).upper(), logging.INFO)
     log_file = log_config.get("LOG_FILE", "/dev/null")
     handlers_cfg = log_config.get("LOG_HANDLERS", "console-timed").strip().split(",")
-    log_name = log_config.get("LOG_NAME", "ADN")
 
     logging.TRACE = 5
     logging.addLevelName(logging.TRACE, "TRACE")

@@ -27,6 +27,7 @@ REPORTS:
   REPORT_CLIENTS: "127.0.0.1"
 
 LOGGER:
+  # ENABLED: false   # omit or true = normal; false = no console/file logs (NullHandler)
   LOG_FILE: /var/log/adn-server/parrot.log
   LOG_HANDLERS: file-timed
   LOG_LEVEL: DEBUG
