@@ -37,15 +37,15 @@ ALIASES:
   PEER_FILE: peer_ids.json
   SUBSCRIBER_FILE: subscriber_ids.json
   TGID_FILE: talkgroup_ids.json
-  PEER_URL: https://adn.systems/files/peer_ids.json
-  SUBSCRIBER_URL: https://adn.systems/files/subscriber_ids.json
-  TGID_URL: https://adn.systems/files/talkgroup_ids.json
+  PEER_URL: https://servers.adn.systems/peer_ids.json
+  SUBSCRIBER_URL: https://servers.adn.systems/subscriber_ids.json
+  TGID_URL: https://servers.adn.systems/talkgroup_ids.json
   LOCAL_SUBSCRIBER_FILE: local_subcriber_ids.json
   STALE_DAYS: 1
   SUB_MAP_FILE: ""
-  SERVER_ID_URL: https://adn.systems/files/server_ids.tsv
+  SERVER_ID_URL: https://servers.adn.systems/server_ids.tsv
   SERVER_ID_FILE: server_ids.tsv
-  CHECKSUM_URL: https://adn.systems/files/file_checksums.json
+  CHECKSUM_URL: https://servers.adn.systems/file_checksums.json
   CHECKSUM_FILE: file_checksums.json
   KEYS_FILE: keys.json
 
