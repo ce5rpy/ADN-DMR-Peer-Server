@@ -466,14 +466,22 @@ class BridgeUseCases:
         for system_name, protocol in protocols.items():
             if not getattr(protocol, "STATUS", None):
                 continue
-            # OBP: legacy bridge_master stream_trimmer_loop ~631-682 — two-stage lifecycle:
+            # OBP: legacy bridge_master.stream_trimmer_loop:631-703 — two-stage lifecycle:
             # Stage 1 (5s idle, no _to, no _fin): set _to=True, emit END,RX, continue.
             # Stage 2 (180s idle): remove stream entry.
+            #
+            # Legacy parity: routerOBP.STATUS is a *flat* dict keyed only by stream_id
+            # (bridge_master.py:1911). The loop iterates `for stream_id in systems[s].STATUS:`,
+            # which automatically catches everything seeded by to_target HBP->OBP,
+            # sendDataToOBP, pvt_call_received and the OBP source path itself. We do
+            # not keep a parallel dict -- that was a divergence that produced leaks.
             if systems_cfg.get(system_name, {}).get("MODE") == "OPENBRIDGE":
-                obp_streams = getattr(protocol, "_obp_streams", None)
-                if obp_streams:
-                    to_remove = []
-                    for stream_id, st in list(obp_streams.items()):
+                obp_status = getattr(protocol, "STATUS", None)
+                if isinstance(obp_status, dict) and obp_status:
+                    to_remove: list[bytes] = []
+                    for stream_id, st in list(obp_status.items()):
+                        if not isinstance(st, dict):
+                            continue
                         last = st.get("LAST", 0)
                         # Stage 2: finished streams older than 180s → remove
                         if st.get("_fin") and last < now - 180:
@@ -502,7 +510,6 @@ class BridgeUseCases:
                             st["_to"] = True
                             continue
                     for stream_id in to_remove:
-                        st_rm = obp_streams.get(stream_id) or {}
                         _syscfg = systems_cfg.get(system_name, {})
                         _bmap = _syscfg.get("_bcsq")
                         if isinstance(_bmap, dict):
@@ -510,8 +517,7 @@ class BridgeUseCases:
                                 if _sid == stream_id:
                                     _bmap.pop(_tgid_k, None)
                         self._obp_emit_end_tx_for_forward_legs(stream_id, system_name, now)
-                        obp_streams.pop(stream_id, None)
-                        getattr(protocol, "STATUS", {}).pop(stream_id, None)
+                        obp_status.pop(stream_id, None)
                 continue
             for slot in (1, 2):
                 _slot = protocol.STATUS.get(slot)
@@ -555,6 +561,20 @@ class BridgeUseCases:
                             )
                         except Exception:
                             pass
+            # -- Intentional divergence from legacy --
+            # Legacy bridge_master.py:602 only iterates `range(1,3)` in the HBP branch,
+            # so any STATUS[stream_id] entry seeded by voice_use_cases (announcements
+            # via sys_obj.STATUS[stream_id], cf. bridge_master.py:1156/1626) or by
+            # send_voice_packet against HBP MASTER targets is never freed in legacy.
+            # Here we defensively sweep any bytes-keyed entry with LAST > 180 s.
+            # This does not change the wire protocol; it only releases memory.
+            hbp_status = getattr(protocol, "STATUS", None)
+            if isinstance(hbp_status, dict):
+                for _k in list(hbp_status.keys()):
+                    if isinstance(_k, (bytes, bytearray)):
+                        _v = hbp_status.get(_k)
+                        if isinstance(_v, dict) and _v.get("LAST", 0) < now - 180:
+                            hbp_status.pop(_k, None)
 
     def bridge_reset_loop(self) -> None:
         """Bridge reset iteration (legacy bridge_reset, 6s). Clear _reset and remove_bridge_system."""
@@ -1417,13 +1437,11 @@ class BridgeUseCases:
                 logger.exception("(OPTIONS) caught exception: %s", e)
 
     def _obp_wire_stream_dict(self, src_proto: Any, stream_id: bytes, st: dict[str, Any]) -> None:
-        """Legacy routerOBP uses one STATUS[stream_id]; mirror into _obp_streams for trimmer/_fin."""
+        """Legacy routerOBP.STATUS is a single flat dict keyed by stream_id (bridge_master.py:1911).
+        Write only there; trimmer iterates the same dict (parity)."""
         status = getattr(src_proto, "STATUS", None)
         if status is not None:
             status[stream_id] = st
-        obp = getattr(src_proto, "_obp_streams", None)
-        if obp is not None:
-            obp[stream_id] = st
 
     def _is_stream_known(self, system_name: str, stream_id: bytes, slot: int = 0) -> bool:
         """Return True if *stream_id* is already tracked.
@@ -1431,9 +1449,10 @@ class BridgeUseCases:
         Legacy routerHBP (bridge_master.py ~3054): ``_stream_id != STATUS[_slot]['RX_STREAM_ID']``
         Legacy routerOBP (bridge_master.py ~2193): ``_stream_id not in self.STATUS``
 
-        HBP protocols pre-seed ``STATUS[stream_id]`` before dmrd_received, so checking
-        ``stream_id in STATUS`` would always be True.  Instead we compare against the
-        per-slot ``RX_STREAM_ID`` for HBP (MASTER/PEER) and ``stream_id in STATUS`` for OBP.
+        For HBP (MASTER/PEER) we compare against the per-slot ``RX_STREAM_ID``.
+        For OBP we check membership in the flat ``STATUS`` dict — keyed only by
+        stream_id since routerOBP.__init__ does ``self.STATUS = {}`` (legacy
+        bridge_master.py:1911); slot-keyed entries do not exist on OBP protocols.
         """
         systems_cfg = self._config.get("SYSTEMS", {})
         sys_mode = systems_cfg.get(system_name, {}).get("MODE", "")
@@ -2349,9 +2368,11 @@ class BridgeUseCases:
             and dtype_vseq == HBPF_SLT_VTERM
         ):
             _src_p = protocols.get(system_name) if protocols else None
-            _obp_st = getattr(_src_p, "_obp_streams", None) if _src_p else None
-            if _obp_st is not None and stream_id in _obp_st:
-                ost = _obp_st[stream_id]
+            # Legacy parity (bridge_master.py:1911): routerOBP.STATUS is the flat dict.
+            _obp_st = getattr(_src_p, "STATUS", None) if _src_p else None
+            _ost_candidate = _obp_st.get(stream_id) if isinstance(_obp_st, dict) else None
+            if isinstance(_ost_candidate, dict):
+                ost = _ost_candidate
                 _end_t = time.time()
                 call_duration = _end_t - ost.get("START", _end_t)
                 packet_rate = (ost.get("packets", 0) / call_duration) if call_duration else 0.0

@@ -161,10 +161,12 @@ class HBPProtocol(DatagramProtocol):
         self._config = config.get("SYSTEMS", {}).get(system_name, {})
         if self._config.get("MODE") == "OPENBRIDGE":
             self._laststrid = deque([], 20)
-            self.STATUS = {1: _make_slot_status(), 2: _make_slot_status()}
-            # Legacy bridge_master: OBP stream state by stream_id for loop control (1ST) and duplicate handling
-            self._obp_streams = {}
-            self._bcsq_log_once: set[tuple[bytes, bytes]] = set()
+            # Legacy parity: routerOBP.__init__ uses a flat dict keyed by stream_id
+            # only (bridge_master.py:1911). The trimmer iterates the whole dict so
+            # every entry seeded by to_target / sendDataToOBP / pvt_call_received is
+            # cleaned uniformly. No pre-seed of slot keys here.
+            self.STATUS: dict[Any, Any] = {}
+            self._bcsq_log_once: deque = deque(maxlen=1024)
         else:
             self._laststrid = {1: b"", 2: b""}
             self.STATUS = {1: _make_slot_status(), 2: _make_slot_status()}
@@ -485,27 +487,12 @@ class HBPProtocol(DatagramProtocol):
                         "(%s) CALL RX peer %s src %s -> TG %s slot %s",
                         self._system, int_id(_peer_id), int_id(_rf_src), int_id(_dst_id), _slot,
                     )
-                # Legacy bridge.py: stream state and LC for OBP LC rewrite (H_LC/T_LC/EMB_LC)
-                if _stream_id not in self.STATUS:
-                    self.STATUS[_stream_id] = {
-                        "START": pkt_time,
-                        "CONTENTION": False,
-                        "RFS": _rf_src,
-                        "TGID": _dst_id,
-                        "LAST": pkt_time,
-                        "lastSeq": False,
-                        "lastData": False,
-                    }
+                # Legacy parity (bridge_master.py:3270-3310, routerHBP.dmrd_received):
+                # the HBP source path only writes per-slot state. The full LC is stored
+                # in STATUS[_slot]['RX_LC'] (decoded from the voice-header LC), and
+                # bridge_use_cases.py:2080 reads exactly that. Never write STATUS[stream_id]
+                # for HBP — that pattern is only legal for routerOBP (flat dict).
                 dmrpkt = _data[20:53] if len(_data) >= 53 else b""
-                if _frame_type == HBPF_DATA_SYNC and _dtype_vseq == HBPF_SLT_VHEAD and len(dmrpkt) >= 33:
-                    try:
-                        decoded = decode.voice_head_term(dmrpkt)
-                        self.STATUS[_stream_id]["LC"] = decoded["LC"]
-                    except Exception:
-                        self.STATUS[_stream_id]["LC"] = LC_OPT + _dst_id + _rf_src
-                else:
-                    self.STATUS[_stream_id]["LC"] = LC_OPT + _dst_id + _rf_src
-                # Legacy routerHBP: update slot STATUS RX_LC before calling dmrd_received
                 if _slot in self.STATUS:
                     if _stream_id != self.STATUS[_slot].get("RX_STREAM_ID"):
                         self.STATUS[_slot]["RX_START"] = pkt_time
@@ -846,21 +833,12 @@ class HBPProtocol(DatagramProtocol):
                         "(%s) CALL RX (from master) src %s -> TG %s slot %s",
                         self._system, int_id(_rf_src), int_id(_dst_id), _slot,
                     )
-                # Stream state + LC setup (same as MASTER, needed by dmrd_received for LC rewrite)
-                if _stream_id not in self.STATUS:
-                    self.STATUS[_stream_id] = {
-                        "START": pkt_time, "CONTENTION": False, "RFS": _rf_src,
-                        "TGID": _dst_id, "LAST": pkt_time, "lastSeq": False, "lastData": False,
-                    }
+                # Legacy parity (bridge_master.py:3270-3310, routerHBP.dmrd_received):
+                # PEER source path only writes per-slot state. Full LC stored in
+                # STATUS[_slot]['RX_LC'] (decoded voice-header LC). bridge_use_cases
+                # reads STATUS[_slot]['RX_LC'] for HBP sources. Never write
+                # STATUS[stream_id] for HBP — that pattern is only legal for routerOBP.
                 dmrpkt = _data[20:53] if len(_data) >= 53 else b""
-                if _frame_type == HBPF_DATA_SYNC and _dtype_vseq == HBPF_SLT_VHEAD and len(dmrpkt) >= 33:
-                    try:
-                        decoded = decode.voice_head_term(dmrpkt)
-                        self.STATUS[_stream_id]["LC"] = decoded["LC"]
-                    except Exception:
-                        self.STATUS[_stream_id]["LC"] = LC_OPT + _dst_id + _rf_src
-                else:
-                    self.STATUS[_stream_id]["LC"] = LC_OPT + _dst_id + _rf_src
                 if _slot in self.STATUS:
                     if _stream_id != self.STATUS[_slot].get("RX_STREAM_ID"):
                         self.STATUS[_slot]["RX_START"] = pkt_time
@@ -1385,8 +1363,8 @@ class HBPProtocol(DatagramProtocol):
                     if self._config.get("MODE") == "OPENBRIDGE":
                         _key = (_stream_bcsq, _tgid_bcsq)
                         _once = getattr(self, "_bcsq_log_once", None)
-                        if isinstance(_once, set) and _key not in _once:
-                            _once.add(_key)
+                        if isinstance(_once, deque) and _key not in _once:
+                            _once.append(_key)
                             logger.info(
                                 "(%s) *BridgeControl* BCSQ accepted: stream_id=%s TGID=%s (peer quenched; forwarding on this OBP stops for this stream/TG)",
                                 self._system,
