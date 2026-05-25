@@ -5,7 +5,7 @@
 | File | Committed | Role |
 |------|-----------|------|
 | `adn-server.example.yaml` | Yes | Template — copy to `adn-server.yaml` and edit. |
-| `adn-server.yaml` | **No** (gitignored) | Main server: systems, globals, logging, aliases, reports. |
+| `adn-server.yaml` | **No** (gitignored) | Main server: systems, globals, logging, aliases, reports. **Hot-reload** via `SIGHUP` (see [Configuration](configuration.md#hot-reload-adn-serveryaml)). |
 | `adn-voice.example.yaml` | Yes | Template for voice — copy to `adn-voice.yaml`. |
 | `adn-voice.yaml` | **No** (typical) | Voice/TTS/recording; merged into `config["VOICE"]` at startup and **hot-reloaded** (~every 15 s) if the file changes. |
 
@@ -18,6 +18,24 @@ python adn-server.py -c /path/to/adn-server.yaml
 Optional: `--logging LEVEL` overrides `LOGGER.LOG_LEVEL`.
 
 If `adn-voice.yaml` sits next to `adn-server.yaml`, it is loaded automatically. You can also put a `VOICE:` block inside `adn-server.yaml`; the separate file is the usual way to change announcements without touching the main config.
+
+### Hot reload (`adn-server.yaml`)
+
+After editing the main config you can reload **without restarting** the process (active voice streams on unchanged UDP listeners are preserved):
+
+```bash
+kill -HUP $(pidof adn-server.py)    # or: systemctl reload adn-server
+```
+
+With **systemd**, add to your unit file:
+
+```ini
+ExecReload=/bin/kill -HUP $MAINPID
+```
+
+**Reload applies:** `GLOBAL`, `REPORTS`, `ALIASES`, per-system settings, **new/removed SYSTEMS** (including `GENERATOR` expansion and new OpenBridge legs), and updated bind addresses (listener restart for that system only).
+
+**Not reloaded:** `adn-voice.yaml` (separate 15 s loop), Python code, subscriber alias files (separate periodic reload). **BRIDGES** table is not rebuilt on reload — restart if bridge rules changed in a way that requires a full reset.
 
 **Secrets:** Never commit real passphrases, security URLs, or `user_passwords.json` / `encryption_key.secret`. Use placeholders in templates and keep production files local.
 

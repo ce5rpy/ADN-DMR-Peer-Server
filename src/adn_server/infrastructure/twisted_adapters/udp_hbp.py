@@ -219,6 +219,14 @@ class HBPProtocol(DatagramProtocol):
             _maint_d = self._maintenance_loop.start(ping_time)
             _maint_d.addErrback(self._looping_err_handle)
 
+    def apply_system_config(self, config: dict[str, Any]) -> None:
+        """Hot-reload: refresh system dict from live CONFIG (keeps STATUS / streams)."""
+        self._CONFIG = config
+        sys_cfg = config.get("SYSTEMS", {}).get(self._system, {})
+        self._config = sys_cfg
+        if sys_cfg.get("MODE") == "MASTER":
+            self._peers = sys_cfg.get("PEERS", {})
+
     # ── Exact port of hblink.py send_peers / send_peer / send_master / send_system ──
 
     def send_peers(self, _packet: bytes, _hops: bytes = b"", _ber: bytes = b"\x00", _rssi: bytes = b"\x00", _source_server: bytes = b"\x00\x00\x00\x00", _source_rptr: bytes = b"\x00\x00\x00\x00") -> None:

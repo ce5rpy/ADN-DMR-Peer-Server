@@ -5,7 +5,7 @@
 | Fichero | En el repo | Rol |
 |---------|-------------|-----|
 | `adn-server.example.yaml` | Sí | Plantilla — copiar a `adn-server.yaml` y editar. |
-| `adn-server.yaml` | **No** (gitignored) | Servidor principal: sistemas, globales, logging, alias, informes. |
+| `adn-server.yaml` | **No** (gitignored) | Servidor principal: sistemas, globales, logging, alias, informes. **Recarga en caliente** con `SIGHUP` (ver [Configuración](configuration.md#recarga-en-caliente-adn-serveryaml)). |
 | `adn-voice.example.yaml` | Sí | Plantilla de voz — copiar a `adn-voice.yaml`. |
 | `adn-voice.yaml` | **No** (habitual) | Voz/TTS/grabación; se fusiona en `config["VOICE"]` al arranque y **recarga en caliente** (~cada 15 s) si cambia el fichero. |
 
@@ -18,6 +18,24 @@ python adn-server.py -c /ruta/a/adn-server.yaml
 Opcional: `--logging LEVEL` sobrescribe `LOGGER.LOG_LEVEL`.
 
 Si `adn-voice.yaml` está junto a `adn-server.yaml`, se carga automáticamente. También puedes poner un bloque `VOICE:` dentro de `adn-server.yaml`; el fichero separado es la forma habitual de cambiar anuncios sin tocar la config principal.
+
+### Recarga en caliente (`adn-server.yaml`)
+
+Tras editar la config principal puedes recargar **sin reiniciar** el proceso (se conservan streams de voz activos en listeners UDP que no cambian):
+
+```bash
+kill -HUP $(pidof adn-server.py)    # o: systemctl reload adn-server
+```
+
+Con **systemd**, en la unidad:
+
+```ini
+ExecReload=/bin/kill -HUP $MAINPID
+```
+
+**Se recarga:** `GLOBAL`, `REPORTS`, `ALIASES`, parámetros por system, **systems nuevos/eliminados** (incluida expansión `GENERATOR` y OBP nuevos), y cambios de IP/puerto (solo reinicia el listener de ese system).
+
+**No se recarga:** `adn-voice.yaml` (loop aparte cada 15 s), código Python, ficheros de alias (recarga periódica). La tabla **BRIDGES** no se reconstruye — reinicia si cambiaste reglas de bridge que exijan reset completo.
 
 **Secretos:** no versionar passphrases reales, URLs de seguridad ni `user_passwords.json` / `encryption_key.secret`. Usa placeholders en plantillas y mantén producción en local.
 

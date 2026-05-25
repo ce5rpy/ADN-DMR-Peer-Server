@@ -49,6 +49,7 @@ from twisted.internet import reactor, task, threads
 
 from .domain import bytes_3
 from .infrastructure import YamlConfigLoader, reopen_file_handlers, setup_logging
+from .infrastructure.config_reload import BindSpec, reload_server_config
 from .infrastructure.config_normalizer import (
     apply_talker_alias_defaults as _apply_talker_alias_defaults,
     expand_generator as _expand_generator,
@@ -213,6 +214,7 @@ def main() -> None:
 
     # Protocol registry for send_to_system (legacy: systems[name].send_system(packet))
     protocols: dict[str, Any] = {}
+    udp_ports: dict[str, Any] = {}
     report_factory = ReportServerFactory(config)
 
     def send_to_system(system_name: str, packet: bytes, **kwargs: Any) -> None:
@@ -443,9 +445,65 @@ def main() -> None:
         n = reopen_file_handlers()
         logger.info("(LOGGER) Reopened %s file log handler(s) after SIGUSR2", n)
 
+    def _create_hbp_protocol(system_name: str) -> Any:
+        return HBPProtocolFactory(
+            system_name,
+            config,
+            report_factory,
+            router=bridge_router,
+            dmrd_received=bridge_use_cases.dmrd_received,
+            get_user_password_callback=user_passwords_loader.get_user_password,
+            on_play_file_request=voice_use_cases.play_file_on_request,
+            on_handle_recording=recording_handler.handle_recording,
+            on_in_band_signalling=bridge_use_cases.apply_in_band_signalling,
+            on_options_received=bridge_use_cases.options_config_for_system,
+            on_deactivate_dynamic_bridges=bridge_use_cases.deactivate_all_dynamic_bridges,
+            on_obp_bcsq_received=bridge_use_cases.on_obp_bcsq_received,
+            on_talker_alias_local_repeat=bridge_use_cases.send_talker_alias_local_repeat,
+            on_talker_alias_stream_end=bridge_use_cases.clear_talker_alias_stream,
+        )
+
+    def _listen_system(_name: str, bind: BindSpec, protocol: Any) -> Any:
+        port = reactor.listenUDP(bind.port, protocol, interface=bind.ip or "0.0.0.0")
+        logger.info("(GLOBAL) UDP %s listening on %s:%s", _name, bind.ip or "*", bind.port)
+        return port
+
+    def _stop_udp_port(port: Any) -> None:
+        if port is not None:
+            port.stopListening()
+
+    def _on_config_systems_changed() -> None:
+        report_factory.set_systems(config.get("SYSTEMS", {}))
+        user_passwords_loader.load(config)
+
+    def _do_config_reload() -> None:
+        try:
+            reload_server_config(
+                config,
+                config_path,
+                loader,
+                protocols,
+                udp_ports,
+                create_protocol=_create_hbp_protocol,
+                listen_udp=lambda n, b, p: _listen_system(n, b, p),
+                stop_listener=_stop_udp_port,
+                on_systems_changed=_on_config_systems_changed,
+                log=logger,
+            )
+        except Exception as e:
+            logger.error("(CONFIG-RELOAD) aborted: %s", e)
+
+    def sighup_reload_config(_sig, _frame):
+        """Reload adn-server.yaml (SYSTEMS, GLOBAL); keeps active streams on unchanged listeners."""
+        logger.info("(CONFIG-RELOAD) SIGHUP received, scheduling reload")
+        reactor.callLater(0, _do_config_reload)
+
     signal.signal(signal.SIGTERM, sig_handler)
     signal.signal(signal.SIGINT, sig_handler)
     signal.signal(signal.SIGUSR2, sigusr2_reopen_logs)
+    if hasattr(signal, "SIGHUP"):
+        signal.signal(signal.SIGHUP, sighup_reload_config)
+        logger.info("(CONFIG-RELOAD) SIGHUP handler active (systemctl reload / kill -HUP)")
     reactor.addSystemEventTrigger("before", "shutdown", shutdown_handler)
 
     # Voice config reload (15s): re-read adn-voice.yaml, start/stop announcement LoopingCalls on change
@@ -480,28 +538,16 @@ def main() -> None:
     for system_name, sys_cfg in systems_cfg.items():
         if not sys_cfg.get("ENABLED", True):
             continue
-        ip = sys_cfg.get("IP", "")
-        udp_port = sys_cfg.get("PORT", 56400)
-        protocol = HBPProtocolFactory(
-            system_name,
-            config,
-            report_factory,
-            router=bridge_router,
-            dmrd_received=bridge_use_cases.dmrd_received,
-            get_user_password_callback=user_passwords_loader.get_user_password,
-            on_play_file_request=voice_use_cases.play_file_on_request,
-            on_handle_recording=recording_handler.handle_recording,
-            on_in_band_signalling=bridge_use_cases.apply_in_band_signalling,
-            on_options_received=bridge_use_cases.options_config_for_system,
-            on_deactivate_dynamic_bridges=bridge_use_cases.deactivate_all_dynamic_bridges,
-            on_obp_bcsq_received=bridge_use_cases.on_obp_bcsq_received,
-            on_talker_alias_local_repeat=bridge_use_cases.send_talker_alias_local_repeat,
-            on_talker_alias_stream_end=bridge_use_cases.clear_talker_alias_stream,
-        )
+        bind = BindSpec(ip=str(sys_cfg.get("IP") or "0.0.0.0"), port=int(sys_cfg.get("PORT", 56400)))
+        protocol = _create_hbp_protocol(system_name)
+        udp_ports[system_name] = _listen_system(system_name, bind, protocol)
         protocols[system_name] = protocol
-        reactor.listenUDP(udp_port, protocol, interface=ip or "0.0.0.0")
-        logger.debug("(GLOBAL) %s instance created: %s, %s", sys_cfg.get("MODE", "?"), system_name, protocol)
-        logger.info("(GLOBAL) UDP %s listening on %s:%s", system_name, ip or "*", udp_port)
+        logger.debug(
+            "(GLOBAL) %s instance created: %s, %s",
+            sys_cfg.get("MODE", "?"),
+            system_name,
+            protocol,
+        )
 
     logger.info("(GLOBAL) ADN DMR Peer Server started. Use adn-dmr-server as reference.")
     reactor.suggestThreadPoolSize(100)
