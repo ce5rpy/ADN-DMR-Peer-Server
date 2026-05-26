@@ -474,6 +474,9 @@ def main() -> None:
 
     def _on_config_systems_changed() -> None:
         report_factory.set_systems(config.get("SYSTEMS", {}))
+        report_factory.set_bridges(bridge_router.get_bridges())
+        report_factory.send_config()
+        report_factory.send_bridge()
         user_passwords_loader.load(config)
 
     def _do_config_reload() -> None:
@@ -488,6 +491,7 @@ def main() -> None:
                 listen_udp=lambda n, b, p: _listen_system(n, b, p),
                 stop_listener=_stop_udp_port,
                 on_systems_changed=_on_config_systems_changed,
+                on_system_removed=bridge_use_cases.flush_monitor_events_for_system,
                 log=logger,
             )
         except Exception as e:

@@ -587,6 +587,57 @@ class BridgeUseCases:
             return
         tstatus.pop(stream_id, None)
 
+    def flush_monitor_events_for_system(self, system_name: str, protocol: Any) -> None:
+        report = self._report_factory
+        if not report or not hasattr(report, "send_bridge_event"):
+            return
+        if not self._config.get("REPORTS", {}).get("REPORT", True):
+            return
+        status = getattr(protocol, "STATUS", None)
+        if not isinstance(status, dict):
+            return
+        mode = self._config.get("SYSTEMS", {}).get(system_name, {}).get("MODE")
+        now = time.time()
+
+        if mode == "OPENBRIDGE":
+            for stream_id, st in list(status.items()):
+                if not isinstance(stream_id, (bytes, bytearray)) or not isinstance(st, dict):
+                    continue
+                trx = "TX" if "H_LC" in st else "RX"
+                start = st.get("START", now)
+                report.send_bridge_event(
+                    "GROUP VOICE,END,{},{},{},{},{},{},{:.2f}".format(
+                        trx, system_name, int_id(stream_id),
+                        int_id(st.get("RX_PEER", b"\x00\x00\x00\x00")),
+                        int_id(st.get("RFS", b"\x00\x00\x00")), 1,
+                        int_id(st.get("TGID", b"\x00\x00\x00")), max(0.0, now - start),
+                    )
+                )
+                if trx == "RX":
+                    self._obp_emit_end_tx_for_forward_legs(stream_id, system_name, now)
+            return
+
+        for slot in (1, 2):
+            slot_st = status.get(slot)
+            if not isinstance(slot_st, dict):
+                continue
+            for trx, sid_key, peer_key, rfs_key, tgid_key, start_key, type_key in (
+                ("RX", "RX_STREAM_ID", "RX_PEER", "RX_RFS", "RX_TGID", "RX_START", "RX_TYPE"),
+                ("TX", "TX_STREAM_ID", "TX_PEER", "TX_RFS", "TX_TGID", "TX_START", "TX_TYPE"),
+            ):
+                sid = slot_st.get(sid_key, b"\x00")
+                if sid in (b"\x00", b"") or slot_st.get(type_key) == HBPF_SLT_VTERM:
+                    continue
+                report.send_bridge_event(
+                    "GROUP VOICE,END,{},{},{},{},{},{},{:.2f}".format(
+                        trx, system_name, int_id(sid),
+                        int_id(slot_st.get(peer_key, b"\x00\x00\x00\x00")),
+                        int_id(slot_st.get(rfs_key, b"\x00\x00\x00")), slot,
+                        int_id(slot_st.get(tgid_key, b"\x00\x00\x00")),
+                        max(0.0, now - slot_st.get(start_key, now)),
+                    )
+                )
+
     def stream_trimmer_loop(self) -> None:
         """Trim old stream state (legacy stream_trimmer_loop, 5s). RX/TX timeout per system/slot; OBP streams (legacy bridge.py 181-240)."""
         logger.debug("(ROUTER) Trimming inactive stream IDs from system lists")

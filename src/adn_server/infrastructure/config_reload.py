@@ -69,11 +69,21 @@ def prepare_incoming_config(
 
 
 def merge_system_config(old_cfg: dict[str, Any], new_cfg: dict[str, Any]) -> dict[str, Any]:
-    """Apply new system settings while keeping live runtime state (PEERS, STATS)."""
+    """Apply new system settings while keeping live runtime state (PEERS, STATS, options/static TGs)."""
     merged = copy.deepcopy(new_cfg)
     mode = merged.get("MODE")
     if mode == "MASTER":
         merged["PEERS"] = old_cfg.get("PEERS", {})
+        for key in (
+            "OPTIONS",
+            "TS1_STATIC",
+            "TS2_STATIC",
+            "DEFAULT_UA_TIMER",
+            "_options_static_apply_fp",
+            "_default_options",
+        ):
+            if key in old_cfg:
+                merged[key] = old_cfg[key]
     elif mode == "PEER":
         stats = old_cfg.get("STATS")
         if isinstance(stats, dict):
@@ -116,6 +126,7 @@ def reload_server_config(
     listen_udp: Callable[[str, BindSpec, Any], Any],
     stop_listener: Callable[[Any], None],
     on_systems_changed: Callable[[], None] | None = None,
+    on_system_removed: Callable[[str, Any], None] | None = None,
     log: logging.Logger | None = None,
 ) -> ReloadResult:
     """
@@ -149,6 +160,8 @@ def reload_server_config(
     for name in sorted(old_enabled - new_enabled):
         port = transports.pop(name, None)
         proto = protocols.pop(name, None)
+        if proto is not None and on_system_removed:
+            on_system_removed(name, proto)
         if proto is not None:
             try:
                 proto.dereg()
