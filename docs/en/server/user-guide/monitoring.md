@@ -5,7 +5,7 @@
 When **`REPORTS`** is enabled in the server config, the **ADN DMR Peer Server** listens on TCP and **report clients** (typically **adn-monitor**) connect and receive:
 
 - **HELLO** (opcode **`0xFF`**) — JSON sent **first** on each new TCP connection by **new-adn-server** (`adn-server`): `server` name, package **`version`**, **`protocol`** number, and **`features`** (e.g. `INGRESS`, `END_TX_FORWARD`, `PUSH_ON_CONNECT`). Lets the monitor tag the session as **v2** before any pickled payloads.
-- **CONFIG_SND** / **BRIDGE_SND** — pickled snapshots of systems and bridges (sent immediately after HELLO on connect, and again on updates / request).
+- **CONFIG_SND** / **BRIDGE_SND** — pickled snapshots of systems and bridges (sent immediately after HELLO on connect, on **`CONFIG_REQ`** / **`BRIDGE_REQ`**, on **SIGHUP** config reload, when a **MASTER** hotspot **registers or disconnects**, and on the periodic **`REPORT_INTERVAL`** loop).
 - **BRDG_EVENT** — text events for calls (`GROUP VOICE`, `PRIVATE VOICE`, etc.).
 
 Older stacks (**legacy** `adn-dmr-server`-style) may **omit** HELLO. **adn-monitor** waits up to **`ADN_CONNECTION.HELLO_TIMEOUT_MS`** (see [Monitor configuration](../../monitor/configuration.md#adn_connection)); if no HELLO arrives, it assumes **legacy** reporting.

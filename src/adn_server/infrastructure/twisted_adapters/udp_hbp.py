@@ -432,6 +432,20 @@ class HBPProtocol(DatagramProtocol):
         for _pi in getattr(self, "_peers", {}):
             self.proxy_IPBlackList(_pi, self._peers[_pi]["SOCKADDR"])
 
+    def _push_config_to_monitor(self) -> None:
+        """Push CONFIG_SND when MASTER peer list or connection state changes."""
+        report = self._report
+        if report is None:
+            return
+        if not self._CONFIG.get("REPORTS", {}).get("REPORT", True):
+            return
+        systems = self._CONFIG.get("SYSTEMS", {})
+        if hasattr(report, "set_systems"):
+            report.set_systems(systems)
+        if hasattr(report, "send_config"):
+            report.send_config()
+            logger.debug("(REPORT) Pushed CONFIG_SND after peer state change on %s", self._system)
+
     def datagramReceived(self, data: bytes, addr: tuple[str, int]) -> None:
         if len(data) < 4:
             return
@@ -472,6 +486,8 @@ class HBPProtocol(DatagramProtocol):
                         del sys_cfg["OPTIONS"]
                         logger.info("(%s) Deleting HBP Options", self._system)
                 sys_cfg["_reset"] = True
+        if remove_list:
+            self._push_config_to_monitor()
 
     def _master_datagram_received(self, _data: bytes, _sockaddr: tuple[str, int]) -> None:
         """Direct port of hblink.py master_datagramReceived (lines 888-1146)."""
@@ -751,6 +767,7 @@ class HBPProtocol(DatagramProtocol):
                             logger.info("(%s) Deleting HBP Options", self._system)
                             del sys_cfg["OPTIONS"]
                     sys_cfg["_reset"] = True
+                    self._push_config_to_monitor()
             else:
                 _peer_id = _data[4:8]
                 if _peer_id in self._peers and self._peers[_peer_id]["CONNECTION"] == "WAITING_CONFIG" and self._peers[_peer_id]["SOCKADDR"] == _sockaddr:
@@ -782,6 +799,7 @@ class HBPProtocol(DatagramProtocol):
                     else:
                         self.send_peer(_peer_id, b"".join([RPTACK, _peer_id]))
                         logger.info("(%s) Peer %s (%s) has sent repeater configuration, Package ID: %s, Software ID: %s, Desc: %s", self._system, _this_peer["CALLSIGN"], _this_peer["RADIO_ID"], self._peers[_peer_id]["PACKAGE_ID"].decode("utf8", errors="replace").rstrip(), self._peers[_peer_id]["SOFTWARE_ID"].decode("utf8", errors="replace").rstrip(), self._peers[_peer_id]["DESCRIPTION"].decode("utf8", errors="replace").rstrip())
+                        self._push_config_to_monitor()
                 else:
                     self.transport.write(b"".join([MSTNAK, _peer_id]), _sockaddr)
                     logger.info("(%s) Peer info from Radio ID that has not logged in: %s", self._system, int_id(_peer_id))
