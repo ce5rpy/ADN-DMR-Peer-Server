@@ -50,10 +50,7 @@ logger = logging.getLogger(__name__)
 # Legacy bridge_master.py replaces dmrbits[116:148] on bursts B–E (dtype_vseq 1–4).
 _EMB_LC_SLICE = slice(116, 148)
 
-# While loop-control loser, re-send BCSQ periodically so peers stop forwarding if first UDP was lost (legacy sends once).
-_BCSQ_LOSER_RESEND_SEC = 2.0
-
-
+# Legacy loop-control loser sends BCSQ once when ENHANCED_OBP (_bcsq not in stream state).
 def _obp_target_bcsq_quenches_stream(
     systems_cfg: dict[str, Any], target_name: str, dst_id_b: bytes, stream_id: bytes
 ) -> bool:
@@ -1761,96 +1758,93 @@ class BridgeUseCases:
                 st["LAST"] = pkt_time
                 return False
 
-        st = status[stream_id]
-        hr_times: dict[str, float] = {}
-        _sysslot_last = 0
-        for other_name, proto in (protocols or {}).items():
-            omode = systems_cfg.get(other_name, {}).get("MODE")
-            if other_name != system_name and omode != "OPENBRIDGE":
-                ostatus = getattr(proto, "STATUS", None)
-                if not ostatus:
-                    continue
-                for _sysslot in ostatus:
-                    _sysslot_last = _sysslot if isinstance(_sysslot, int) else _sysslot_last
-                    slot_st = ostatus.get(_sysslot)
-                    if not isinstance(slot_st, dict):
+            # Legacy routerOBP ~2409: LoopControl only on 2nd+ packet (else branch).
+            hr_times: dict[str, float] = {}
+            _sysslot_last = 0
+            for other_name, proto in (protocols or {}).items():
+                omode = systems_cfg.get(other_name, {}).get("MODE")
+                if other_name != system_name and omode != "OPENBRIDGE":
+                    ostatus = getattr(proto, "STATUS", None)
+                    if not ostatus:
                         continue
-                    if "RX_STREAM_ID" in slot_st and stream_id == slot_st.get("RX_STREAM_ID"):
-                        if "LOOPLOG" not in st or not st["LOOPLOG"]:
-                            logger.debug(
-                                "(%s) OBP *LoopControl* FIRST HBP: %s, STREAM ID: %s, TG: %s, TS: %s, IGNORE THIS SOURCE",
-                                system_name,
-                                other_name,
-                                int_id(stream_id),
-                                int_id(dst_id),
-                                _sysslot,
-                            )
-                            st["LOOPLOG"] = True
-                        st["LAST"] = pkt_time
-                        return False
-            else:
-                obp_status = getattr(proto, "STATUS", None)
-                if not obp_status:
-                    continue
-                if (
-                    stream_id in obp_status
-                    and "1ST" in obp_status[stream_id]
-                    and obp_status[stream_id].get("TGID") == dst_id
-                ):
-                    hr_times[other_name] = obp_status[stream_id]["1ST"]
+                    for _sysslot in ostatus:
+                        _sysslot_last = _sysslot if isinstance(_sysslot, int) else _sysslot_last
+                        slot_st = ostatus.get(_sysslot)
+                        if not isinstance(slot_st, dict):
+                            continue
+                        if "RX_STREAM_ID" in slot_st and stream_id == slot_st.get("RX_STREAM_ID"):
+                            if "LOOPLOG" not in st or not st["LOOPLOG"]:
+                                logger.debug(
+                                    "(%s) OBP *LoopControl* FIRST HBP: %s, STREAM ID: %s, TG: %s, TS: %s, IGNORE THIS SOURCE",
+                                    system_name,
+                                    other_name,
+                                    int_id(stream_id),
+                                    int_id(dst_id),
+                                    _sysslot,
+                                )
+                                st["LOOPLOG"] = True
+                            st["LAST"] = pkt_time
+                            return False
+                else:
+                    obp_status = getattr(proto, "STATUS", None)
+                    if not obp_status:
+                        continue
+                    if (
+                        stream_id in obp_status
+                        and "1ST" in obp_status[stream_id]
+                        and obp_status[stream_id].get("TGID") == dst_id
+                    ):
+                        hr_times[other_name] = obp_status[stream_id]["1ST"]
 
-        fi = min(hr_times, key=hr_times.get, default=False)
-        hr_times.clear()
-        if not fi:
-            logger.warning(
-                "(%s) OBP *LoopControl* fi is empty for some reason : STREAM ID: %s, TG: %s, TS: %s",
-                system_name,
-                int_id(stream_id),
-                int_id(dst_id),
-                _sysslot_last,
-            )
-            return False
-        if system_name != fi:
-            if "LOOPLOG" not in st or not st["LOOPLOG"]:
-                call_duration = pkt_time - st["START"]
-                logger.debug(
-                    "(%s) OBP *LoopControl* FIRST OBP %s, STREAM ID: %s, TG %s, IGNORE THIS SOURCE. PACKET RATE %0.2f/s",
+            fi = min(hr_times, key=hr_times.get, default=False)
+            hr_times.clear()
+            if not fi:
+                logger.warning(
+                    "(%s) OBP *LoopControl* fi is empty for some reason : STREAM ID: %s, TG: %s, TS: %s",
                     system_name,
-                    fi,
                     int_id(stream_id),
                     int_id(dst_id),
-                    call_duration,
+                    _sysslot_last,
                 )
-                st["LOOPLOG"] = True
-                if _do_report and self._report_factory and hasattr(self._report_factory, "send_bridge_event"):
-                    try:
-                        self._report_factory.send_bridge_event(
-                            "GROUP VOICE,END,TX,{},{},{},{},{},{},{:.2f}".format(
-                                system_name,
-                                int_id(stream_id),
-                                int_id(peer_id),
-                                int_id(rf_src),
-                                slot,
-                                int_id(dst_id),
-                                max(0.0, pkt_time - st.get("START", pkt_time)),
+                return False
+            if system_name != fi:
+                if "LOOPLOG" not in st or not st["LOOPLOG"]:
+                    call_duration = pkt_time - st["START"]
+                    logger.debug(
+                        "(%s) OBP *LoopControl* FIRST OBP %s, STREAM ID: %s, TG %s, IGNORE THIS SOURCE. PACKET RATE %0.2f/s",
+                        system_name,
+                        fi,
+                        int_id(stream_id),
+                        int_id(dst_id),
+                        call_duration,
+                    )
+                    st["LOOPLOG"] = True
+                    if _do_report and self._report_factory and hasattr(self._report_factory, "send_bridge_event"):
+                        try:
+                            self._report_factory.send_bridge_event(
+                                "GROUP VOICE,END,TX,{},{},{},{},{},{},{:.2f}".format(
+                                    system_name,
+                                    int_id(stream_id),
+                                    int_id(peer_id),
+                                    int_id(rf_src),
+                                    slot,
+                                    int_id(dst_id),
+                                    max(0.0, pkt_time - st.get("START", pkt_time)),
+                                )
                             )
-                        )
-                    except Exception:
-                        pass
-            st["LAST"] = pkt_time
-            if systems_cfg.get(system_name, {}).get("ENHANCED_OBP") and self._send_bcsq:
-                now_sq = time.time()
-                last_sq = float(st.get("_bcsq_last", 0.0))
-                if "_bcsq" not in st or (now_sq - last_sq >= _BCSQ_LOSER_RESEND_SEC):
+                        except Exception:
+                            pass
+                st["LAST"] = pkt_time
+                if systems_cfg.get(system_name, {}).get("ENHANCED_OBP") and self._send_bcsq and "_bcsq" not in st:
                     self._send_bcsq(system_name, dst_id, stream_id)
-                    st["_bcsq_last"] = now_sq
                     st["_bcsq"] = True
-            return False
+                return False
 
+        st = status[stream_id]
         # Legacy skips packet control on the first frame of a stream (else branch only on 2nd+ packet).
         if st.get("packets", 0) > 0:
-            _elapsed = pkt_time - st["START"]
-            if _elapsed > 0 and st["packets"] > 18 and (st["packets"] / _elapsed) > 25:
+            # Legacy routerOBP ~2452: packets/START (START is epoch time, not elapsed) — never triggers in practice.
+            if st["packets"] > 18 and (st["packets"] / st["START"]) > 25:
                 logger.warning(
                     "(%s) *PacketControl* RATE DROP! Stream ID:, %s TGID: %s",
                     system_name,
