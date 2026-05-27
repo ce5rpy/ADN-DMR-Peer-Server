@@ -770,8 +770,72 @@ class BridgeUseCases:
                     del sys_cfg["_opt_key"]
                 except KeyError:
                     pass
+                try:
+                    del sys_cfg["_options_static_apply_fp"]
+                except KeyError:
+                    pass
+                self._restore_prohibited_static_bridge_legs(system_name)
                 sys_cfg["_reset"] = False
                 sys_cfg["_resetlog"] = False
+
+    def _restore_prohibited_static_bridge_legs(self, system_name: str) -> None:
+        """After BRIDGERESET / peer RPTO: restore static TGs in prohibited_tgs (parity with _make_echo_bridges)."""
+        prohibited_tgs = (0, 1, 2, 3, 4, 5, 9, 9990, 9991, 9992, 9993, 9994, 9995, 9996, 9997, 9998, 9999)
+        sys_cfg = self._config.get("SYSTEMS", {}).get(system_name, {})
+        if sys_cfg.get("MODE") != "MASTER" or not sys_cfg.get("ENABLED", True):
+            return
+        bridges = self._router.get_bridges()
+        now = time.time()
+        for ts, static_key, acl_key in (
+            (1, "TS1_STATIC", "TGID_TS1_ACL"),
+            (2, "TS2_STATIC", "TGID_TS2_ACL"),
+        ):
+            for tg_s in str(sys_cfg.get(static_key) or "").split(","):
+                tg_s = tg_s.strip()
+                if not tg_s:
+                    continue
+                try:
+                    tg = int(tg_s)
+                except ValueError:
+                    continue
+                if tg not in prohibited_tgs:
+                    continue
+                if sys_cfg.get("USE_ACL") and not self.acl_check(
+                    bytes_3(tg), sys_cfg.get(acl_key, (True, []))
+                ):
+                    continue
+                bridge_key = str(tg)
+                if bridge_key not in bridges:
+                    continue
+                timeout_sec = (1.0 / 6.0) * 60.0
+                leg: dict[str, Any] = {
+                    "SYSTEM": system_name,
+                    "TS": ts,
+                    "TGID": bytes_3(tg),
+                    "ACTIVE": True,
+                    "TIMEOUT": timeout_sec,
+                    "TO_TYPE": "NONE",
+                    "ON": [],
+                    "OFF": [],
+                    "RESET": [],
+                    "TIMER": now + timeout_sec,
+                }
+                for i, entry in enumerate(bridges[bridge_key]):
+                    if entry.get("SYSTEM") == system_name and entry.get("TS") == ts:
+                        if entry.get("ACTIVE") and entry.get("TO_TYPE") == "NONE":
+                            break
+                        bridges[bridge_key][i] = leg
+                        logger.info(
+                            "(ROUTER) Restored service bridge leg: %s bridge %s TS %s",
+                            system_name, bridge_key, ts,
+                        )
+                        break
+                else:
+                    bridges[bridge_key].append(leg)
+                    logger.info(
+                        "(ROUTER) Re-added service bridge leg: %s bridge %s TS %s",
+                        system_name, bridge_key, ts,
+                    )
 
     def _remove_bridge_system(self, system_name: str, bridges: dict[str, list[dict[str, Any]]]) -> None:
         """Remove all bridge entries for system (legacy remove_bridge_system)."""
@@ -1224,6 +1288,7 @@ class BridgeUseCases:
             # this exact fingerprint after a previous RPTO in this process.
             _fp = f"{new_ts1}|{new_ts2}|{int(_tmout)}"
             if sys_cfg.get("_options_static_apply_fp") == _fp:
+                self._restore_prohibited_static_bridge_legs(system_name)
                 return
             # Legacy: reset TGs that were removed (bridge_master.py 1736-1767)
             old_ts1 = str(sys_cfg.get("TS1_STATIC") or "").strip()
