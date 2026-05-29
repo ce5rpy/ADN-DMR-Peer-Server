@@ -621,6 +621,7 @@ class HBPProtocol(DatagramProtocol):
                     _accepted = self._dmrd_received(
                         self._system, _peer_id, _rf_src, _dst_id, _seq, _slot,
                         _call_type, _frame_type, _dtype_vseq, _stream_id, _data,
+                        ingress_pkt_time=pkt_time,
                     )
                 _voice = self._CONFIG.get("VOICE", {})
                 if _accepted and self._on_handle_recording and _voice.get("RECORDING_ENABLED") and int_id(_dst_id) == _voice.get("RECORDING_TG") and _slot == _voice.get("RECORDING_TIMESLOT", 2):
@@ -980,7 +981,11 @@ class HBPProtocol(DatagramProtocol):
                             self.STATUS[_slot]["RX_LC"] = LC_OPT + _dst_id + _rf_src
                 _accepted = False
                 if self._dmrd_received:
-                    _accepted = self._dmrd_received(self._system, _peer_id, _rf_src, _dst_id, _seq, _slot, _call_type, _frame_type, _dtype_vseq, _stream_id, _data)
+                    _accepted = self._dmrd_received(
+                        self._system, _peer_id, _rf_src, _dst_id, _seq, _slot,
+                        _call_type, _frame_type, _dtype_vseq, _stream_id, _data,
+                        ingress_pkt_time=pkt_time,
+                    )
                 _voice = self._CONFIG.get("VOICE", {})
                 if _accepted and self._on_handle_recording and _voice.get("RECORDING_ENABLED") and int_id(_dst_id) == _voice.get("RECORDING_TG") and _slot == _voice.get("RECORDING_TIMESLOT", 2):
                     dmrpkt = _data[20:53] if len(_data) >= 53 else _data[20:]

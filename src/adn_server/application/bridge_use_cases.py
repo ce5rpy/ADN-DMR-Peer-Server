@@ -2006,6 +2006,137 @@ class BridgeUseCases:
                 self.make_stat_bridge(dst_id)
         return True
 
+    def _hbp_group_voice_ingress_controls(
+        self,
+        system_name: str,
+        peer_id: bytes,
+        rf_src: bytes,
+        dst_id: bytes,
+        seq: int,
+        slot: int,
+        stream_id: bytes,
+        data: bytes,
+        pkt_time: float,
+    ) -> bool:
+        """Legacy routerHBP group/vcsbk packet control (~3270-3399).
+
+        Returns True when the packet may proceed to bridge routing; False when dropped.
+        Uses ingress ``pkt_time`` (UDP receive time) for rate/timeout parity with legacy.
+        """
+        protocols = self._get_protocols() if self._get_protocols else {}
+        src_proto = protocols.get(system_name)
+        if not src_proto:
+            return True
+        systems_cfg = self._config.get("SYSTEMS", {})
+        _slot_st = getattr(src_proto, "STATUS", {}).get(slot, {})
+        _is_new_stream = stream_id != _slot_st.get("RX_STREAM_ID")
+        if _is_new_stream:
+            _slot_st["packets"] = 0
+            _slot_st["loss"] = 0
+            _slot_st["crcs"] = set()
+            _slot_st["LOOPLOG"] = False
+            _slot_st.pop("_bcsq", None)
+            _slot_st["lastSeq"] = False
+            _slot_st["lastData"] = False
+            if (
+                _slot_st.get("RX_TYPE") != HBPF_SLT_VTERM
+                and pkt_time < (_slot_st.get("RX_TIME", 0) + STREAM_TO)
+                and rf_src != _slot_st.get("RX_RFS", b"\x00")
+            ):
+                logger.warning(
+                    "(%s) Packet received with STREAM ID: %s <FROM> SUB: %s PEER: %s <TO> TGID %s, SLOT %s collided with existing call",
+                    system_name, int_id(stream_id), int_id(rf_src), int_id(peer_id), int_id(dst_id), slot,
+                )
+                return False
+            _slot_st["RX_START"] = pkt_time
+        _slot_st["packets"] = _slot_st.get("packets", 0) + 1
+        _pkts = _slot_st["packets"]
+        _rx_start = _slot_st.get("RX_START", pkt_time)
+        if _pkts > 18 and _rx_start < pkt_time:
+            _rate = _pkts / (pkt_time - _rx_start)
+            if _rate > 25:
+                logger.warning(
+                    "(%s) *PacketControl* RATE DROP! Stream ID: %s TGID: %s",
+                    system_name, int_id(stream_id), int_id(dst_id),
+                )
+                _slot_st["LAST"] = pkt_time
+                return False
+        if _rx_start + 180 < pkt_time:
+            if not _slot_st.get("LOOPLOG"):
+                logger.info(
+                    "(%s) HBP *SOURCE TIMEOUT* STREAM ID: %s, TG: %s, TS: %s, IGNORE THIS SOURCE",
+                    system_name, int_id(stream_id), int_id(dst_id), slot,
+                )
+                _slot_st["LOOPLOG"] = True
+            _slot_st["LAST"] = pkt_time
+            return False
+        for other_name, proto in protocols.items():
+            if other_name == system_name:
+                continue
+            omode = systems_cfg.get(other_name, {}).get("MODE")
+            ostatus = getattr(proto, "STATUS", None)
+            if not ostatus:
+                continue
+            if omode != "OPENBRIDGE":
+                for _sysslot in ostatus:
+                    ss = ostatus.get(_sysslot)
+                    if isinstance(ss, dict) and stream_id == ss.get("RX_STREAM_ID"):
+                        if not _slot_st.get("LOOPLOG"):
+                            logger.debug(
+                                "(%s) HBP *LoopControl* FIRST HBP: %s, STREAM ID: %s, TG: %s, TS: %s, IGNORE THIS SOURCE",
+                                system_name, other_name, int_id(stream_id), int_id(dst_id), _sysslot,
+                            )
+                            _slot_st["LOOPLOG"] = True
+                        _slot_st["LAST"] = pkt_time
+                        return False
+            else:
+                if (
+                    stream_id in ostatus
+                    and "1ST" in ostatus[stream_id]
+                    and ostatus[stream_id].get("TGID") == dst_id
+                ):
+                    if not _slot_st.get("LOOPLOG"):
+                        logger.debug(
+                            "(%s) HBP *LoopControl* FIRST OBP %s, STREAM ID: %s, TG %s, IGNORE THIS SOURCE",
+                            system_name, other_name, int_id(stream_id), int_id(dst_id),
+                        )
+                        _slot_st["LOOPLOG"] = True
+                    _slot_st["LAST"] = pkt_time
+                    if (
+                        systems_cfg.get(system_name, {}).get("ENHANCED_OBP")
+                        and "_bcsq" not in _slot_st
+                    ):
+                        if hasattr(src_proto, "_obp_send_bcsq"):
+                            src_proto._obp_send_bcsq(dst_id, stream_id)
+                        _slot_st["_bcsq"] = True
+                    return False
+        if _slot_st.get("lastData") and _slot_st["lastData"] == data and seq > 1:
+            _slot_st["loss"] = _slot_st.get("loss", 0) + 1
+            logger.debug(
+                "(%s) *PacketControl* last packet is a complete duplicate, discarding. Stream ID: %s TGID: %s",
+                system_name, int_id(stream_id), int_id(dst_id),
+            )
+            return False
+        if seq and seq == _slot_st.get("lastSeq"):
+            _slot_st["loss"] = _slot_st.get("loss", 0) + 1
+            return False
+        if seq and _slot_st.get("lastSeq") and seq != 1 and seq < _slot_st.get("lastSeq", 0):
+            _slot_st["loss"] = _slot_st.get("loss", 0) + 1
+            return False
+        _h = blake2b(digest_size=16)
+        _h.update(data)
+        _pkt_crc = _h.digest()
+        if seq > 0 and "crcs" in _slot_st and _pkt_crc in _slot_st["crcs"]:
+            _slot_st["loss"] = _slot_st.get("loss", 0) + 1
+            return False
+        if seq and _slot_st.get("lastSeq") and seq > (_slot_st.get("lastSeq", 0) + 1):
+            _slot_st["loss"] = _slot_st.get("loss", 0) + 1
+        _slot_st["lastSeq"] = seq
+        _slot_st["lastData"] = data
+        if "crcs" in _slot_st:
+            _slot_st["crcs"].add(_pkt_crc)
+        return True
+
     def dmrd_received(
         self,
         system_name: str,
@@ -2020,6 +2151,7 @@ class BridgeUseCases:
         stream_id: bytes,
         data: bytes,
         *,
+        ingress_pkt_time: float | None = None,
         obp_use_parsed: bool = False,
         obp_hops: bytes = b"",
         obp_source_server: bytes | None = None,
@@ -2033,6 +2165,7 @@ class BridgeUseCases:
         Legacy `hblink.dmrd_received` passes `_hash,_hops,_source_server,_ber,_rssi,_source_rptr` after
         parsing OPENBRIDGE DMRD v1 / DMRE (`hblink.py` ~309–416, ~592–596). When `obp_use_parsed` is True,
         the OBP path uses those values (1:1 with `bridge.py` `routerOBP.dmrd_received` → `send_system`).
+        HBP sources should pass ``ingress_pkt_time`` from UDP receive (legacy single ``pkt_time`` at router entry).
         """
         if not self._send_to_system:
             return
@@ -2058,11 +2191,17 @@ class BridgeUseCases:
             elif len(str(int_id(dst_id))) == 7:
                 self._pvt_call_received(system_name, peer_id, rf_src, dst_id, seq, slot, frame_type, dtype_vseq, stream_id, data)
             return True
+        systems_cfg = self._config.get("SYSTEMS", {})
+        source_is_obp = systems_cfg.get(system_name, {}).get("MODE") == "OPENBRIDGE"
+        pkt_time = ingress_pkt_time if ingress_pkt_time is not None else time.time()
+        if not source_is_obp and call_type in ("group", "vcsbk"):
+            if not self._hbp_group_voice_ingress_controls(
+                system_name, peer_id, rf_src, dst_id, seq, slot, stream_id, data, pkt_time,
+            ):
+                return
         bridge_key = str(int_id(dst_id))
         bridges = self._router.get_bridges()
         dst_int = int_id(dst_id)
-        systems_cfg = self._config.get("SYSTEMS", {})
-        source_is_obp = systems_cfg.get(system_name, {}).get("MODE") == "OPENBRIDGE"
         # Legacy bridge_master to_target: OpenBridge clears TS bit — "all OpenBridge streams are
         # effectively on TS1". DMRD v1 rejects slot != 1; DMRE v5 can still set slot 2 from bits.
         # BRIDGES entries for OBP use TS:1 (make_single_bridge / make_stat_bridge). Match that.
@@ -2137,127 +2276,6 @@ class BridgeUseCases:
                 bridge_key, system_name, bridge_match_slot,
             )
             return True
-        pkt_time = time.time()
-
-        # HBP group ingress controls (legacy routerHBP.dmrd_received ~3270-3399)
-        if not source_is_obp and call_type in ("group", "vcsbk"):
-            protocols = self._get_protocols() if self._get_protocols else {}
-            src_proto = protocols.get(system_name)
-            if src_proto:
-                _slot_st = getattr(src_proto, "STATUS", {}).get(slot, {})
-                # New stream detection (legacy ~3270-3316)
-                _is_new_stream = stream_id != _slot_st.get("RX_STREAM_ID")
-                if _is_new_stream:
-                    _slot_st["packets"] = 0
-                    _slot_st["loss"] = 0
-                    _slot_st["crcs"] = set()
-                    _slot_st["LOOPLOG"] = False
-                    _slot_st.pop("_bcsq", None)
-                    _slot_st["lastSeq"] = False
-                    _slot_st["lastData"] = False
-                    # Collision check (legacy ~3276-3278)
-                    if (
-                        _slot_st.get("RX_TYPE") != HBPF_SLT_VTERM
-                        and pkt_time < (_slot_st.get("RX_TIME", 0) + STREAM_TO)
-                        and rf_src != _slot_st.get("RX_RFS", b"\x00")
-                    ):
-                        logger.warning(
-                            "(%s) Packet received with STREAM ID: %s <FROM> SUB: %s PEER: %s <TO> TGID %s, SLOT %s collided with existing call",
-                            system_name, int_id(stream_id), int_id(rf_src), int_id(peer_id), int_id(dst_id), slot,
-                        )
-                        return
-                # Increment packet counter (legacy ~3317)
-                _slot_st["packets"] = _slot_st.get("packets", 0) + 1
-                _pkts = _slot_st["packets"]
-                _rx_start = _slot_st.get("RX_START", pkt_time)
-                # Rate limit (legacy ~3331-3336): >18 packets and rate >25/s
-                if _pkts > 18 and _rx_start < pkt_time:
-                    _rate = _pkts / (pkt_time - _rx_start)
-                    if _rate > 25:
-                        logger.warning(
-                            "(%s) *PacketControl* RATE DROP! Stream ID: %s TGID: %s",
-                            system_name, int_id(stream_id), int_id(dst_id),
-                        )
-                        _slot_st["LAST"] = pkt_time
-                        return
-                # 180s timeout (legacy ~3338-3344)
-                if _rx_start + 180 < pkt_time:
-                    if not _slot_st.get("LOOPLOG"):
-                        logger.info(
-                            "(%s) HBP *SOURCE TIMEOUT* STREAM ID: %s, TG: %s, TS: %s, IGNORE THIS SOURCE",
-                            system_name, int_id(stream_id), int_id(dst_id), slot,
-                        )
-                        _slot_st["LOOPLOG"] = True
-                    _slot_st["LAST"] = pkt_time
-                    return
-                # HBP + OBP loop control (legacy ~3346-3368)
-                for other_name, proto in protocols.items():
-                    if other_name == system_name:
-                        continue
-                    omode = systems_cfg.get(other_name, {}).get("MODE")
-                    ostatus = getattr(proto, "STATUS", None)
-                    if not ostatus:
-                        continue
-                    if omode != "OPENBRIDGE":
-                        for _sysslot in ostatus:
-                            ss = ostatus.get(_sysslot)
-                            if isinstance(ss, dict) and stream_id == ss.get("RX_STREAM_ID"):
-                                if not _slot_st.get("LOOPLOG"):
-                                    logger.debug(
-                                        "(%s) HBP *LoopControl* FIRST HBP: %s, STREAM ID: %s, TG: %s, TS: %s, IGNORE THIS SOURCE",
-                                        system_name, other_name, int_id(stream_id), int_id(dst_id), _sysslot,
-                                    )
-                                    _slot_st["LOOPLOG"] = True
-                                _slot_st["LAST"] = pkt_time
-                                return
-                    else:
-                        if (
-                            stream_id in ostatus
-                            and "1ST" in ostatus[stream_id]
-                            and ostatus[stream_id].get("TGID") == dst_id
-                        ):
-                            if not _slot_st.get("LOOPLOG"):
-                                logger.debug(
-                                    "(%s) HBP *LoopControl* FIRST OBP %s, STREAM ID: %s, TG %s, IGNORE THIS SOURCE",
-                                    system_name, other_name, int_id(stream_id), int_id(dst_id),
-                                )
-                                _slot_st["LOOPLOG"] = True
-                            _slot_st["LAST"] = pkt_time
-                            if (
-                                systems_cfg.get(system_name, {}).get("ENHANCED_OBP")
-                                and "_bcsq" not in _slot_st
-                            ):
-                                if src_proto and hasattr(src_proto, "_obp_send_bcsq"):
-                                    src_proto._obp_send_bcsq(dst_id, stream_id)
-                                _slot_st["_bcsq"] = True
-                            return
-                # Duplicate handling (legacy ~3370-3399)
-                if _slot_st.get("lastData") and _slot_st["lastData"] == data and seq > 1:
-                    _slot_st["loss"] = _slot_st.get("loss", 0) + 1
-                    logger.debug(
-                        "(%s) *PacketControl* last packet is a complete duplicate, discarding. Stream ID: %s TGID: %s",
-                        system_name, int_id(stream_id), int_id(dst_id),
-                    )
-                    return
-                if seq and seq == _slot_st.get("lastSeq"):
-                    _slot_st["loss"] = _slot_st.get("loss", 0) + 1
-                    return
-                if seq and _slot_st.get("lastSeq") and seq != 1 and seq < _slot_st.get("lastSeq", 0):
-                    _slot_st["loss"] = _slot_st.get("loss", 0) + 1
-                    return
-                _h = blake2b(digest_size=16)
-                _h.update(data)
-                _pkt_crc = _h.digest()
-                if seq > 0 and "crcs" in _slot_st and _pkt_crc in _slot_st["crcs"]:
-                    _slot_st["loss"] = _slot_st.get("loss", 0) + 1
-                    return
-                # Missed packets (legacy ~3392-3394): just increment loss, don't drop
-                if seq and _slot_st.get("lastSeq") and seq > (_slot_st.get("lastSeq", 0) + 1):
-                    _slot_st["loss"] = _slot_st.get("loss", 0) + 1
-                _slot_st["lastSeq"] = seq
-                _slot_st["lastData"] = data
-                if "crcs" in _slot_st:
-                    _slot_st["crcs"].add(_pkt_crc)
 
         # Legacy bridge.py: BRDG_EVENT (OBP group/vcsbk START/END handled in _obp_group_voice_router_obp / post-forward VTERM)
         if self._report_factory and hasattr(self._report_factory, "send_bridge_event"):
