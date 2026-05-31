@@ -787,8 +787,8 @@ class BridgeUseCases:
         bridges = self._router.get_bridges()
         now = time.time()
         for ts, static_key, acl_key in (
-            (1, "TS1_STATIC", "TGID_TS1_ACL"),
-            (2, "TS2_STATIC", "TGID_TS2_ACL"),
+            (1, "TS1_STATIC", "TG1_ACL"),
+            (2, "TS2_STATIC", "TG2_ACL"),
         ):
             for tg_s in str(sys_cfg.get(static_key) or "").split(","):
                 tg_s = tg_s.strip()
@@ -1353,6 +1353,7 @@ class BridgeUseCases:
             systems_cfg[system_name]["_options_static_apply_fp"] = _fp
             if new_ts1 or new_ts2:
                 logger.info("(OPTIONS) %s static TGs applied: TS1=%s TS2=%s", system_name, new_ts1 or "-", new_ts2 or "-")
+            self._restore_prohibited_static_bridge_legs(system_name)
         except Exception as e:
             logger.debug("(OPTIONS) options_config_for_system %s: %s", system_name, e)
 
