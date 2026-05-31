@@ -176,7 +176,7 @@ class HBPProtocol(DatagramProtocol):
             self._laststrid = {1: b"", 2: b""}
             self.STATUS = {1: _make_slot_status(), 2: _make_slot_status()}
         if self._config.get("MODE") == "MASTER":
-            self._peers = self._config.get("PEERS", {})
+            self._peers = self._config.setdefault("PEERS", {})
             self._dmra_by_stream: dict[bytes, dict[str, Any]] = {}
             self._dmra_rf_stream: dict[tuple[bytes, bytes], bytes] = {}
         else:
@@ -225,7 +225,7 @@ class HBPProtocol(DatagramProtocol):
         sys_cfg = config.get("SYSTEMS", {}).get(self._system, {})
         self._config = sys_cfg
         if sys_cfg.get("MODE") == "MASTER":
-            self._peers = sys_cfg.get("PEERS", {})
+            self._peers = sys_cfg.setdefault("PEERS", {})
 
     # ── Exact port of hblink.py send_peers / send_peer / send_master / send_system ──
 
@@ -475,8 +475,8 @@ class HBPProtocol(DatagramProtocol):
                 self._system, self._peers[peer].get("CALLSIGN", b""), self._peers[peer].get("RADIO_ID", b""),
             )
             self.transport.write(b"".join([MSTCL, peer]), self._peers[peer]["SOCKADDR"])
-            del self._CONFIG["SYSTEMS"][self._system]["PEERS"][peer]
-            if not self._CONFIG["SYSTEMS"][self._system]["PEERS"]:
+            del self._peers[peer]
+            if not self._peers:
                 sys_cfg = self._CONFIG["SYSTEMS"][self._system]
                 if "OPTIONS" in sys_cfg:
                     if "_default_options" in sys_cfg:
