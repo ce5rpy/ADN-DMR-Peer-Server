@@ -137,7 +137,14 @@ def _make_echo_bridges(config: dict) -> dict:
 
 def _looping_errback(logger: logging.Logger, failure):
     """Errback for LoopingCalls (legacy loopingErrHandle). Stops reactor to avoid memory leaks."""
-    logger.error("(GLOBAL) STOPPING REACTOR TO AVOID MEMORY LEAK: Unhandled error in timed loop.\n %s", failure)
+    try:
+        tb = failure.getTraceback() if hasattr(failure, "getTraceback") else str(failure)
+    except Exception:
+        tb = repr(failure)
+    logger.error(
+        "(GLOBAL) STOPPING REACTOR TO AVOID MEMORY LEAK: Unhandled error in timed loop.\n%s",
+        tb,
+    )
     from twisted.internet import reactor as _reactor
     _reactor.stop()
 
