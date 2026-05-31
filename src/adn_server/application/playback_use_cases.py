@@ -83,16 +83,25 @@ class PlaybackUseCases:
         dtype_vseq: int,
         stream_id: bytes,
         data: bytes,
+        ingress_pkt_time: float | None = None,
     ) -> None:
         """Port of playback.dmrd_received (playback.py lines 114-161)."""
         if call_type != "group":
+            logger.debug(
+                "(%s) Playback ignore non-group call type=%s stream=%s",
+                self._system, call_type, int_id(stream_id),
+            )
             return
 
         # Legacy blocked the reactor during delay + playback; ignore new voice meanwhile.
         if self._playback_busy:
+            logger.debug(
+                "(%s) Playback ignore stream %s (playback in progress)",
+                self._system, int_id(stream_id),
+            )
             return
 
-        pkt_time = time()
+        pkt_time = ingress_pkt_time if ingress_pkt_time is not None else time()
         proto = self._get_protocol() if self._get_protocol else None
 
         if self._recording_active and self.CALL_DATA and self._recording_exceeded_max(pkt_time):
@@ -355,7 +364,7 @@ class PlaybackUseCases:
 
         self._playback_stream_id = bytes_4(randint(0x00, 0xFFFFFFFF))
         logger.info(
-            "(%s) *START  PLAYBACK* STREAM ID: %s SUB: %s REPEATER: %s TGID %s, TS %s, Duration: %s",
+            "(%s) *START  PLAYBACK* STREAM ID: %s SUB: %s REPEATER: %s TGID %s, TS %s, Duration: %.2f",
             self._system,
             int_id(self._playback_stream_id),
             int_id(rf_src),
@@ -399,6 +408,8 @@ class PlaybackUseCases:
             return
         if proto:
             proto.send_system(self._playback_packets[self._playback_index])
+        else:
+            logger.warning("(%s) Playback packet %d dropped (no protocol/send_system)", self._system, self._playback_index)
         self._playback_index += 1
         self._packet_call = reactor.callLater(_PACKET_INTERVAL_S, self._send_next_packet, proto)
 
