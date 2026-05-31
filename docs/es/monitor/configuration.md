@@ -31,7 +31,7 @@ Debe coincidir con la configuración de informes del **ADN DMR Peer Server**.
 |-------|-------------|
 | **ADN_IP** | Host/IP donde está el **listener TCP de informes** del peer server (vista de red desde el monitor). |
 | **ADN_PORT** | Puerto TCP — debe ser igual a **`REPORTS.REPORT_PORT`** en el servidor y ser alcanzable. |
-| **HELLO_TIMEOUT_MS** | Tras conectar por TCP, tiempo de espera del opcode **`0xFF` HELLO** (JSON) desde **new-adn-server**. Si no llega a tiempo, el monitor trata el peer como **legado** (solo CONFIG/BRIDGE pickle). Por defecto **1500** ms. Ver [Monitor e informes](../server/user-guide/monitoring.md). |
+| **HELLO_TIMEOUT_MS** | Tras conectar por TCP, tiempo de espera del opcode **`0xFF` HELLO** (JSON) desde **ADN DMR Server**. Si no llega a tiempo, el monitor trata el peer como **legado** (solo CONFIG/BRIDGE pickle). Por defecto **1500** ms. Ver [Monitor e informes](../server/user-guide/monitoring.md). |
 
 ---
 

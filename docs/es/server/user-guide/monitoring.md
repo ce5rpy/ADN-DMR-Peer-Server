@@ -4,7 +4,7 @@
 
 Cuando **`REPORTS`** está habilitado en la config del servidor, el **ADN DMR Peer Server** escucha en TCP y los **clientes de informes** (típicamente **adn-monitor**) se conectan y reciben:
 
-- **HELLO** (opcode **`0xFF`**) — JSON enviado **el primero** en cada conexión TCP por **new-adn-server** (`adn-server`): nombre **`server`**, **`version`** del paquete, número de **`protocol`** y lista **`features`** (p. ej. `INGRESS`, `END_TX_FORWARD`, `PUSH_ON_CONNECT`). Permite al monitor marcar la sesión como **v2** antes de las cargas pickle.
+- **HELLO** (opcode **`0xFF`**) — JSON enviado **el primero** en cada conexión TCP por **ADN DMR Server** (`adn-server`): nombre **`server`**, **`version`** del paquete, número de **`protocol`** y lista **`features`** (p. ej. `INGRESS`, `END_TX_FORWARD`, `PUSH_ON_CONNECT`). Permite al monitor marcar la sesión como **v2** antes de las cargas pickle.
 - **CONFIG_SND** / **BRIDGE_SND** — instantáneas pickle de sistemas y bridges (tras HELLO al conectar, en **`CONFIG_REQ`** / **`BRIDGE_REQ`**, en **reload** de config (**SIGHUP**), cuando un hotspot **MASTER** **registra o desconecta**, y en el bucle periódico **`REPORT_INTERVAL`**).
 - **BRDG_EVENT** — eventos de texto para llamadas (`GROUP VOICE`, `PRIVATE VOICE`, etc.).
 
@@ -22,8 +22,8 @@ Python usa el nombre de logger **`adn-monitor`** (ver **`LOGGER.LOG_FILE`** en `
 |-------------------------|-------------|
 | `(REPORT) Connection to report server established` | Sesión TCP activa; arranca la espera de HELLO (**`HELLO_TIMEOUT_MS`**). |
 | `(REPORT) stringReceived: HELLO opcode=ff …` | Trama HELLO cruda en el cable. |
-| `(REPORT) HELLO received: mode=v2 server=… version=… features=…` | JSON HELLO parseado; sesión **v2** (**new-adn-server**). |
-| `(REPORT) No HELLO in …s; assuming legacy adn-dmr-server …` | No hay **`0xFF`** antes del timeout — modo **legacy** (solo CONFIG/BRIDGE pickle). Normal si el peer es **`adn-dmr-server`** clásico. Si **sabes** que el servidor es **new-adn-server** y aún ves esto, revisa **`ADN_IP`** / **`ADN_PORT`**, **`REPORTS.REPORT_CLIENTS`**, cortafuegos, o sube un poco **`HELLO_TIMEOUT_MS`** en enlaces muy lentos. |
+| `(REPORT) HELLO received: mode=v2 server=… version=… features=…` | JSON HELLO parseado; sesión **v2** (**ADN DMR Server**). |
+| `(REPORT) No HELLO in …s; assuming legacy adn-dmr-server …` | No hay **`0xFF`** antes del timeout — modo **legacy** (solo CONFIG/BRIDGE pickle). Normal si el peer es **`adn-dmr-server`** clásico. Si **sabes** que el servidor es **ADN DMR Server** y aún ves esto, revisa **`ADN_IP`** / **`ADN_PORT`**, **`REPORTS.REPORT_CLIENTS`**, cortafuegos, o sube un poco **`HELLO_TIMEOUT_MS`** en enlaces muy lentos. |
 | `(REPORT) CONFIG applied: …` / `(REPORT) BRIDGES applied: …` | Instantáneas pickle aplicadas a CTABLE/BTABLE. |
 
 En **WARNING**: JSON HELLO inválido (`(REPORT) HELLO payload not valid JSON`), o **`Invalid GLOBAL.TIMEZONE`** si **`GLOBAL.TIMEZONE`** no es un nombre IANA válido.

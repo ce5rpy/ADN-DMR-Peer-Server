@@ -31,7 +31,7 @@ Must match the **ADN DMR Peer Server** reporting configuration.
 |-----|---------|
 | **ADN_IP** | Host/IP where the **peer server’s report TCP listener** is bound (from the monitor’s network view). |
 | **ADN_PORT** | TCP port — must equal **`REPORTS.REPORT_PORT`** on the server and be reachable. |
-| **HELLO_TIMEOUT_MS** | After TCP connect, how long to wait for opcode **`0xFF` HELLO** (JSON) from **new-adn-server**. If nothing arrives in time, the monitor treats the peer as **legacy** (pickled CONFIG/BRIDGE only). Default **1500** ms. See [Monitoring and reports](../server/user-guide/monitoring.md). |
+| **HELLO_TIMEOUT_MS** | After TCP connect, how long to wait for opcode **`0xFF` HELLO** (JSON) from **ADN DMR Server**. If nothing arrives in time, the monitor treats the peer as **legacy** (pickled CONFIG/BRIDGE only). Default **1500** ms. See [Monitoring and reports](../server/user-guide/monitoring.md). |
 
 ---
 
