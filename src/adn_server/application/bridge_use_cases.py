@@ -515,6 +515,46 @@ class BridgeUseCases:
                             _system["TIMER"] = pkt_time
                             logger.info("(%s) [8b] Bridge: %s set to ON with and \"OFF\" timer rule: timeout timer cancelled", system_name, _bridge)
 
+    def _obp_emit_end_tx_forward_leg(
+        self,
+        tgt_name: str,
+        stream_id: bytes,
+        tst: dict[str, Any],
+        now: float,
+    ) -> bool:
+        """Emit GROUP VOICE,END,TX for one to_target OBP forward leg (H_LC in STATUS).
+
+        Same CSV shape as legacy bridge_master.py send_bridgeEvent on VTERM (~2039, ~2121).
+        Safe for legacy and v2 monitors (OPENBRIDGE STREAMS chip clear on END,TX).
+        """
+        if not isinstance(tst, dict) or "H_LC" not in tst:
+            return False
+        if not bool(self._config.get("REPORTS", {}).get("REPORT", True)):
+            return False
+        report = self._report_factory
+        if not report or not hasattr(report, "send_bridge_event"):
+            return False
+        rfs = tst.get("RFS", b"\x00\x00\x00")
+        peer = tst.get("RX_PEER", b"\x00\x00\x00\x00")
+        tgid_b = tst.get("TGID", b"\x00\x00\x00")
+        start = tst.get("START", now)
+        duration = max(0.0, now - start)
+        try:
+            report.send_bridge_event(
+                "GROUP VOICE,END,TX,{},{},{},{},{},{},{:.2f}".format(
+                    tgt_name,
+                    int_id(stream_id),
+                    int_id(peer),
+                    int_id(rfs),
+                    1,
+                    int_id(tgid_b),
+                    duration,
+                )
+            )
+        except Exception:
+            return False
+        return True
+
     def _obp_emit_end_tx_for_forward_legs(self, stream_id: bytes, source_system: str, now: float) -> None:
         """Emit GROUP VOICE,END,TX for every OBP that still holds this stream as a to_target forward leg.
 
@@ -522,11 +562,6 @@ class BridgeUseCases:
         forwarded legs, so the monitor would otherwise keep stale TX chips on destination rows.
         Forward legs are identified by STATUS[stream_id] containing H_LC (see to_target OPENBRIDGE).
         """
-        if not bool(self._config.get("REPORTS", {}).get("REPORT", True)):
-            return
-        report = self._report_factory
-        if not report or not hasattr(report, "send_bridge_event"):
-            return
         protocols = self._get_protocols() if self._get_protocols else {}
         systems_cfg = self._config.get("SYSTEMS", {})
         for tgt_name, tgt_proto in (protocols or {}).items():
@@ -538,34 +573,15 @@ class BridgeUseCases:
             if not tstatus or stream_id not in tstatus:
                 continue
             tst = tstatus[stream_id]
-            if not isinstance(tst, dict) or "H_LC" not in tst:
-                continue
-            rfs = tst.get("RFS", b"\x00\x00\x00")
-            peer = tst.get("RX_PEER", b"\x00\x00\x00\x00")
-            tgid_b = tst.get("TGID", b"\x00\x00\x00")
-            start = tst.get("START", now)
-            duration = max(0.0, now - start)
-            try:
-                report.send_bridge_event(
-                    "GROUP VOICE,END,TX,{},{},{},{},{},{},{:.2f}".format(
-                        tgt_name,
-                        int_id(stream_id),
-                        int_id(peer),
-                        int_id(rfs),
-                        1,
-                        int_id(tgid_b),
-                        duration,
-                    )
-                )
-            except Exception:
-                pass
-            tstatus.pop(stream_id, None)
+            if self._obp_emit_end_tx_forward_leg(tgt_name, stream_id, tst, now):
+                tstatus.pop(stream_id, None)
 
     def on_obp_bcsq_received(self, system_name: str, tgid: bytes, stream_id: bytes) -> None:
-        """After valid BCSQ on this OBP leg: clear forward STATUS if present (no VTERM to peer).
+        """After valid BCSQ on this OBP leg: END,TX + clear forward STATUS if present.
 
-        No BRDG_EVENT: BCSQ is control-plane quench, not a normal call end; reporting would spam
-        the monitor / Last Heard with spurious ends while the real call may continue elsewhere.
+        Legacy hblink only sets CONFIG['_bcsq'] (no monitor event). Remote new OBP sends BCSQ
+        aggressively; without END,TX the monitor keeps stale TX chips until clean_te (~3 min).
+        Event format matches legacy VTERM END,TX so legacy and v2 monitors behave the same.
         """
         protocols = self._get_protocols() if self._get_protocols else {}
         tgt_proto = protocols.get(system_name)
@@ -581,6 +597,7 @@ class BridgeUseCases:
             return
         if tst.get("TGID", b"\x00\x00\x00") != tgid:
             return
+        self._obp_emit_end_tx_forward_leg(system_name, stream_id, tst, time.time())
         tstatus.pop(stream_id, None)
 
     def flush_monitor_events_for_system(self, system_name: str, protocol: Any) -> None:
@@ -687,6 +704,9 @@ class BridgeUseCases:
                             except Exception:
                                 st["LAST"] = now
                             st["_to"] = True
+                            # Legacy trimmer emits END,RX here only; forward legs waited ~180s.
+                            # END,TX now (END_TX_FORWARD): same event as legacy VTERM path (~2039).
+                            self._obp_emit_end_tx_for_forward_legs(stream_id, system_name, now)
                             continue
                     for stream_id in to_remove:
                         _syscfg = systems_cfg.get(system_name, {})
