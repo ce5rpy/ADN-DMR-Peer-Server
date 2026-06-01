@@ -35,11 +35,10 @@ from time import perf_counter
 from typing import Any
 
 from bitarray import bitarray
-from dmr_utils3 import bptc
-from dmr_utils3 import decode
+from dmr_utils3 import bptc, decode
 from dmr_utils3.const import LC_OPT
 
-from ..domain import int_id, bytes_3, bytes_4, HBPF_DATA_SYNC, HBPF_SLT_VHEAD, HBPF_SLT_VTERM, STREAM_TO
+from ..domain import HBPF_DATA_SYNC, HBPF_SLT_VHEAD, HBPF_SLT_VTERM, STREAM_TO, bytes_3, bytes_4, int_id
 from ..domain.talker_alias import DMRA_BLOCK_COUNT
 from .ports import BridgeRouter
 from .talker_alias_use_cases import TalkerAliasUseCases
@@ -603,11 +602,12 @@ class BridgeUseCases:
                 trx = "TX" if "H_LC" in st else "RX"
                 start = st.get("START", now)
                 report.send_bridge_event(
-                    "GROUP VOICE,END,{},{},{},{},{},{},{:.2f}".format(
+                    "GROUP VOICE,END,{},{},{},{},{},{},{},{:.2f}".format(
                         trx, system_name, int_id(stream_id),
                         int_id(st.get("RX_PEER", b"\x00\x00\x00\x00")),
                         int_id(st.get("RFS", b"\x00\x00\x00")), 1,
-                        int_id(st.get("TGID", b"\x00\x00\x00")), max(0.0, now - start),
+                        int_id(st.get("TGID", b"\x00\x00\x00")),
+                        max(0.0, now - start),
                     )
                 )
                 if trx == "RX":
@@ -626,7 +626,7 @@ class BridgeUseCases:
                 if sid in (b"\x00", b"") or slot_st.get(type_key) == HBPF_SLT_VTERM:
                     continue
                 report.send_bridge_event(
-                    "GROUP VOICE,END,{},{},{},{},{},{},{:.2f}".format(
+                    "GROUP VOICE,END,{},{},{},{},{},{},{},{:.2f}".format(
                         trx, system_name, int_id(sid),
                         int_id(slot_st.get(peer_key, b"\x00\x00\x00\x00")),
                         int_id(slot_st.get(rfs_key, b"\x00\x00\x00")), slot,
@@ -759,7 +759,6 @@ class BridgeUseCases:
 
     def bridge_reset_loop(self) -> None:
         """Bridge reset iteration (legacy bridge_reset, 6s). Clear _reset and remove_bridge_system."""
-        bridges = self._router.get_bridges()
         systems_cfg = self._config.get("SYSTEMS", {})
         for system_name in list(systems_cfg.keys()):
             sys_cfg = systems_cfg.get(system_name, {})
