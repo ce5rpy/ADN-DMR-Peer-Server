@@ -30,7 +30,6 @@ import copy
 import logging
 import socket
 import time
-from typing import Any
 
 
 def expand_generator(config: dict, logger: logging.Logger) -> None:

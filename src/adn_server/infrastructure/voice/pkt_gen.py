@@ -30,7 +30,7 @@ from typing import Any, Iterator
 
 from bitarray import bitarray
 from dmr_utils3 import bptc
-from dmr_utils3.const import EMB, BS_DATA_SYNC, BS_VOICE_SYNC, LC_OPT, SLOT_TYPE
+from dmr_utils3.const import BS_DATA_SYNC, BS_VOICE_SYNC, EMB, LC_OPT, SLOT_TYPE
 from dmr_utils3.utils import bytes_4
 
 # Precalculated DMRD byte 15 (slot << 7 | this)

@@ -27,7 +27,6 @@ from __future__ import annotations
 
 import pickle
 from pathlib import Path
-from typing import Any
 
 from ...application.ports import SubMapStore
 

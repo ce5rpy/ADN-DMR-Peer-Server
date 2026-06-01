@@ -33,7 +33,7 @@ from typing import Any
 from twisted.internet import reactor
 from twisted.internet.base import DelayedCall
 
-from ..domain import int_id, bytes_4, HBPF_DATA_SYNC, HBPF_SLT_VHEAD, HBPF_SLT_VTERM
+from ..domain import HBPF_DATA_SYNC, HBPF_SLT_VHEAD, HBPF_SLT_VTERM, bytes_4, int_id
 
 logger = logging.getLogger(__name__)
 

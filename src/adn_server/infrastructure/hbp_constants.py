@@ -29,14 +29,14 @@ imports keep working.
 """
 
 from ..domain.hbp_protocol import (  # noqa: F401 — re-export
-    HBPF_VOICE,
-    HBPF_VOICE_SYNC,
     HBPF_DATA_SYNC,
     HBPF_SLT_VHEAD,
     HBPF_SLT_VTERM,
-    VER,
+    HBPF_VOICE,
+    HBPF_VOICE_SYNC,
     PROTO_VER,
     STREAM_TO,
+    VER,
 )
 
 # DMR

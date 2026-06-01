@@ -32,19 +32,18 @@ import time
 from binascii import a2b_hex as bhex
 from collections import deque
 from hashlib import blake2b, sha1, sha256
-from hmac import compare_digest, new as hmac_new
+from hmac import compare_digest
+from hmac import new as hmac_new
 from random import randint
 from typing import Any, Callable
 
-from bitarray import bitarray
+from dmr_utils3 import decode
+from dmr_utils3.const import LC_OPT
 from twisted.internet import reactor, task
 from twisted.internet.protocol import DatagramProtocol
 
-from ...domain import int_id, bytes_4
+from ...domain import bytes_4, int_id
 from ...domain.talker_alias import DMRA_PACKET_LEN, parse_dmra_packet
-from dmr_utils3 import decode
-from dmr_utils3.const import LC_OPT
-
 from ..hbp_constants import (
     BC,
     BCKA,
@@ -59,24 +58,23 @@ from ..hbp_constants import (
     HBPF_DATA_SYNC,
     HBPF_SLT_VHEAD,
     HBPF_SLT_VTERM,
-    MSTNAK,
-    MSTCL,
-    MSTPONG,
-    MSTN,
-    MSTP,
     MSTC,
+    MSTCL,
+    MSTN,
+    MSTNAK,
+    MSTP,
+    MSTPONG,
     PRBL,
     PRIN,
-    RPTACK,
     RPTA,
-    RPTCL,
+    RPTACK,
     RPTC,
+    RPTCL,
     RPTK,
     RPTL,
     RPTO,
     RPTP,
     RPTPING,
-    PROTO_VER,
     VER,
 )
 

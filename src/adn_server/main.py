@@ -47,36 +47,42 @@ if str(_ROOT) not in sys.path:
 
 from twisted.internet import reactor, task, threads
 
-from .domain import bytes_3
-from .domain.errors import ConfigError
-from .infrastructure import YamlConfigLoader, reopen_file_handlers, setup_logging
-from .infrastructure.config_reload import BindSpec, reload_server_config
-from .infrastructure.config_normalizer import (
-    apply_talker_alias_defaults as _apply_talker_alias_defaults,
-    expand_generator as _expand_generator,
-    ensure_system_runtime_config as _ensure_system_runtime_config,
-    normalize_peer_config as _normalize_peer_config,
-    normalize_obp_config as _normalize_obp_config,
-)
-from .infrastructure.persistence import PickleSubMapStore
-from .infrastructure.persistence.keys_store import JsonKeysStore
-from .infrastructure.persistence.alias_loader import DefaultAliasLoader
-from .infrastructure.twisted_adapters.report_server import ReportServerFactory
-from .infrastructure.twisted_adapters.udp_hbp import HBPProtocolFactory
-from .infrastructure.bridge_router_impl import InMemoryBridgeRouter
-from .infrastructure.voice import DefaultVoiceProvider, StubVoiceProvider
-from .infrastructure.security.password_download import DefaultSecurityDownloader, StubSecurityDownloader
-from .infrastructure.security.user_passwords_loader import UserPasswordsLoader
-from .infrastructure.voice.recording import RecordingHandler
 from .application import (
     BridgeUseCases,
     IdentUseCases,
-    VoiceUseCases,
     ReportingUseCases,
     ReportSender,
-    VoiceProvider,
-    SecurityDownloader,
+    VoiceUseCases,
 )
+from .domain import bytes_3
+from .domain.errors import ConfigError
+from .infrastructure import YamlConfigLoader, reopen_file_handlers, setup_logging
+from .infrastructure.bridge_router_impl import InMemoryBridgeRouter
+from .infrastructure.config_normalizer import (
+    apply_talker_alias_defaults as _apply_talker_alias_defaults,
+)
+from .infrastructure.config_normalizer import (
+    ensure_system_runtime_config as _ensure_system_runtime_config,
+)
+from .infrastructure.config_normalizer import (
+    expand_generator as _expand_generator,
+)
+from .infrastructure.config_normalizer import (
+    normalize_obp_config as _normalize_obp_config,
+)
+from .infrastructure.config_normalizer import (
+    normalize_peer_config as _normalize_peer_config,
+)
+from .infrastructure.config_reload import BindSpec, reload_server_config
+from .infrastructure.persistence import PickleSubMapStore
+from .infrastructure.persistence.alias_loader import DefaultAliasLoader
+from .infrastructure.persistence.keys_store import JsonKeysStore
+from .infrastructure.security.password_download import DefaultSecurityDownloader, StubSecurityDownloader
+from .infrastructure.security.user_passwords_loader import UserPasswordsLoader
+from .infrastructure.twisted_adapters.report_server import ReportServerFactory
+from .infrastructure.twisted_adapters.udp_hbp import HBPProtocolFactory
+from .infrastructure.voice import DefaultVoiceProvider, StubVoiceProvider
+from .infrastructure.voice.recording import RecordingHandler
 
 
 class ReportSenderAdapter(ReportSender):
@@ -373,14 +379,16 @@ def main() -> None:
     def alias_reload_loop():
         logger.debug("(ALIAS) starting alias thread")
         try:
-            p, s, t, l, sv, ch = alias_loader.load_aliases(config)
-            config["_SUB_IDS"] = s
+            peer_ids, subscriber_ids, talkgroup_ids, local_subscriber_ids, server_ids, checksums = (
+                alias_loader.load_aliases(config)
+            )
+            config["_SUB_IDS"] = subscriber_ids
             config["_SUB_PROFILES"] = alias_loader.load_subscriber_profiles(config)
-            config["_PEER_IDS"] = p
-            config["_TG_IDS"] = t
-            config["_LOCAL_SUBSCRIBER_IDS"] = l
-            config["_SERVER_IDS"] = sv
-            config["CHECKSUMS"] = ch
+            config["_PEER_IDS"] = peer_ids
+            config["_TG_IDS"] = talkgroup_ids
+            config["_LOCAL_SUBSCRIBER_IDS"] = local_subscriber_ids
+            config["_SERVER_IDS"] = server_ids
+            config["CHECKSUMS"] = checksums
         except Exception as e:
             logger.warning("(ALIAS) alias reload failed: %s", e)
 

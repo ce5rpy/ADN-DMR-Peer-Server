@@ -48,17 +48,17 @@ if str(_ROOT) not in sys.path:
 
 from twisted.internet import reactor, task
 
-from .infrastructure import YamlConfigLoader, reopen_file_handlers, setup_logging
-from .infrastructure.config_normalizer import (
-    ensure_system_runtime_config,
-    normalize_peer_config,
-    normalize_obp_config,
-)
-from .infrastructure.bridge_router_impl import InMemoryBridgeRouter
-from .infrastructure.twisted_adapters.report_server import ReportServerFactory
-from .infrastructure.twisted_adapters.udp_hbp import HBPProtocolFactory
 from .application.playback_use_cases import PlaybackUseCases
 from .domain.errors import ConfigError
+from .infrastructure import YamlConfigLoader, reopen_file_handlers, setup_logging
+from .infrastructure.bridge_router_impl import InMemoryBridgeRouter
+from .infrastructure.config_normalizer import (
+    ensure_system_runtime_config,
+    normalize_obp_config,
+    normalize_peer_config,
+)
+from .infrastructure.twisted_adapters.report_server import ReportServerFactory
+from .infrastructure.twisted_adapters.udp_hbp import HBPProtocolFactory
 
 
 def _looping_errback(logger_obj: logging.Logger, failure):

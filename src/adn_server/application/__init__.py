@@ -21,20 +21,20 @@
 #   Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301  USA
 ###############################################################################
 
-from .ports import (
-    ConfigLoader,
-    AliasLoader,
-    SubMapStore,
-    KeysStore,
-    ReportSender,
-    BridgeRouter,
-    VoiceProvider,
-    SecurityDownloader,
-)
 from .bridge_use_cases import BridgeUseCases
 from .ident_use_cases import IdentUseCases
-from .voice_use_cases import VoiceUseCases
+from .ports import (
+    AliasLoader,
+    BridgeRouter,
+    ConfigLoader,
+    KeysStore,
+    ReportSender,
+    SecurityDownloader,
+    SubMapStore,
+    VoiceProvider,
+)
 from .reporting_use_cases import ReportingUseCases
+from .voice_use_cases import VoiceUseCases
 
 __all__ = [
     "ConfigLoader",

@@ -32,7 +32,7 @@ import time
 from datetime import datetime
 from typing import Any, Callable
 
-from ..domain import bytes_3, bytes_4, HBPF_SLT_VHEAD, HBPF_SLT_VTERM
+from ..domain import HBPF_SLT_VHEAD, HBPF_SLT_VTERM, bytes_3, bytes_4
 from .ports import VoiceProvider
 
 logger = logging.getLogger(__name__)

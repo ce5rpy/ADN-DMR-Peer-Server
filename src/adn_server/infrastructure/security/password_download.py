@@ -32,9 +32,9 @@ import socket
 import tempfile
 import time
 from typing import Any
+from urllib.error import HTTPError, URLError
 from urllib.parse import quote
 from urllib.request import Request, urlopen
-from urllib.error import HTTPError, URLError
 
 from ...application.ports import SecurityDownloader
 

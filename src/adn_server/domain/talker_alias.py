@@ -5,6 +5,11 @@
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from bitarray import bitarray
+
 TALKER_ALIAS_MAX_LEN = 29
 TA_FORMAT_7BIT = 0
 TA_FORMAT_ISO8 = 1
@@ -162,7 +167,7 @@ def talker_alias_lc_bytes(block_id: int, payload7: bytes) -> bytes:
     return bytes([FLCO_TALKER_ALIAS_HEADER + block, 0x00]) + payload
 
 
-def encode_talker_alias_emblc(text: str) -> tuple[list[dict[int, "bitarray.bitarray"]], int]:
+def encode_talker_alias_emblc(text: str) -> tuple[list[dict[int, bitarray]], int]:
     """Embedded-LC dicts for TA blocks 0..N-1 and block count N (1–4)."""
     from dmr_utils3 import bptc
 
@@ -173,7 +178,7 @@ def encode_talker_alias_emblc(text: str) -> tuple[list[dict[int, "bitarray.bitar
     return emblcs, count
 
 
-def encode_talker_alias_emblc_from_blocks(blocks: dict[int, bytes]) -> tuple[list[dict[int, "bitarray.bitarray"]], int]:
+def encode_talker_alias_emblc_from_blocks(blocks: dict[int, bytes]) -> tuple[list[dict[int, bitarray]], int]:
     """Build embedded TA LC dicts from buffered DMRA payloads."""
     from dmr_utils3 import bptc
 

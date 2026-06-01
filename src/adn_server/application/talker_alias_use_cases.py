@@ -12,9 +12,9 @@ from ..domain import int_id
 from ..domain.talker_alias import (
     DMRA_BLOCK_COUNT,
     DMRA_PAYLOAD_LEN,
+    buffer_from_blocks,
     build_dmra_packet,
     build_dmra_packets,
-    buffer_from_blocks,
     decode_7bit,
     encode_talker_alias_emblc,
     encode_talker_alias_emblc_from_blocks,

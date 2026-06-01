@@ -21,7 +21,7 @@
 #   Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301  USA
 ###############################################################################
 
-from .sub_map_store import PickleSubMapStore
 from .keys_store import JsonKeysStore
+from .sub_map_store import PickleSubMapStore
 
 __all__ = ["PickleSubMapStore", "JsonKeysStore"]

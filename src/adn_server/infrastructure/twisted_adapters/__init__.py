@@ -21,7 +21,7 @@
 #   Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301  USA
 ###############################################################################
 
-from .report_server import ReportServerFactory, REPORT_OPCODES
+from .report_server import REPORT_OPCODES, ReportServerFactory
 from .udp_hbp import HBPProtocolFactory
 
 __all__ = ["ReportServerFactory", "REPORT_OPCODES", "HBPProtocolFactory"]

@@ -30,7 +30,7 @@ import re
 import time
 from typing import Any, Callable
 
-from ..domain import bytes_3, int_id, HBPF_SLT_VTERM
+from ..domain import HBPF_SLT_VTERM, bytes_3, int_id
 
 logger = logging.getLogger(__name__)
 
