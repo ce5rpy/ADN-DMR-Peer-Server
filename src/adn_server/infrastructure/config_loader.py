@@ -27,7 +27,6 @@
 from __future__ import annotations
 
 import os
-import sys
 from pathlib import Path
 from typing import Any
 
@@ -35,7 +34,7 @@ import yaml
 
 from ..domain import ID_MAX, ID_MIN, PEER_MAX
 from ..domain.errors import ConfigError
-from . import logging_config
+from .config_validator import validate_config
 
 
 def acl_build(acl_str: str | None, max_id: int) -> tuple[bool, list[tuple[int, int]]]:
@@ -68,7 +67,6 @@ def acl_build(acl_str: str | None, max_id: int) -> tuple[bool, list[tuple[int, i
 
 def process_acls(config: dict[str, Any]) -> None:
     """Inject processed ACLs into CONFIG (GLOBAL and per SYSTEM). Mutates config."""
-    from ..domain import PEER_MAX
 
     g = config.get("GLOBAL", {})
     g["REG_ACL"] = acl_build(g.get("REG_ACL", "PERMIT:ALL"), PEER_MAX)
@@ -113,6 +111,7 @@ class YamlConfigLoader:
             config["REPORTS"]["REPORT_CLIENTS"] = [
                 x.strip() for x in config["REPORTS"]["REPORT_CLIENTS"].split(",")
             ]
+        validate_config(config, config_path=path)
         process_acls(config)
         return config
 

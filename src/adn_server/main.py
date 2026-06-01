@@ -48,6 +48,7 @@ if str(_ROOT) not in sys.path:
 from twisted.internet import reactor, task, threads
 
 from .domain import bytes_3
+from .domain.errors import ConfigError
 from .infrastructure import YamlConfigLoader, reopen_file_handlers, setup_logging
 from .infrastructure.config_reload import BindSpec, reload_server_config
 from .infrastructure.config_normalizer import (
@@ -161,7 +162,11 @@ def main() -> None:
     config_path = args.CONFIG_FILE or os.path.join(project_root, "adn-server.yaml")
 
     loader = YamlConfigLoader(project_root)
-    config = loader.load(config_path)
+    try:
+        config = loader.load(config_path)
+    except ConfigError as exc:
+        print(f"(CONFIG) {exc}", file=sys.stderr)
+        sys.exit(1)
     _apply_talker_alias_defaults(config)
 
     # Voice config lives in a separate file for hot-reload without restart

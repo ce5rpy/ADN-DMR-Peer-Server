@@ -58,6 +58,7 @@ from .infrastructure.bridge_router_impl import InMemoryBridgeRouter
 from .infrastructure.twisted_adapters.report_server import ReportServerFactory
 from .infrastructure.twisted_adapters.udp_hbp import HBPProtocolFactory
 from .application.playback_use_cases import PlaybackUseCases
+from .domain.errors import ConfigError
 
 
 def _looping_errback(logger_obj: logging.Logger, failure):
@@ -76,7 +77,11 @@ def main() -> None:
     config_path = args.CONFIG_FILE or os.path.join(project_root, "adn-parrot.yaml")
 
     loader = YamlConfigLoader(project_root)
-    config = loader.load(config_path)
+    try:
+        config = loader.load(config_path)
+    except ConfigError as exc:
+        print(f"(CONFIG) {exc}", file=sys.stderr)
+        sys.exit(1)
 
     if args.LOG_LEVEL:
         config.setdefault("LOGGER", {})["LOG_LEVEL"] = args.LOG_LEVEL
