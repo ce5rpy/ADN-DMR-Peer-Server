@@ -33,7 +33,7 @@ With **systemd**, add to your unit file:
 ExecReload=/bin/kill -HUP $MAINPID
 ```
 
-**Reload applies:** `GLOBAL`, `REPORTS`, `ALIASES`, per-system settings, **new/removed SYSTEMS** (including `GENERATOR` expansion and new OpenBridge legs), and updated bind addresses (listener restart for that system only).
+**Reload applies:** `GLOBAL`, `REPORTS`, `ALIASES`, **`LOGGER.LOG_LEVEL`** (without process restart), per-system settings, **new/removed SYSTEMS** (including `GENERATOR` expansion and new OpenBridge legs), and updated bind addresses (listener restart for that system only).
 
 **Not reloaded:** `adn-voice.yaml` (separate 15 s loop), Python code, subscriber alias files (separate periodic reload). **BRIDGES** table is not rebuilt on reload — restart if bridge rules changed in a way that requires a full reset.
 

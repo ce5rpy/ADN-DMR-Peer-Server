@@ -72,6 +72,27 @@ def reopen_file_handlers(logger: logging.Logger | None = None) -> int:
     return count
 
 
+def reapply_log_level(log_config: dict[str, Any]) -> str:
+    """Apply LOGGER.LOG_LEVEL after SIGHUP reload (handlers unchanged).
+
+    Returns the level name applied (e.g. ``DEBUG``).
+    """
+    if not logging_enabled(log_config):
+        level = logging.CRITICAL
+    else:
+        level = getattr(logging, (log_config.get("LOG_LEVEL", "INFO")).upper(), logging.INFO)
+    log_name = log_config.get("LOG_NAME", "ADN")
+    root = logging.getLogger()
+    root.setLevel(level)
+    app_logger = logging.getLogger(log_name)
+    app_logger.setLevel(level)
+    for handler in root.handlers:
+        handler.setLevel(level)
+    for handler in app_logger.handlers:
+        handler.setLevel(level)
+    return logging.getLevelName(level)
+
+
 def setup_logging(log_config: dict[str, Any]) -> logging.Logger:
     """Configure logging from CONFIG['LOGGER']. Returns application logger."""
     log_name = log_config.get("LOG_NAME", "ADN")

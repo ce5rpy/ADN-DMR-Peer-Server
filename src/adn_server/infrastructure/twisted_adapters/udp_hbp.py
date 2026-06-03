@@ -43,7 +43,13 @@ from twisted.internet import reactor, task
 from twisted.internet.protocol import DatagramProtocol
 
 from ...domain import bytes_4, int_id
-from ...domain.talker_alias import DMRA_PACKET_LEN, parse_dmra_packet
+from ...domain.talker_alias import (
+    DMRA_PACKET_LEN,
+    decode_ta_from_blocks,
+    parse_dmra_packet,
+    store_ta_block,
+    try_buffer_ta_from_voice_fragments,
+)
 from ..hbp_constants import (
     BC,
     BCKA,
@@ -146,6 +152,7 @@ class HBPProtocol(DatagramProtocol):
         on_obp_bcsq_received: Callable[[str, bytes, bytes], None] | None = None,
         on_talker_alias_local_repeat: Callable[[str, bytes, bytes, bytes], None] | None = None,
         on_talker_alias_stream_end: Callable[[str, bytes], None] | None = None,
+        on_dmra_fragment_stored: Callable[[str, bytes, bytes, bytes], None] | None = None,
     ) -> None:
         self._CONFIG = config
         self._system = system_name
@@ -161,6 +168,7 @@ class HBPProtocol(DatagramProtocol):
         self._on_obp_bcsq_received = on_obp_bcsq_received
         self._on_talker_alias_local_repeat = on_talker_alias_local_repeat
         self._on_talker_alias_stream_end = on_talker_alias_stream_end
+        self._on_dmra_fragment_stored = on_dmra_fragment_stored
         self._config = config.get("SYSTEMS", {}).get(system_name, {})
         if self._config.get("MODE") == "OPENBRIDGE":
             self._laststrid = deque([], 20)
@@ -177,10 +185,14 @@ class HBPProtocol(DatagramProtocol):
             self._peers = self._config.setdefault("PEERS", {})
             self._dmra_by_stream: dict[bytes, dict[str, Any]] = {}
             self._dmra_rf_stream: dict[tuple[bytes, bytes], bytes] = {}
+            self._ta_voice_acc: dict[bytes, dict[int, Any]] = {}
+            self._ta_decoded_logged: set[bytes] = set()
         else:
             self._peers = {}
             self._dmra_by_stream = {}
             self._dmra_rf_stream = {}
+            self._ta_voice_acc = {}
+            self._ta_decoded_logged = set()
         if self._config.get("MODE") == "PEER":
             self._dmra_downlink: dict[bytes, dict[str, Any]] = {}
         if self._config.get("MODE") == "PEER":
@@ -250,8 +262,6 @@ class HBPProtocol(DatagramProtocol):
         if not parsed:
             return
         rf_src, block_id, payload = parsed
-        if block_id > 3:
-            return
         stream_id = self._dmra_rf_stream.get((peer_id, rf_src))
         if not stream_id:
             return
@@ -260,9 +270,62 @@ class HBPProtocol(DatagramProtocol):
             stream_id,
             {"blocks": {}, "rf_src": rf_src, "peer": peer_id, "last": now},
         )
-        entry["blocks"][block_id] = payload
+        if not store_ta_block(entry["blocks"], block_id, payload):
+            return
         entry["last"] = now
         entry["rf_src"] = rf_src
+        if self._on_dmra_fragment_stored:
+            self._on_dmra_fragment_stored(self._system, peer_id, rf_src, stream_id)
+
+    def store_ta_from_voice_burst(
+        self,
+        peer_id: bytes,
+        rf_src: bytes,
+        stream_id: bytes,
+        vseq: int,
+        dmrpkt: bytes,
+    ) -> None:
+        """Buffer TA from embedded LC in voice bursts B–E (MMDVM DMRSlot path)."""
+        if self._config.get("MODE") != "MASTER" or not stream_id:
+            return
+        if not self._CONFIG.get("GLOBAL", {}).get("TALKER_ALIAS", False):
+            return
+        entry = self._dmra_by_stream.setdefault(
+            stream_id,
+            {"blocks": {}, "rf_src": rf_src, "peer": peer_id, "last": time.time()},
+        )
+        acc = self._ta_voice_acc.setdefault(stream_id, {})
+        if try_buffer_ta_from_voice_fragments(acc, vseq, dmrpkt, entry["blocks"]):
+            entry["last"] = time.time()
+            entry["rf_src"] = rf_src
+            entry["peer"] = peer_id
+            if stream_id not in self._ta_decoded_logged:
+                text = decode_ta_from_blocks(entry["blocks"])
+                if text:
+                    self._ta_decoded_logged.add(stream_id)
+                    logger.debug(
+                        "(%s) *TALKER ALIAS* decoded '%s' from embedded voice (src %s stream %s)",
+                        self._system, text, int_id(rf_src), int_id(stream_id),
+                    )
+            if self._on_dmra_fragment_stored:
+                self._on_dmra_fragment_stored(self._system, peer_id, rf_src, stream_id)
+
+    def clear_ta_stream_buffer(self, stream_id: bytes) -> None:
+        self._dmra_by_stream.pop(stream_id, None)
+        self._ta_voice_acc.pop(stream_id, None)
+        self._ta_decoded_logged.discard(stream_id)
+
+    def copy_ta_stream_buffer(self, from_stream: bytes, to_stream: bytes) -> None:
+        """Carry decoded TA blocks from recording stream to parrot playback stream."""
+        entry = self._dmra_by_stream.get(from_stream)
+        if not entry or not entry.get("blocks"):
+            return
+        self._dmra_by_stream[to_stream] = {
+            "blocks": dict(entry["blocks"]),
+            "rf_src": entry.get("rf_src", b""),
+            "peer": entry.get("peer", b""),
+            "last": time.time(),
+        }
 
     def get_dmra_blocks(self, stream_id: bytes) -> dict[int, bytes] | None:
         """Return buffered DMRA block payloads for a stream, if any."""
@@ -281,6 +344,8 @@ class HBPProtocol(DatagramProtocol):
         for stream_id in list(self._dmra_by_stream):
             if self._dmra_by_stream[stream_id].get("last", 0) < cutoff:
                 del self._dmra_by_stream[stream_id]
+                self._ta_voice_acc.pop(stream_id, None)
+                self._ta_decoded_logged.discard(stream_id)
 
     def send_dmra_to_peers(self, packets: list[bytes], exclude_peer: bytes | None = None) -> int:
         """Send DMRA packets to logged-in peers (MASTER downlink). Returns peer count."""
@@ -567,6 +632,15 @@ class HBPProtocol(DatagramProtocol):
                 if sub_map is not None:
                     sub_map[_rf_src] = (self._system, _slot, pkt_time)
                 self.note_dmrd_stream(_peer_id, _rf_src, _stream_id)
+                if (
+                    _call_type in ("group", "vcsbk")
+                    and _frame_type != HBPF_DATA_SYNC
+                    and _dtype_vseq in (1, 2, 3, 4)
+                    and len(_data) >= 53
+                ):
+                    self.store_ta_from_voice_burst(
+                        _peer_id, _rf_src, _stream_id, _dtype_vseq, _data[20:53],
+                    )
                 if self._config.get("REPEAT", True):
                     pkt = [_data[:11], b"", _data[15:]]
                     for _peer in self._peers:
@@ -838,8 +912,16 @@ class HBPProtocol(DatagramProtocol):
                     _peer_id = pid
                     break
             if _peer_id is not None and len(_data) >= DMRA_PACKET_LEN:
-                logger.debug("(%s) Peer has sent Talker Alias packet %s", self._system, _data)
-                self.store_dmra_packet(_peer_id, _data)
+                if parse_dmra_packet(_data):
+                    logger.debug("(%s) Peer has sent Talker Alias packet %s", self._system, _data)
+                    self.store_dmra_packet(_peer_id, _data)
+                else:
+                    logger.debug(
+                        "(%s) Peer DMRA ignored (MMDVM expects byte7=0-3, got %s); raw %s",
+                        self._system,
+                        _data[7],
+                        _data,
+                    )
 
         elif _command == PRIN:
             logger.info("(%s) *ProxyInfo* Connection from IP:Port: %s", self._system, _data.decode("utf8", errors="replace")[4:])
@@ -1575,6 +1657,7 @@ def HBPProtocolFactory(
     on_obp_bcsq_received: Callable[[str, bytes, bytes], None] | None = None,
     on_talker_alias_local_repeat: Callable[[str, bytes, bytes, bytes], None] | None = None,
     on_talker_alias_stream_end: Callable[[str, bytes], None] | None = None,
+    on_dmra_fragment_stored: Callable[[str, bytes, bytes, bytes], None] | None = None,
 ) -> HBPProtocol:
     """Create HBP protocol instance (legacy: one HBSYSTEM per system)."""
     return HBPProtocol(
@@ -1592,4 +1675,5 @@ def HBPProtocolFactory(
         on_obp_bcsq_received=on_obp_bcsq_received,
         on_talker_alias_local_repeat=on_talker_alias_local_repeat,
         on_talker_alias_stream_end=on_talker_alias_stream_end,
+        on_dmra_fragment_stored=on_dmra_fragment_stored,
     )

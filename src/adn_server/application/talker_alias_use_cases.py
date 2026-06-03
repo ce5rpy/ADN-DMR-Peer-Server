@@ -13,12 +13,16 @@ from ..domain.talker_alias import (
     DMRA_BLOCK_COUNT,
     DMRA_PAYLOAD_LEN,
     buffer_from_blocks,
+    buffer_from_wire_blocks,
     build_dmra_packet,
     build_dmra_packets,
-    decode_7bit,
+    decode_ta_from_blocks,
     encode_talker_alias_emblc,
     encode_talker_alias_emblc_from_blocks,
+    required_ta_block_count,
+    talker_alias_decode_complete,
     truncate_talker_alias,
+    is_ta_header_byte,
 )
 
 logger = logging.getLogger(__name__)
@@ -77,18 +81,40 @@ def format_talker_alias_text(config: dict[str, Any], rf_src: bytes) -> str:
     return truncate_talker_alias(text)
 
 
+def _passthrough_buf_ready(blocks: dict[int, bytes], buf: bytes) -> bool:
+    need = required_ta_block_count(buf)
+    if need < 1 or need > DMRA_BLOCK_COUNT:
+        return False
+    if not all(i in blocks and len(blocks[i]) >= DMRA_PAYLOAD_LEN for i in range(need)):
+        return False
+    return talker_alias_decode_complete(buf)
+
+
 def passthrough_complete(blocks: dict[int, bytes]) -> bool:
-    """True when all four TA blocks were received."""
-    return all(i in blocks and len(blocks[i]) >= DMRA_PAYLOAD_LEN for i in range(DMRA_BLOCK_COUNT))
+    """True when required TA blocks (1–4) are present and fully decode."""
+    if not blocks:
+        return False
+    buf = buffer_from_wire_blocks(blocks)
+    if _passthrough_buf_ready(blocks, buf):
+        return True
+    if blocks.get(0) and is_ta_header_byte(blocks[0][0]):
+        return _passthrough_buf_ready(blocks, buffer_from_blocks(blocks))
+    return False
 
 
 def passthrough_packets_from_blocks(rf_src: bytes, blocks: dict[int, bytes]) -> list[bytes]:
-    """Rebuild four DMRA packets from buffered block payloads."""
-    packets: list[bytes] = []
-    for block_id in range(DMRA_BLOCK_COUNT):
-        payload = blocks.get(block_id, b"\x00" * DMRA_PAYLOAD_LEN)
-        packets.append(build_dmra_packet(rf_src, block_id, payload))
-    return packets
+    """Rebuild DMRA packets from buffered wire payloads (only blocks needed for TA)."""
+    if passthrough_complete(blocks):
+        buf = buffer_from_wire_blocks(blocks)
+        if not talker_alias_decode_complete(buf) and blocks.get(0) and is_ta_header_byte(blocks[0][0]):
+            buf = buffer_from_blocks(blocks)
+        count = required_ta_block_count(buf)
+        return [
+            build_dmra_packet(rf_src, block_id, blocks[block_id])
+            for block_id in range(count)
+            if block_id in blocks
+        ]
+    return []
 
 
 class TalkerAliasUseCases:
@@ -104,11 +130,10 @@ class TalkerAliasUseCases:
         self._embed_logged.discard((system_name, stream_id))
 
     def should_send_on_vhead(self, target_system: str, stream_id: bytes) -> bool:
-        key = (target_system, stream_id)
-        if key in self._sent_streams:
-            return False
-        self._sent_streams.add(key)
-        return True
+        return (target_system, stream_id) not in self._sent_streams
+
+    def mark_dmra_sent(self, target_system: str, stream_id: bytes) -> None:
+        self._sent_streams.add((target_system, stream_id))
 
     def packets_for_stream(
         self,
@@ -118,6 +143,7 @@ class TalkerAliasUseCases:
         get_passthrough_blocks: Any,
         *,
         target_system: str | None = None,
+        fallback_inject: bool = False,
     ) -> list[bytes] | None:
         """Return DMRA packets to send on VHEAD, or None if TA disabled / nothing to send."""
         settings = talker_alias_settings(self._config, source_system)
@@ -131,7 +157,7 @@ class TalkerAliasUseCases:
         if mode == "passthrough":
             if not have_passthrough:
                 return None
-            text = decode_7bit(buffer_from_blocks(blocks))
+            text = decode_ta_from_blocks(blocks)
             logger.debug(
                 "(%s) *TALKER ALIAS* passthrough '%s' via %s -> %s stream %s",
                 source_system, text, via, target, int_id(stream_id),
@@ -144,20 +170,28 @@ class TalkerAliasUseCases:
                 source_system, text, via, target, int_id(stream_id),
             )
             return build_dmra_packets(rf_src, text)
-        # both
+        # both: prefer the source's own TA. If a valid MMDVM DMRA buffer arrived,
+        # relay it. Otherwise the source's embedded LC (e.g. MMDVM voice) is passed
+        # through unchanged in the DMRD voice, so do NOT inject a template here.
         if have_passthrough:
-            text = decode_7bit(buffer_from_blocks(blocks))
+            text = decode_ta_from_blocks(blocks)
             logger.debug(
                 "(%s) *TALKER ALIAS* passthrough '%s' via %s -> %s stream %s",
                 source_system, text, via, target, int_id(stream_id),
             )
             return passthrough_packets_from_blocks(rf_src, blocks)
-        text = format_talker_alias_text(self._config, rf_src)
+        if fallback_inject:
+            text = format_talker_alias_text(self._config, rf_src)
+            logger.debug(
+                "(%s) *TALKER ALIAS* inject '%s' (no source TA) via %s -> %s stream %s",
+                source_system, text, via, target, int_id(stream_id),
+            )
+            return build_dmra_packets(rf_src, text)
         logger.debug(
-            "(%s) *TALKER ALIAS* inject '%s' via %s -> %s stream %s",
-            source_system, text, via, target, int_id(stream_id),
+            "(%s) *TALKER ALIAS* passthrough (source embedded TA) via %s -> %s stream %s",
+            source_system, via, target, int_id(stream_id),
         )
-        return build_dmra_packets(rf_src, text)
+        return None
 
     def embedded_emblc_for_stream(
         self,
@@ -167,43 +201,41 @@ class TalkerAliasUseCases:
         get_passthrough_blocks: Any,
         *,
         target_system: str | None = None,
+        fallback_inject: bool = False,
     ) -> tuple[list[dict[int, Any]], int] | None:
-        """Return (encode_emblc dicts, block count 1–4) for embedded TA in DMRD, or None."""
+        """Return (encode_emblc dicts, block count 1–4) for the embedded TA to overlay, or None.
+
+        The group LC is rewritten separately for the destination TG; this only supplies the
+        Talker Alias overlaid on alternate superframes:
+
+        - **passthrough / both with source TA:** re-encode the source's decoded TA blocks
+          (round-trips losslessly via the fixed ``encode_emblc``).
+        - **inject / both fallback:** the configured template.
+        - otherwise (no TA available yet): ``None`` — only the destination group LC is sent.
+        """
         settings = talker_alias_settings(self._config, source_system)
         if not settings["enabled"]:
             return None
+        mode = settings["mode"]
         target = target_system or source_system
         via = "repeat" if source_system == target else "bridge"
-        mode = settings["mode"]
         log_key = (source_system, stream_id)
-        log_embed = log_key not in self._embed_logged
 
-        def _log_embed(text: str, passthrough: bool) -> None:
-            if not log_embed:
+        def _log(text: str, suffix: str) -> None:
+            if log_key in self._embed_logged:
                 return
             self._embed_logged.add(log_key)
-            kind = "passthrough" if passthrough else "inject"
             logger.debug(
-                "(%s) *TALKER ALIAS* embed %s '%s' via %s -> %s stream %s",
-                source_system, kind, text, via, target, int_id(stream_id),
+                "(%s) *TALKER ALIAS* embed inject '%s'%s via %s -> %s stream %s",
+                source_system, text, suffix, via, target, int_id(stream_id),
             )
 
         blocks = get_passthrough_blocks(source_system, stream_id) if get_passthrough_blocks else None
-        have_passthrough = bool(blocks and passthrough_complete(blocks))
-        if mode == "passthrough":
-            if not have_passthrough:
-                return None
-            text = decode_7bit(buffer_from_blocks(blocks))
-            _log_embed(text, True)
+        if mode in ("passthrough", "both") and blocks and passthrough_complete(blocks):
+            _log(decode_ta_from_blocks(blocks), " (source TA)")
             return encode_talker_alias_emblc_from_blocks(blocks)
-        if mode == "inject":
-            text = format_talker_alias_text(self._config, rf_src)
-            _log_embed(text, False)
-            return encode_talker_alias_emblc(text)
-        if have_passthrough:
-            text = decode_7bit(buffer_from_blocks(blocks))
-            _log_embed(text, True)
-            return encode_talker_alias_emblc_from_blocks(blocks)
-        text = format_talker_alias_text(self._config, rf_src)
-        _log_embed(text, False)
-        return encode_talker_alias_emblc(text)
+        if mode == "inject" or fallback_inject:
+            suffix = "" if mode == "inject" else " (no source TA)"
+            _log(format_talker_alias_text(self._config, rf_src), suffix)
+            return encode_talker_alias_emblc(format_talker_alias_text(self._config, rf_src))
+        return None

@@ -12,6 +12,7 @@ from typing import Any, Callable
 
 from ..domain.errors import ConfigError
 from .config_loader import YamlConfigLoader
+from .logging_config import reapply_log_level
 from .config_normalizer import (
     apply_talker_alias_defaults,
     ensure_system_runtime_config,
@@ -146,6 +147,9 @@ def reload_server_config(
         raise
 
     merge_top_level_config(config, incoming)
+    if "LOGGER" in incoming:
+        level_name = reapply_log_level(config.get("LOGGER", {}))
+        log.info("(CONFIG-RELOAD) LOG_LEVEL applied: %s", level_name)
 
     old_systems = dict(config.get("SYSTEMS", {}))
     new_systems = incoming.get("SYSTEMS", {})

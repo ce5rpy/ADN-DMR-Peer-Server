@@ -65,6 +65,7 @@ class PlaybackUseCases:
         self._playback_packets: list[bytes] = []
         self._playback_index = 0
         self._playback_stream_id = b""
+        self._playback_ta_from_stream = b""
         self._delay_call: DelayedCall | None = None
         self._packet_call: DelayedCall | None = None
         self._idle_call: DelayedCall | None = None
@@ -197,6 +198,14 @@ class PlaybackUseCases:
         dst_id: bytes,
     ) -> None:
         self.CALL_DATA.append(data)
+        if proto is not None and hasattr(proto, "store_ta_from_voice_burst") and len(data) >= 53:
+            bits = data[15]
+            frame_type = (bits & 0x30) >> 4
+            vseq = bits & 0xF
+            if frame_type != HBPF_DATA_SYNC and vseq in (1, 2, 3, 4):
+                proto.store_ta_from_voice_burst(
+                    peer_id, rf_src, self._record_stream, vseq, data[20:53],
+                )
         self._last_record_time = pkt_time
         self._record_ctx = {
             "slot": slot,
@@ -263,6 +272,7 @@ class PlaybackUseCases:
         ctx = self._record_ctx
         slot = ctx.get("slot", 1)
         recorded = self._ensure_vterm(list(self.CALL_DATA), slot)
+        self._playback_ta_from_stream = self._record_stream
         self._reset_recording_state(slot)
         if not recorded:
             return
@@ -363,6 +373,9 @@ class PlaybackUseCases:
             return
 
         self._playback_stream_id = bytes_4(randint(0x00, 0xFFFFFFFF))
+        if proto is not None and self._playback_ta_from_stream and hasattr(proto, "copy_ta_stream_buffer"):
+            proto.copy_ta_stream_buffer(self._playback_ta_from_stream, self._playback_stream_id)
+        self._playback_ta_from_stream = b""
         logger.info(
             "(%s) *START  PLAYBACK* STREAM ID: %s SUB: %s REPEATER: %s TGID %s, TS %s, Duration: %.2f",
             self._system,
@@ -424,5 +437,6 @@ class PlaybackUseCases:
         self._playback_packets = []
         self._playback_index = 0
         self._playback_stream_id = b""
+        self._playback_ta_from_stream = b""
         self._delay_call = None
         self._packet_call = None

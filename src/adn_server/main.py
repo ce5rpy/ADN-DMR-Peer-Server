@@ -322,6 +322,7 @@ def main() -> None:
         send_bcsq=send_bcsq,
         send_dmra_to_system=send_dmra_to_system,
         get_dmra_blocks=get_dmra_blocks,
+        call_later=reactor.callLater,
     )
     bridge_use_cases.apply_startup_bridges()
     report_factory.set_bridges(bridge_router.get_bridges())
@@ -481,6 +482,7 @@ def main() -> None:
             on_obp_bcsq_received=bridge_use_cases.on_obp_bcsq_received,
             on_talker_alias_local_repeat=bridge_use_cases.send_talker_alias_local_repeat,
             on_talker_alias_stream_end=bridge_use_cases.clear_talker_alias_stream,
+            on_dmra_fragment_stored=bridge_use_cases.on_dmra_fragment_stored,
         )
 
     def _listen_system(_name: str, bind: BindSpec, protocol: Any) -> Any:

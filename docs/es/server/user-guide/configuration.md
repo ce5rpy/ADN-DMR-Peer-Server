@@ -33,7 +33,7 @@ Con **systemd**, en la unidad:
 ExecReload=/bin/kill -HUP $MAINPID
 ```
 
-**Se recarga:** `GLOBAL`, `REPORTS`, `ALIASES`, parámetros por system, **systems nuevos/eliminados** (incluida expansión `GENERATOR` y OBP nuevos), y cambios de IP/puerto (solo reinicia el listener de ese system).
+**Se recarga:** `GLOBAL`, `REPORTS`, `ALIASES`, **`LOGGER.LOG_LEVEL`** (sin reiniciar el proceso), parámetros por system, **systems nuevos/eliminados** (incluida expansión `GENERATOR` y OBP nuevos), y cambios de IP/puerto (solo reinicia el listener de ese system).
 
 **No se recarga:** `adn-voice.yaml` (loop aparte cada 15 s), código Python, ficheros de alias (recarga periódica). La tabla **BRIDGES** no se reconstruye — reinicia si cambiaste reglas de bridge que exijan reset completo.
 

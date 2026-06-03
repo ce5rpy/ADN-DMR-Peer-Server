@@ -14,13 +14,18 @@ When enabled on a **MASTER** system, the server can:
 
 | Mode | Behaviour |
 |------|-----------|
-| **`both`** (default) | Pass through TA from the source hotspot/radio when all four `DMRA` blocks were received; otherwise inject from `subscriber_ids` + template. |
-| **`passthrough`** | Relay buffered `DMRA` only. |
-| **`inject`** | Always build TA from the configured template and alias data. |
+| **`both`** (default) | Prefer the source's own TA, fall back to inject. The server briefly waits (≈2 s after `VHEAD`) for the source's TA, decoded from either a valid MMDVM `DMRA` buffer or the embedded LC inside voice (FLCO 4–7). If found, it is **passed through unchanged**. If the source sent **no** TA within that window (e.g. a radio that does not support Talker Alias), ADN **injects** the configured template (embedded LC + `DMRA`). When the **source is an OpenBridge** system (which never carries TA), there is nothing to wait for, so ADN injects immediately at `VHEAD`. |
+| **`passthrough`** | Relay the source's TA only (buffered `DMRA` and the source embedded LC, both untouched). Never inject the template. |
+| **`inject`** | Always build TA from the configured template and alias data, overwriting the embedded LC and sending `DMRA` packets. |
 
 On **bridge forward** at voice header (`VHEAD`), the server sends four `DMRA` packets to each HBP target (**MASTER** peers or **PEER** upstream) once per stream, then forwards `DMRD` as usual.
 
-**MMDVMHost / DMRGateway (Pi-Star, WPSD):** stock MMDVMHost does **not** consume standalone downlink `DMRA` UDP; it decodes Talker Alias from **embedded LC inside `DMRD` voice** (FLCO 4–7). When TA is enabled, ADN injects TA into the embedded LC of voice bursts **B–E** (dtype 1–4) on **bridge forward** to HBP targets, in addition to optional standalone `DMRA` packets for clients that support them.
+**MMDVMHost / DMRGateway (Pi-Star, WPSD):** stock MMDVMHost does **not** consume standalone downlink `DMRA` UDP; it decodes Talker Alias from **embedded LC inside `DMRD` voice** (FLCO 4–7).
+
+The embedded LC of voice bursts **B–E** (dtype 1–4) is always rewritten with the **destination** group LC (re-encoded for the forwarded TGID, as legacy `bridge.py` does) — this is required for the receiving MMDVM to accept the voice; a stale embedded LC from the source TG causes packet loss. The Talker Alias is then **overlaid on alternate superframes**:
+
+- **`inject`** and the **`both`** no-source-TA fallback use the configured template.
+- **`passthrough`** and **`both`** with a source TA re-encode the source's own Talker Alias (decoded from its `DMRA`/embedded-voice blocks) and overlay that, so the radio's alias reaches the far side while the group LC stays correct for the new TG.
 
 On the **same MASTER**, when **`REPEAT`** copies group voice to other logged-in hotspots, the server also sends those four `DMRA` packets on `VHEAD` (excluding the transmitting peer). Bridge forwarding to the same system shares the same once-per-stream dedupe, so TA is not sent twice.
 
