@@ -31,6 +31,8 @@ from typing import Any, Iterator
 from bitarray import bitarray
 from dmr_utils3 import bptc
 from dmr_utils3.const import BS_DATA_SYNC, BS_VOICE_SYNC, EMB, LC_OPT, SLOT_TYPE
+
+from ..dmr_bptc import encode_emblc
 from dmr_utils3.utils import bytes_4
 
 # Precalculated DMRD byte 15 (slot << 7 | this)
@@ -62,7 +64,7 @@ def pkt_gen(
     term_lc = bptc.encode_terminator_lc(lc)
     term_lc = [term_lc[:98], term_lc[-98:]]
 
-    emb_lc = bptc.encode_emblc(lc)
+    emb_lc = encode_emblc(lc)
     embed = [
         BS_VOICE_SYNC,
         EMB["BURST_B"][:8] + emb_lc[1] + EMB["BURST_B"][-8:],

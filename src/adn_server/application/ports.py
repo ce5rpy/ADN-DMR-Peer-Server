@@ -26,7 +26,7 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from typing import Any
+from typing import Any, Protocol
 
 
 class ConfigLoader(ABC):
@@ -159,4 +159,21 @@ class SecurityDownloader(ABC):
     @abstractmethod
     def periodic_download(self, config: dict[str, Any]) -> None:
         """Periodic password/encryption download."""
+        ...
+
+
+class DmrEmbeddedLcEncoder(Protocol):
+    """Encode a 9-byte DMR embedded LC into burst B–E BPTC fragments (vseq 1–4)."""
+
+    def __call__(self, lc: bytes) -> dict[int, Any]:
+        ...
+
+
+class TalkerAliasEmblcEncoder(Protocol):
+    """Encode Talker Alias into embedded-LC burst dicts for DMRD overlay."""
+
+    def encode_text(self, text: str) -> tuple[list[dict[int, Any]], int]:
+        ...
+
+    def encode_blocks(self, blocks: dict[int, bytes]) -> tuple[list[dict[int, Any]], int]:
         ...

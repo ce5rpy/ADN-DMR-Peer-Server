@@ -38,6 +38,8 @@ from bitarray import bitarray
 from dmr_utils3 import bptc, decode
 from dmr_utils3.const import LC_OPT
 
+from .ports import DmrEmbeddedLcEncoder, TalkerAliasEmblcEncoder
+
 from ..domain import HBPF_DATA_SYNC, HBPF_SLT_VHEAD, HBPF_SLT_VTERM, STREAM_TO, bytes_3, bytes_4, int_id
 from ..domain.talker_alias import DMRA_BLOCK_COUNT
 from .ports import BridgeRouter
@@ -96,6 +98,8 @@ class BridgeUseCases:
         send_dmra_to_system: Any = None,
         get_dmra_blocks: Any = None,
         call_later: Any = None,
+        encode_emblc: DmrEmbeddedLcEncoder | None = None,
+        ta_emblc_encoder: TalkerAliasEmblcEncoder | None = None,
     ) -> None:
         self._router = bridge_router
         self._config = config
@@ -107,7 +111,10 @@ class BridgeUseCases:
         self._send_dmra_to_system = send_dmra_to_system
         self._get_dmra_blocks = get_dmra_blocks
         self._call_later = call_later
-        self._talker_alias = TalkerAliasUseCases(config)
+        if encode_emblc is None or ta_emblc_encoder is None:
+            raise TypeError("encode_emblc and ta_emblc_encoder are required (wire from main.py)")
+        self._encode_emblc = encode_emblc
+        self._talker_alias = TalkerAliasUseCases(config, ta_emblc_encoder=ta_emblc_encoder)
         # (source_system, stream_id) -> {rf_src, peer, targets, timer}
         self._both_ta_wait: dict[tuple[str, bytes], dict[str, Any]] = {}
 
@@ -2657,7 +2664,7 @@ class BridgeUseCases:
                                 return
                             _target_status[stream_id]["H_LC"] = bptc.encode_header_lc(dst_lc)
                             _target_status[stream_id]["T_LC"] = bptc.encode_terminator_lc(dst_lc)
-                            _target_status[stream_id]["EMB_LC"] = bptc.encode_emblc(dst_lc)
+                            _target_status[stream_id]["EMB_LC"] = self._encode_emblc(dst_lc)
                             self._init_talker_alias_embed(
                                 _target_status[stream_id],
                                 system_name,
@@ -2681,7 +2688,7 @@ class BridgeUseCases:
                         if "EMB_LC" not in _target_status[stream_id]:
                             try:
                                 dst_lc = source_lc[0:3] + target_tgid + rf_src
-                                _target_status[stream_id]["EMB_LC"] = bptc.encode_emblc(dst_lc)
+                                _target_status[stream_id]["EMB_LC"] = self._encode_emblc(dst_lc)
                             except Exception:
                                 logger.exception("(to_target) caught exception while creating EMB_LC")
                                 return
@@ -2790,7 +2797,7 @@ class BridgeUseCases:
                         dst_lc = source_lc[0:3] + entry_tgid_b + rf_src
                         _ts_st["TX_H_LC"] = bptc.encode_header_lc(dst_lc)
                         _ts_st["TX_T_LC"] = bptc.encode_terminator_lc(dst_lc)
-                        _ts_st["TX_EMB_LC"] = bptc.encode_emblc(dst_lc)
+                        _ts_st["TX_EMB_LC"] = self._encode_emblc(dst_lc)
                         self._init_talker_alias_embed(
                             _ts_st,
                             system_name,

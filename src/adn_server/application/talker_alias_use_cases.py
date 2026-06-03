@@ -17,13 +17,12 @@ from ..domain.talker_alias import (
     build_dmra_packet,
     build_dmra_packets,
     decode_ta_from_blocks,
-    encode_talker_alias_emblc,
-    encode_talker_alias_emblc_from_blocks,
     required_ta_block_count,
     talker_alias_decode_complete,
     truncate_talker_alias,
     is_ta_header_byte,
 )
+from .ports import TalkerAliasEmblcEncoder
 
 logger = logging.getLogger(__name__)
 
@@ -120,8 +119,14 @@ def passthrough_packets_from_blocks(rf_src: bytes, blocks: dict[int, bytes]) -> 
 class TalkerAliasUseCases:
     """Orchestrate inject / passthrough for bridge forwarding."""
 
-    def __init__(self, config: dict[str, Any]) -> None:
+    def __init__(
+        self,
+        config: dict[str, Any],
+        *,
+        ta_emblc_encoder: TalkerAliasEmblcEncoder,
+    ) -> None:
         self._config = config
+        self._ta_emblc = ta_emblc_encoder
         self._sent_streams: set[tuple[str, bytes]] = set()
         self._embed_logged: set[tuple[str, bytes]] = set()
 
@@ -233,9 +238,9 @@ class TalkerAliasUseCases:
         blocks = get_passthrough_blocks(source_system, stream_id) if get_passthrough_blocks else None
         if mode in ("passthrough", "both") and blocks and passthrough_complete(blocks):
             _log(decode_ta_from_blocks(blocks), " (source TA)")
-            return encode_talker_alias_emblc_from_blocks(blocks)
+            return self._ta_emblc.encode_blocks(blocks)
         if mode == "inject" or fallback_inject:
             suffix = "" if mode == "inject" else " (no source TA)"
             _log(format_talker_alias_text(self._config, rf_src), suffix)
-            return encode_talker_alias_emblc(format_talker_alias_text(self._config, rf_src))
+            return self._ta_emblc.encode_text(format_talker_alias_text(self._config, rf_src))
         return None

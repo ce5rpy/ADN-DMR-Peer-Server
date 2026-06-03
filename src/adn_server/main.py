@@ -58,6 +58,8 @@ from .domain import bytes_3
 from .domain.errors import ConfigError
 from .infrastructure import YamlConfigLoader, reopen_file_handlers, setup_logging
 from .infrastructure.bridge_router_impl import InMemoryBridgeRouter
+from .infrastructure.dmr_bptc import encode_emblc
+from .infrastructure.talker_alias_emblc import default_ta_emblc_encoder
 from .infrastructure.config_normalizer import (
     apply_talker_alias_defaults as _apply_talker_alias_defaults,
 )
@@ -323,6 +325,8 @@ def main() -> None:
         send_dmra_to_system=send_dmra_to_system,
         get_dmra_blocks=get_dmra_blocks,
         call_later=reactor.callLater,
+        encode_emblc=encode_emblc,
+        ta_emblc_encoder=default_ta_emblc_encoder,
     )
     bridge_use_cases.apply_startup_bridges()
     report_factory.set_bridges(bridge_router.get_bridges())
