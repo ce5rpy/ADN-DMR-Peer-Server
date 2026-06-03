@@ -529,6 +529,9 @@ class BridgeUseCases:
         """
         if not isinstance(tst, dict) or "H_LC" not in tst:
             return False
+        if tst.get("_end_tx_sent"):
+            # Already cleared this leg's monitor TX chip; do not re-emit on repeated BCSQ.
+            return False
         if not bool(self._config.get("REPORTS", {}).get("REPORT", True)):
             return False
         report = self._report_factory
@@ -553,6 +556,7 @@ class BridgeUseCases:
             )
         except Exception:
             return False
+        tst["_end_tx_sent"] = True
         return True
 
     def _obp_emit_end_tx_for_forward_legs(self, stream_id: bytes, source_system: str, now: float) -> None:
@@ -573,15 +577,21 @@ class BridgeUseCases:
             if not tstatus or stream_id not in tstatus:
                 continue
             tst = tstatus[stream_id]
-            if self._obp_emit_end_tx_forward_leg(tgt_name, stream_id, tst, now):
-                tstatus.pop(stream_id, None)
+            # Emit the monitor END,TX chip-clear but DO NOT pop STATUS: legacy keeps the
+            # forward-leg entry until the stream trimmer removes it by age (180s). Popping
+            # mid-stream caused the source/forward-leg entry to vanish and re-CALL-START churn.
+            self._obp_emit_end_tx_forward_leg(tgt_name, stream_id, tst, now)
 
     def on_obp_bcsq_received(self, system_name: str, tgid: bytes, stream_id: bytes) -> None:
-        """After valid BCSQ on this OBP leg: END,TX + clear forward STATUS if present.
+        """After valid BCSQ on this OBP leg: emit the monitor END,TX chip-clear only.
 
-        Legacy hblink only sets CONFIG['_bcsq'] (no monitor event). Remote new OBP sends BCSQ
-        aggressively; without END,TX the monitor keeps stale TX chips until clean_te (~3 min).
-        Event format matches legacy VTERM END,TX so legacy and v2 monitors behave the same.
+        Legacy parity (hblink.py ~629-639): BCSQ only records CONFIG['_bcsq'][tgid]=stream_id
+        (done inline in udp_hbp) and routerOBP.to_target then *skips* the quenched target for
+        that stream (see _obp_target_bcsq_quenches_stream). It never destroys stream state.
+        We additionally emit a one-shot END,TX so the monitor clears stale TX chips, but we do
+        NOT pop STATUS[stream_id]: popping mid-call made the same stream re-CALL-START over and
+        over (visible as BCSQ-storm churn), which flapped loop-control and broke OBP->HBP audio.
+        The forward-leg entry is removed by the stream trimmer on idle (legacy behaviour).
         """
         protocols = self._get_protocols() if self._get_protocols else {}
         tgt_proto = protocols.get(system_name)
@@ -598,7 +608,6 @@ class BridgeUseCases:
         if tst.get("TGID", b"\x00\x00\x00") != tgid:
             return
         self._obp_emit_end_tx_forward_leg(system_name, stream_id, tst, time.time())
-        tstatus.pop(stream_id, None)
 
     def flush_monitor_events_for_system(self, system_name: str, protocol: Any) -> None:
         report = self._report_factory
