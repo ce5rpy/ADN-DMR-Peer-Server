@@ -38,11 +38,9 @@ from bitarray import bitarray
 from dmr_utils3 import bptc, decode
 from dmr_utils3.const import LC_OPT
 
-from .ports import DmrEmbeddedLcEncoder, TalkerAliasEmblcEncoder
-
 from ..domain import HBPF_DATA_SYNC, HBPF_SLT_VHEAD, HBPF_SLT_VTERM, STREAM_TO, bytes_3, bytes_4, int_id
 from ..domain.talker_alias import DMRA_BLOCK_COUNT
-from .ports import BridgeRouter
+from .ports import BridgeRouter, DmrEmbeddedLcEncoder, TalkerAliasEmblcEncoder
 from .talker_alias_use_cases import TalkerAliasUseCases, passthrough_complete, talker_alias_settings
 
 logger = logging.getLogger(__name__)

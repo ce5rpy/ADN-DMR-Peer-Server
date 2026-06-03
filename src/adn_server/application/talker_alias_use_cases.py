@@ -17,10 +17,10 @@ from ..domain.talker_alias import (
     build_dmra_packet,
     build_dmra_packets,
     decode_ta_from_blocks,
+    is_ta_header_byte,
     required_ta_block_count,
     talker_alias_decode_complete,
     truncate_talker_alias,
-    is_ta_header_byte,
 )
 from .ports import TalkerAliasEmblcEncoder
 

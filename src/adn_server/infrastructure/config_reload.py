@@ -12,7 +12,6 @@ from typing import Any, Callable
 
 from ..domain.errors import ConfigError
 from .config_loader import YamlConfigLoader
-from .logging_config import reapply_log_level
 from .config_normalizer import (
     apply_talker_alias_defaults,
     ensure_system_runtime_config,
@@ -20,6 +19,7 @@ from .config_normalizer import (
     normalize_obp_config,
     normalize_peer_config,
 )
+from .logging_config import reapply_log_level
 
 logger = logging.getLogger(__name__)
 
