@@ -5,13 +5,14 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from typing import TYPE_CHECKING
 
 from ..domain.talker_alias import (
     blocks_from_buffer,
     buffer_from_blocks,
     buffer_from_wire_blocks,
-    encode_utf8,
+    encode_ta_buffer,
     is_ta_header_byte,
     required_ta_block_count,
     talker_alias_decode_complete,
@@ -23,13 +24,22 @@ if TYPE_CHECKING:
     from bitarray import bitarray
 
 
-def encode_talker_alias_emblc(text: str) -> tuple[list[dict[int, bitarray]], int]:
-    """Embedded-LC dicts for TA blocks 0..N-1 and block count N (1–4)."""
-    encoded = encode_utf8(text)
-    blocks = blocks_from_buffer(encoded)
-    count = required_ta_block_count(encoded)
-    emblcs = [encode_emblc(talker_alias_lc_bytes(i, blocks[i])) for i in range(count)]
-    return emblcs, count
+def encode_talker_alias_emblc(
+    text: str,
+    text_formats: Sequence[str] | str = ("utf8",),
+) -> tuple[list[dict[int, bitarray]], int]:
+    """Embedded-LC dicts for TA blocks; multiple encodings are emitted back-to-back."""
+    if isinstance(text_formats, str):
+        formats: list[str] = [text_formats]
+    else:
+        formats = list(text_formats) or ["utf8"]
+    emblcs: list[dict[int, bitarray]] = []
+    for tf in formats:
+        encoded = encode_ta_buffer(text, tf)
+        blocks = blocks_from_buffer(encoded)
+        count = required_ta_block_count(encoded)
+        emblcs += [encode_emblc(talker_alias_lc_bytes(i, blocks[i])) for i in range(count)]
+    return emblcs, len(emblcs)
 
 
 def encode_talker_alias_emblc_from_blocks(
@@ -52,8 +62,14 @@ def encode_talker_alias_emblc_from_blocks(
 class DefaultTalkerAliasEmblcEncoder:
     """Infrastructure adapter for ``TalkerAliasEmblcEncoder`` (wired from ``main``)."""
 
-    def encode_text(self, text: str) -> tuple[list[dict[int, bitarray]], int]:
-        return encode_talker_alias_emblc(text)
+    def encode_text(
+        self,
+        text: str,
+        *,
+        text_formats: Sequence[str] | None = None,
+    ) -> tuple[list[dict[int, bitarray]], int]:
+        fmts: Sequence[str] = text_formats if text_formats is not None else ("utf8",)
+        return encode_talker_alias_emblc(text, fmts)
 
     def encode_blocks(self, blocks: dict[int, bytes]) -> tuple[list[dict[int, bitarray]], int]:
         return encode_talker_alias_emblc_from_blocks(blocks)

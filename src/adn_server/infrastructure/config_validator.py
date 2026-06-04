@@ -48,6 +48,7 @@ GLOBAL_STRING_KEYS = frozenset(
         "HASH_ENCRYPT",
         "TALKER_ALIAS_MODE",
         "TALKER_ALIAS_FORMAT",
+        "TALKER_ALIAS_TEXT_FORMAT",
         *ACL_KEYS,
     }
 )

@@ -5,7 +5,7 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from bitarray import bitarray
@@ -66,6 +66,21 @@ def decode_ta(buf: bytes) -> str:
 decode_7bit = decode_ta  # backwards-compatible alias
 
 
+VALID_TA_TEXT_FORMATS = frozenset({"utf8", "iso8", "7bit"})
+
+
+def parse_ta_text_formats(raw: Any) -> list[str]:
+    """Parse ``TALKER_ALIAS_TEXT_FORMAT`` (comma list or YAML list) → ordered encodings."""
+    if raw is None:
+        return ["utf8"]
+    if isinstance(raw, list):
+        parts = [str(x).strip().lower() for x in raw]
+    else:
+        parts = [f.strip().lower() for f in str(raw).split(",")]
+    valid = [f for f in parts if f in VALID_TA_TEXT_FORMATS]
+    return valid or ["utf8"]
+
+
 def encode_utf8(text: str) -> bytes:
     """Encode text into 28-byte TA buffer (format 2 / UTF-8)."""
     text = truncate_talker_alias(text)
@@ -80,28 +95,44 @@ def encode_utf8(text: str) -> bytes:
     return bytes(buf)
 
 
-def encode_7bit(text: str) -> bytes:
-    """Encode text into 28-byte TA buffer (format 0 / 7-bit)."""
+def encode_iso8(text: str) -> bytes:
+    """Encode text into 28-byte TA buffer (format 1 / ISO-8859-1, best for Hytera)."""
     text = truncate_talker_alias(text)
-    size = len(text)
-    bits: list[int] = []
-    for b in (0, 0):
-        bits.append(b)
+    raw = text.encode("latin-1", errors="replace")[:27]
+    size = len(raw)
+    header = (TA_FORMAT_ISO8 << 6) | (size << 1) | 0
+    buf = bytearray(DMRA_BUF_LEN)
+    buf[0] = header
+    buf[1 : 1 + size] = raw
+    return bytes(buf)
+
+
+def encode_7bit(text: str) -> bytes:
+    """Encode text into 28-byte TA buffer (format 0 / 7-bit packed, inverse of ``decode_ta``)."""
+    text = truncate_talker_alias(text)
+    chars = text.encode("ascii", errors="replace")[:31]
+    size = len(chars)
+    bits = [(TA_FORMAT_7BIT >> 1) & 1, TA_FORMAT_7BIT & 1]
     for b in range(4, -1, -1):
         bits.append((size >> b) & 1)
-    for ch in text:
-        v = ord(ch) & 0x7F
+    for ch in chars:
         for b in range(6, -1, -1):
-            bits.append((v >> b) & 1)
-    while len(bits) < DMRA_BUF_LEN * 8:
-        bits.append(0)
+            bits.append((ch >> b) & 1)
+    total = DMRA_BUF_LEN * 8
+    bits = (bits + [0] * total)[:total]
     buf = bytearray(DMRA_BUF_LEN)
-    for i in range(DMRA_BUF_LEN):
-        byte = 0
-        for j in range(8):
-            byte = (byte << 1) | bits[i * 8 + j]
-        buf[i] = byte
+    for i, bit in enumerate(bits):
+        if bit:
+            buf[i // 8] |= 1 << (7 - (i % 8))
     return bytes(buf)
+
+
+_TA_ENCODERS = {"utf8": encode_utf8, "iso8": encode_iso8, "7bit": encode_7bit}
+
+
+def encode_ta_buffer(text: str, text_format: str = "utf8") -> bytes:
+    """Encode text into a 28-byte TA buffer in the requested format."""
+    return _TA_ENCODERS.get(text_format, encode_utf8)(text)
 
 
 def blocks_from_buffer(buf: bytes) -> list[bytes]:
@@ -170,10 +201,10 @@ def decode_ta_from_blocks(blocks: dict[int, bytes]) -> str:
     return ""
 
 
-def build_dmra_packets(rf_src: bytes, text: str) -> list[bytes]:
+def build_dmra_packets(rf_src: bytes, text: str, text_format: str = "utf8") -> list[bytes]:
     """Build HBP DMRA packets (1–4) for server injection."""
     rf = rf_src[:3] if len(rf_src) >= 3 else rf_src.ljust(3, b"\x00")[:3]
-    encoded = encode_utf8(text)
+    encoded = encode_ta_buffer(text, text_format)
     blocks = blocks_from_buffer(encoded)
     count = required_ta_block_count(encoded)
     packets: list[bytes] = []

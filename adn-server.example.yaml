@@ -21,6 +21,8 @@ GLOBAL:
   TALKER_ALIAS: false
   TALKER_ALIAS_MODE: both
   TALKER_ALIAS_FORMAT: "{callsign} {fname}"
+  # utf8 (Motorola), iso8 (Hytera), 7bit; both vendors by default
+  TALKER_ALIAS_TEXT_FORMAT: "utf8,iso8"
 
 REPORTS:
   REPORT: true

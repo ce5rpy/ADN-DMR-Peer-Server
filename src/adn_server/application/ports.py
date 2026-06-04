@@ -26,6 +26,7 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+from collections.abc import Sequence
 from typing import Any, Protocol
 
 
@@ -172,7 +173,12 @@ class DmrEmbeddedLcEncoder(Protocol):
 class TalkerAliasEmblcEncoder(Protocol):
     """Encode Talker Alias into embedded-LC burst dicts for DMRD overlay."""
 
-    def encode_text(self, text: str) -> tuple[list[dict[int, Any]], int]:
+    def encode_text(
+        self,
+        text: str,
+        *,
+        text_formats: Sequence[str] | None = None,
+    ) -> tuple[list[dict[int, Any]], int]:
         ...
 
     def encode_blocks(self, blocks: dict[int, bytes]) -> tuple[list[dict[int, Any]], int]:

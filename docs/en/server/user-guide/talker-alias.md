@@ -42,6 +42,7 @@ GLOBAL:
   TALKER_ALIAS: false
   TALKER_ALIAS_MODE: both
   TALKER_ALIAS_FORMAT: "{callsign} {fname}"
+  TALKER_ALIAS_TEXT_FORMAT: "utf8,iso8"
 ```
 
 | Key | Meaning |
@@ -49,6 +50,7 @@ GLOBAL:
 | **TALKER_ALIAS** | Master switch (`false` by default). |
 | **TALKER_ALIAS_MODE** | `both`, `passthrough`, or `inject`. Default **`both`** if omitted. |
 | **TALKER_ALIAS_FORMAT** | Python format string; fields: `{callsign}`, `{fname}`, `{surname}`, `{id}`. |
+| **TALKER_ALIAS_TEXT_FORMAT** | TA payload encoding: `utf8` (Motorola / MMDVMHost default), `iso8` (ISO-8859-1, many Hytera models), or `7bit` (oldest radios). Comma-separated list (e.g. `utf8,iso8`) emits **both** encodings back-to-back in embedded LC so each vendor can pick the format it displays; standalone `DMRA` UDP uses the **first** format only. Default **`utf8`**. |
 
 Maximum string length is **29 characters** (ETSI / MMDVMHost). This limit is fixed in code and is **not** configurable, to avoid incompatible payloads on radios and hotspots.
 
@@ -65,7 +67,7 @@ Subscriber JSON may include `fname`, `surname`, or a dedicated `talker_alias` fi
 | 7 | Block index 0–3 |
 | 8–14 | 7 payload bytes |
 
-Encoding uses **UTF-8 format** (format 2), matching MMDVMHost `DMRTA.cpp`.
+Encoding follows **TALKER_ALIAS_TEXT_FORMAT** (ETSI formats 0/1/2: 7-bit, ISO-8859-1, UTF-8), matching MMDVMHost `DMRTA.cpp` when set to `utf8`.
 
 Embedded TA in `DMRD` voice alternates superframes: one cycle (bursts B–E) with the normal group embedded LC, the next with a TA block (FLCO 4–7), repeating until the stream ends.
 

@@ -18,6 +18,7 @@ from ..domain.talker_alias import (
     build_dmra_packets,
     decode_ta_from_blocks,
     is_ta_header_byte,
+    parse_ta_text_formats,
     required_ta_block_count,
     talker_alias_decode_complete,
     truncate_talker_alias,
@@ -44,10 +45,14 @@ def talker_alias_settings(config: dict[str, Any], system_name: str | None = None
     fmt = sys_cfg.get("TALKER_ALIAS_FORMAT")
     if fmt is None:
         fmt = global_cfg.get("TALKER_ALIAS_FORMAT", "{callsign} {fname}")
+    tfmt = sys_cfg.get("TALKER_ALIAS_TEXT_FORMAT")
+    if tfmt is None:
+        tfmt = global_cfg.get("TALKER_ALIAS_TEXT_FORMAT", "utf8")
     return {
         "enabled": bool(enabled),
         "mode": mode,
         "format": str(fmt),
+        "text_formats": parse_ta_text_formats(tfmt),
     }
 
 
@@ -174,7 +179,7 @@ class TalkerAliasUseCases:
                 "(%s) *TALKER ALIAS* inject '%s' via %s -> %s stream %s",
                 source_system, text, via, target, int_id(stream_id),
             )
-            return build_dmra_packets(rf_src, text)
+            return build_dmra_packets(rf_src, text, settings["text_formats"][0])
         # both: prefer the source's own TA. If a valid MMDVM DMRA buffer arrived,
         # relay it. Otherwise the source's embedded LC (e.g. MMDVM voice) is passed
         # through unchanged in the DMRD voice, so do NOT inject a template here.
@@ -191,7 +196,7 @@ class TalkerAliasUseCases:
                 "(%s) *TALKER ALIAS* inject '%s' (no source TA) via %s -> %s stream %s",
                 source_system, text, via, target, int_id(stream_id),
             )
-            return build_dmra_packets(rf_src, text)
+            return build_dmra_packets(rf_src, text, settings["text_formats"][0])
         logger.debug(
             "(%s) *TALKER ALIAS* passthrough (source embedded TA) via %s -> %s stream %s",
             source_system, via, target, int_id(stream_id),
@@ -241,6 +246,7 @@ class TalkerAliasUseCases:
             return self._ta_emblc.encode_blocks(blocks)
         if mode == "inject" or fallback_inject:
             suffix = "" if mode == "inject" else " (no source TA)"
-            _log(format_talker_alias_text(self._config, rf_src), suffix)
-            return self._ta_emblc.encode_text(format_talker_alias_text(self._config, rf_src))
+            text = format_talker_alias_text(self._config, rf_src)
+            _log(text, suffix)
+            return self._ta_emblc.encode_text(text, text_formats=settings["text_formats"])
         return None

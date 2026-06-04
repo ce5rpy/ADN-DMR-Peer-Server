@@ -88,6 +88,7 @@ Optional DMR Talker Alias on HBP (`DMRA` packets). Full guide: [Talker Alias](ta
 | **TALKER_ALIAS** | Enable server TA inject/passthrough (`false` default). |
 | **TALKER_ALIAS_MODE** | `both` (default), `passthrough`, or `inject`. |
 | **TALKER_ALIAS_FORMAT** | Template, e.g. `{callsign} {fname}`. Max **29** chars (protocol limit, not YAML). |
+| **TALKER_ALIAS_TEXT_FORMAT** | `utf8`, `iso8`, `7bit`, or comma list (e.g. `utf8,iso8` for Motorola + Hytera). Default `utf8`. |
 
 ---
 
