@@ -18,7 +18,7 @@ El español replica las mismas rutas relativas bajo **`docs/es/`**.
 
 Genera **las dos** salidas (`mkdocs build` y `mkdocs build -f mkdocs.es.yml`). Quedan en **`site/en/`** y **`site/es/`**. Publica la carpeta **`site/`** según el mapeo de tu servidor HTTP.
 
-Prueba local rápida: `cd site && python -m http.server` y abre **`/en/`** y **`/es/`**. Opcional: **`mkdocs-static-i18n`** más adelante para un solo build con pares de idioma por página.
+Prueba local rápida: `cd site && python -m http.server` y abre **`/en/`** y **`/es/`** (rutas en la raíz del servidor). En producción el sitio suele publicarse bajo **`/docs/`**; el selector de idioma y **`docs/site-root-index.html`** usan **`/docs/en/`** y **`/docs/es/`**. Opcional: **`mkdocs-static-i18n`** más adelante para un solo build con pares de idioma por página.
 
 ## Añadir o actualizar un idioma
 

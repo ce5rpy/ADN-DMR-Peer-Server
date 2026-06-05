@@ -77,9 +77,9 @@ nav:
 extra:
   alternate:
     - name: English
-      link: /en/
+      link: /docs/en/
       lang: en
     - name: Español
-      link: /es/
+      link: /docs/es/
       lang: es
   social: []

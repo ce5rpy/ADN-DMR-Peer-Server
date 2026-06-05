@@ -18,7 +18,7 @@ Spanish mirrors the same relative paths under **`docs/es/`**.
 
 Build **both** (`mkdocs build` and `mkdocs build -f mkdocs.es.yml`). The outputs land in **`site/en/`** and **`site/es/`**. Publish the combined **`site/`** directory as your HTTP server layout requires.
 
-For a quick local check: `cd site && python -m http.server` then open **`/en/`** and **`/es/`**. Optional: use **`mkdocs-static-i18n`** later for a single build with page-level language pairs.
+For a quick local check: `cd site && python -m http.server` then open **`/en/`** and **`/es/`** (paths at the server root). On production, the site is usually mounted under **`/docs/`**; the language switcher and **`docs/site-root-index.html`** use **`/docs/en/`** and **`/docs/es/`**. Optional: use **`mkdocs-static-i18n`** later for a single build with page-level language pairs.
 
 ## Adding or updating a locale
 
