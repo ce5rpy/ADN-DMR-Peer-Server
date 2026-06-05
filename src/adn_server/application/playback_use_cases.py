@@ -391,9 +391,8 @@ class PlaybackUseCases:
         self._send_next_packet(proto)
 
     def _prepare_playback_packets(self, recorded: list[bytes]) -> list[bytes]:
-        """Rewrite stream ID, drop mid-call VHEADs (re-key), monotonic seq for bridge ingress."""
+        """Rewrite stream ID and drop mid-call VHEADs (re-key); keep source seq (legacy playback.py)."""
         out: list[bytes] = []
-        seq = 1
         for i, pkt in enumerate(recorded):
             if len(pkt) < 20:
                 continue
@@ -403,10 +402,7 @@ class PlaybackUseCases:
                     self._system,
                 )
                 continue
-            new_pkt = bytearray(pkt[:16] + self._playback_stream_id + pkt[20:])
-            new_pkt[4] = seq & 0xFF
-            seq = (seq % 255) + 1
-            out.append(bytes(new_pkt))
+            out.append(pkt[:16] + self._playback_stream_id + pkt[20:])
         return out
 
     def _send_next_packet(self, proto: Any) -> None:
