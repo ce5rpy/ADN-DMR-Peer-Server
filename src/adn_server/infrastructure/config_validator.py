@@ -62,16 +62,8 @@ SYSTEM_STRING_KEYS = frozenset(
         "PASSPHRASE",
         "MASTER_IP",
         "CALLSIGN",
-        "RX_FREQ",
-        "TX_FREQ",
-        "TX_POWER",
-        "COLORCODE",
-        "LATITUDE",
-        "LONGITUDE",
-        "HEIGHT",
         "LOCATION",
         "DESCRIPTION",
-        "SLOTS",
         "URL",
         "SOFTWARE_ID",
         "PACKAGE_ID",
@@ -118,6 +110,17 @@ def _expect_int(path: str, value: Any, errors: list[str]) -> None:
     if isinstance(value, int):
         return
     errors.append(f"{path}: expected integer, got {type(value).__name__} ({value!r}).")
+
+
+def _expect_number(path: str, value: Any, errors: list[str]) -> None:
+    if _is_empty(value):
+        return
+    if isinstance(value, bool):
+        errors.append(f"{path}: expected number, got boolean ({value!r}).")
+        return
+    if isinstance(value, (int, float)):
+        return
+    errors.append(f"{path}: expected number, got {type(value).__name__} ({value!r}).")
 
 
 def _section_string_keys(section_name: str, section: dict[str, Any], keys: frozenset[str], errors: list[str]) -> None:
@@ -181,9 +184,30 @@ def _validate_system(name: str, sys_cfg: dict[str, Any], errors: list[str]) -> N
     for key in ("ENABLED", "REPEAT", "USE_ACL", "SINGLE_MODE", "VOICE_IDENT", "ALLOW_UNREG_ID", "PROXY_CONTROL", "EXPORT_AMBE", "LOOSE", "RELAX_CHECKS", "ENHANCED_OBP", "BOTH_SLOTS"):
         if key in sys_cfg:
             _expect_bool(f"{prefix}.{key}", sys_cfg[key], errors)
-    for key in ("PORT", "MASTER_PORT", "MAX_PEERS", "GROUP_HANGTIME", "DEFAULT_UA_TIMER", "DEFAULT_REFLECTOR", "GENERATOR", "NETWORK_ID", "TARGET_PORT", "PROTO_VER", "RADIO_ID"):
+    for key in (
+        "PORT",
+        "MASTER_PORT",
+        "MAX_PEERS",
+        "GROUP_HANGTIME",
+        "DEFAULT_UA_TIMER",
+        "DEFAULT_REFLECTOR",
+        "GENERATOR",
+        "NETWORK_ID",
+        "TARGET_PORT",
+        "PROTO_VER",
+        "RADIO_ID",
+        "RX_FREQ",
+        "TX_FREQ",
+        "TX_POWER",
+        "COLORCODE",
+        "SLOTS",
+        "HEIGHT",
+    ):
         if key in sys_cfg:
             _expect_int(f"{prefix}.{key}", sys_cfg[key], errors)
+    for key in ("LATITUDE", "LONGITUDE"):
+        if key in sys_cfg:
+            _expect_number(f"{prefix}.{key}", sys_cfg[key], errors)
 
 
 def validate_config(config: dict[str, Any], *, config_path: str | None = None) -> None:
