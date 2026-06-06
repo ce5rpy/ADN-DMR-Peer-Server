@@ -54,6 +54,13 @@ from .application import (
     ReportSender,
     VoiceUseCases,
 )
+from .application.runtime_context import (
+    ConfigProxy,
+    RuntimeContext,
+    RuntimeContextHolder,
+    prepare_reload_config,
+    swap_runtime_config,
+)
 from .domain import bytes_3
 from .domain.errors import ConfigError
 from .infrastructure import YamlConfigLoader, reopen_file_handlers, setup_logging
@@ -226,6 +233,9 @@ def main() -> None:
     _ensure_system_runtime_config(config)
     _normalize_peer_config(config)
     _normalize_obp_config(config)
+
+    runtime_holder = RuntimeContextHolder(RuntimeContext(config=config, config_path=config_path))
+    config = ConfigProxy(runtime_holder)
 
     # BRIDGES
     bridge_router = InMemoryBridgeRouter()
@@ -503,9 +513,10 @@ def main() -> None:
         user_passwords_loader.load(config)
 
     def _do_config_reload() -> None:
+        new_config = prepare_reload_config(runtime_holder)
         try:
-            reload_server_config(
-                config,
+            result = reload_server_config(
+                new_config,
                 config_path,
                 loader,
                 protocols,
@@ -513,10 +524,13 @@ def main() -> None:
                 create_protocol=_create_hbp_protocol,
                 listen_udp=lambda n, b, p: _listen_system(n, b, p),
                 stop_listener=_stop_udp_port,
-                on_systems_changed=_on_config_systems_changed,
+                on_systems_changed=None,
                 on_system_removed=bridge_use_cases.flush_monitor_events_for_system,
                 log=logger,
             )
+            swap_runtime_config(runtime_holder, new_config, config_path=config_path)
+            if result.added or result.removed or result.updated or result.rebound:
+                _on_config_systems_changed()
         except Exception as e:
             logger.error("(CONFIG-RELOAD) aborted: %s", e)
 

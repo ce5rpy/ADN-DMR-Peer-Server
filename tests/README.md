@@ -7,7 +7,7 @@ python3 -m pip install -e ".[dev]"
 python3 -m pytest tests/<path>/test_<name>.py -q          # single file
 python3 -m pytest tests/<path>/test_<name>.py::test_foo -q # single test
 python3 -m pytest tests/bridge/ -q                         # whole domain
-python3 -m pytest tests/ -q                                # full suite (147)
+python3 -m pytest tests/ -q                                # full suite (152)
 ```
 
 Use the project interpreter, e.g. `/opt/.pyenv/versions/3.11.8/bin/python3`.
@@ -23,7 +23,8 @@ Use the project interpreter, e.g. `/opt/.pyenv/versions/3.11.8/bin/python3`.
 | `talker_alias/` | Encode/decode, passthrough, MMDVM wire, bridge inject |
 | `parrot/` | Recording timers, playback loop, seq preservation, ingress path |
 | `smoke/` | Quick routing smoke + packet builder |
-| `infrastructure/` | Logging reload |
+| `infrastructure/` | Logging reload, bridge router index |
+| `application/` | RuntimeContext holder / config proxy |
 | `scripts/` | Config conversion helpers |
 | `harness/` | Shared fakes (`DeterministicScenario`, assertions) — not run as tests |
 
@@ -104,6 +105,7 @@ Use the project interpreter, e.g. `/opt/.pyenv/versions/3.11.8/bin/python3`.
 | `smoke/test_packet_builder.py` | 1 | PacketSpec builder |
 | `infrastructure/test_logging_reload.py` | 2 | Log level reload |
 | `infrastructure/test_bridge_router_index.py` | 5 | BRIDGES O(1) index vs legacy scan |
+| `application/test_runtime_context.py` | 5 | RuntimeContext holder, SIGHUP swap prep |
 | `scripts/test_freedmr_cfg_to_yaml.py` | 5 | Legacy cfg → YAML |
 
 ## Examples (copy-paste)
