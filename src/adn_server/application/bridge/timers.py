@@ -31,7 +31,7 @@ class BridgeTimerMixin:
             if bridge_key not in bridges:
                 continue
             bridge_used = False
-            is_special_tg = is_special_tg(bridge_key)
+            special_tg = is_special_tg(bridge_key)
 
             for sys_entry in entries:
                 system_name = sys_entry.get("SYSTEM", "")
@@ -43,7 +43,7 @@ class BridgeTimerMixin:
                 is_dynamic = bridge_key[0:1] != "#" and to_type != "STAT"
                 is_obp = sys_config.get("MODE") == "OPENBRIDGE"
 
-                if not is_single_mode and is_dynamic and not is_obp and not is_special_tg:
+                if not is_single_mode and is_dynamic and not is_obp and not special_tg:
                     if to_type == "ON":
                         if active:
                             bridge_used = True

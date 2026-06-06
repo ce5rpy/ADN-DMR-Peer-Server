@@ -7,7 +7,6 @@ from __future__ import annotations
 
 import logging
 from hashlib import blake2b
-from typing import Any
 
 from ...domain import HBPF_SLT_VTERM, STREAM_TO, int_id
 

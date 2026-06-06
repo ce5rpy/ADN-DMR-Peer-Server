@@ -13,7 +13,7 @@ from typing import Any
 
 from ...domain.dmr import decode
 from ...domain.dmr.const import LC_OPT
-from ...domain import HBPF_DATA_SYNC, HBPF_SLT_VHEAD, HBPF_SLT_VTERM, bytes_3, int_id
+from ...domain import HBPF_DATA_SYNC, HBPF_SLT_VHEAD, int_id
 
 logger = logging.getLogger(__name__)
 

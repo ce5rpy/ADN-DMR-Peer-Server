@@ -9,8 +9,8 @@ import pytest
 from tests.harness.deterministic import DeterministicScenario, PacketSpec
 from tests.harness.playback_helpers import FakePlaybackProtocol, install_reactor_capture, send_playback
 
-from adn_server.application.playback_use_cases import PlaybackUseCases, _PACKET_INTERVAL_S
-from adn_server.domain import bytes_3, bytes_4
+from adn_server.application.playback_use_cases import PlaybackUseCases
+from adn_server.domain import bytes_4
 
 
 def _long_voice_recording(
