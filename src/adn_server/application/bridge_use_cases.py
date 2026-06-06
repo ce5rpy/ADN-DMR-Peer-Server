@@ -2441,17 +2441,6 @@ class BridgeUseCases:
         # a table that contains a matching ACTIVE source row (not a flat merge of TG + #TG only).
         dst_id_b = dst_id if isinstance(dst_id, bytes) and len(dst_id) >= 3 else bytes_3(dst_int)
 
-        def _row_is_active_source(row: dict[str, Any]) -> bool:
-            return bool(
-                row.get("SYSTEM") == system_name
-                and row.get("TS") == bridge_match_slot
-                and row.get("ACTIVE")
-                and (
-                    row.get("TGID") == dst_id_b
-                    or int_id(row.get("TGID") or b"\x00\x00\x00") == dst_int
-                )
-            )
-
         if source_is_obp:
             self._ensure_obp_source_for_tg(system_name, bridge_key, dst_id_b, dst_int)
             bridges = self._router.get_bridges()
@@ -2471,11 +2460,15 @@ class BridgeUseCases:
                 obp_hops if obp_use_parsed else b"",
             ):
                 return
-        has_source = any(_row_is_active_source(e) for elist in bridges.values() for e in elist)
+        has_source = bool(
+            self._router.bridge_tables_with_active_source(system_name, bridge_match_slot, dst_int)
+        )
         if not has_source and systems_cfg.get(system_name, {}).get("MODE") == "MASTER":
             self.options_config_for_system(system_name)
             bridges = self._router.get_bridges()
-            has_source = any(_row_is_active_source(e) for elist in bridges.values() for e in elist)
+            has_source = bool(
+                self._router.bridge_tables_with_active_source(system_name, bridge_match_slot, dst_int)
+            )
         # Do not call make_single_bridge here for 9990–9999 when BRIDGES["9990"] already exists:
         # make_single_bridge replaces the whole table and only sets the source MASTER ACTIVE; every
         # other system (including ECHO with TO_TYPE NONE) becomes ACTIVE False — to_target then has
@@ -2579,12 +2572,13 @@ class BridgeUseCases:
         # pass; dedupe (SYSTEM, TS) for OpenBridge targets so the same leg is not sent twice per packet.
         sys_ignore_obp: set[tuple[str, int]] = set()
         forwarded = []
-        for _bridge_table_name, _bridge_rows in list(bridges.items()):
+        for _bridge_table_name in self._router.bridge_tables_with_active_source(
+            system_name, bridge_match_slot, dst_int
+        ):
             # Legacy: routerOBP/routerHBP to_target — if BRIDGES[_bridge] was removed mid-routing, skip
             if _bridge_table_name not in bridges:
                 continue
-            if not any(_row_is_active_source(r) for r in _bridge_rows):
-                continue
+            _bridge_rows = bridges[_bridge_table_name]
             for entry in _bridge_rows:
                 if entry.get("SYSTEM") == system_name:
                     continue
