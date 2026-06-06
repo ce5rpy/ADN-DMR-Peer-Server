@@ -65,6 +65,7 @@ nav:
       - Development:
           - Architecture: server/development/architecture.md
           - Behaviour and timers: server/development/behaviour-and-timers.md
+          - Testing: server/development/testing.md
       - Contributing:
           - Translations: server/contributing/translations.md
   - Monitor:

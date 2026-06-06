@@ -1,0 +1,138 @@
+"""Parrot re-key and playback packet prep."""
+
+from __future__ import annotations
+
+from unittest.mock import patch
+
+import pytest
+
+from tests.harness.deterministic import DeterministicScenario, PacketSpec
+from tests.harness.playback_helpers import FakePlaybackProtocol, install_reactor_capture, send_playback
+
+from adn_server.application.playback_use_cases import PlaybackUseCases, _PACKET_INTERVAL_S
+from adn_server.domain import bytes_3, bytes_4
+
+
+def _long_voice_recording(
+    base: PacketSpec,
+    *,
+    burst_count: int,
+) -> list[bytes]:
+    """Simulate MMDVM seq byte wrapping (1..255, 0, 1..) over a long QSO."""
+    recorded = [DeterministicScenario.voice_head_spec(base).data()]
+    for i in range(1, burst_count + 1):
+        recorded.append(
+            DeterministicScenario.voice_burst_spec(
+                base,
+                seq=i & 0xFF,
+                dtype_vseq=((i - 1) % 4) + 1,
+            ).data()
+        )
+    recorded.append(DeterministicScenario.voice_term_spec(base, seq=(burst_count + 1) & 0xFF).data())
+    return recorded
+
+
+@pytest.mark.behavior
+def test_prepare_playback_preserves_source_seq_past_255_packets() -> None:
+    """Regression b0578fb: renumbering 1..255 duplicates seq ~15–30s; MMDVMHost drops audio."""
+    pb = PlaybackUseCases("ECHO")
+    base = PacketSpec(dst_id=9990, stream_id=0x55555555, slot=2)
+    recorded = _long_voice_recording(base, burst_count=500)
+
+    out = pb._prepare_playback_packets(recorded)
+
+    assert len(out) == len(recorded)
+    playback_sid = out[0][16:20]
+    for src, replay in zip(recorded, out):
+        assert replay[4] == src[4], (
+            f"playback must keep source seq byte 0x{src[4]:02x}, got 0x{replay[4]:02x}"
+        )
+        assert replay[16:20] == playback_sid
+    # After ~255 voice bursts (~15s), buggy renumber wraps to seq=1 while source has seq=0.
+    assert recorded[256][4] == 0
+    assert out[256][4] == 0
+
+
+@pytest.mark.behavior
+def test_start_playback_sends_preserved_seq_over_30s_recording() -> None:
+    """End-to-end: ~500 bursts @ 60ms ≈ 30s; replay seq on wire must match recording."""
+    proto = FakePlaybackProtocol()
+    pb = PlaybackUseCases("ECHO", get_protocol=lambda: proto)
+    base = PacketSpec(dst_id=9990, stream_id=0x66666666, slot=2)
+    burst_count = 500
+    recorded = _long_voice_recording(base, burst_count=burst_count)
+    mock_reactor, scheduled = install_reactor_capture()
+
+    with patch("adn_server.application.playback_use_cases.reactor", mock_reactor):
+        pb._start_playback(
+            proto,
+            recorded,
+            bytes_3(base.rf_src),
+            bytes_4(base.peer_id),
+            bytes_3(base.dst_id),
+            2,
+            burst_count * _PACKET_INTERVAL_S,
+        )
+        while scheduled:
+            _delay, fn, args = scheduled.pop(0)
+            fn(*args)
+
+    assert len(proto.sent) == len(recorded)
+    for src, sent in zip(recorded, proto.sent):
+        assert sent[4] == src[4]
+
+
+def test_recording_rekey_does_not_store_second_vhead() -> None:
+    pb = PlaybackUseCases("ECHO", get_protocol=lambda: FakePlaybackProtocol())
+    base = PacketSpec(dst_id=9990, stream_id=0x11111111, slot=2)
+    rekey = PacketSpec(dst_id=9990, stream_id=0x22222222, slot=2)
+    mock_reactor, _scheduled = install_reactor_capture()
+
+    with patch("adn_server.application.playback_use_cases.reactor", mock_reactor):
+        with patch("adn_server.application.playback_use_cases.time") as mock_time:
+            mock_time.side_effect = [100.0, 100.1, 100.2, 100.3]
+            send_playback(pb, "ECHO", DeterministicScenario.voice_head_spec(base))
+            send_playback(
+                pb, "ECHO", DeterministicScenario.voice_burst_spec(base, seq=1, dtype_vseq=1),
+            )
+            send_playback(pb, "ECHO", DeterministicScenario.voice_head_spec(rekey))
+            send_playback(
+                pb, "ECHO", DeterministicScenario.voice_burst_spec(rekey, seq=2, dtype_vseq=2),
+            )
+
+    vheads = sum(
+        1
+        for pkt in pb.CALL_DATA
+        if len(pkt) >= 16 and (pkt[15] & 0xF) == 1 and ((pkt[15] & 0x30) >> 4) == 2
+    )
+    assert vheads == 1
+    assert pb._record_stream == rekey.data()[16:20]
+
+
+def test_prepare_playback_skips_mid_call_vhead_and_preserves_seq() -> None:
+    pb = PlaybackUseCases("ECHO")
+    base = PacketSpec(dst_id=9990, stream_id=0x33333333, slot=2)
+    rekey = PacketSpec(dst_id=9990, stream_id=0x44444444, slot=2)
+    recorded = [
+        DeterministicScenario.voice_head_spec(base).data(),
+        DeterministicScenario.voice_burst_spec(base, seq=1, dtype_vseq=1).data(),
+        DeterministicScenario.voice_head_spec(rekey).data(),
+        DeterministicScenario.voice_burst_spec(rekey, seq=2, dtype_vseq=2).data(),
+        DeterministicScenario.voice_term_spec(rekey, seq=3).data(),
+    ]
+
+    out = pb._prepare_playback_packets(recorded)
+
+    assert len(out) == 4
+    # Mid-call VHEAD (recorded[2]) dropped; source seq preserved (legacy playback.py).
+    assert out[0][4] == recorded[0][4]
+    assert out[1][4] == recorded[1][4]
+    assert out[2][4] == recorded[3][4]
+    assert out[3][4] == recorded[4][4]
+    mid_vheads = sum(
+        1
+        for pkt in out[1:]
+        if len(pkt) >= 16 and (pkt[15] & 0xF) == 1 and ((pkt[15] & 0x30) >> 4) == 2
+    )
+    assert mid_vheads == 0
+    assert out[0][16:20] == out[-1][16:20]

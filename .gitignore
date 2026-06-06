@@ -9,8 +9,8 @@ adn-voice.yaml
 *.local.yaml
 *.local.yml
 
-# Local/helper scripts (keep scripts out of git)
-scripts/
+# Local/helper scripts (repo root only; not tests/scripts/)
+/scripts/
 
 # Env and secrets
 .env

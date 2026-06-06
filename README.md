@@ -43,6 +43,15 @@ Use the same `python3` you use for the project (e.g. pyenv’s `3.11.8`). Previe
 
 Output: **`site/en/`** and **`site/es/`** under gitignored **`site/`**.
 
+## Tests
+
+```bash
+python3 -m pip install -e ".[dev]"
+python3 -m pytest tests/ -q
+```
+
+See [Testing](docs/en/server/development/testing.md) in the docs site. File index: [`tests/README.md`](tests/README.md).
+
 ## Run
 
 ```bash
