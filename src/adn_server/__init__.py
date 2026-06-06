@@ -36,3 +36,5 @@
 ###############################################################################
 
 """ADN DMR Peer Server — conference bridge (rewrite of bridge_master)."""
+
+__version__ = "1.0.0"

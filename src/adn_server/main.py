@@ -159,9 +159,12 @@ def _looping_errback(logger: logging.Logger, failure):
 
 
 def main() -> None:
+    from . import __version__
+
     parser = argparse.ArgumentParser(description="ADN DMR Peer Server")
     parser.add_argument("-c", "--config", dest="CONFIG_FILE", default=None, help="Path to adn-server.yaml")
     parser.add_argument("--logging", dest="LOG_LEVEL", default=None, help="Override log level")
+    parser.add_argument("--version", action="version", version=f"adn-server {__version__}")
     args = parser.parse_args()
 
     project_root = os.path.dirname(os.path.abspath(__file__))

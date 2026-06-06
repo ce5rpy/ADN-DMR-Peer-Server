@@ -1,5 +1,7 @@
 # ADN DMR Peer Server
 
+**Version 1.0.0** — first stable release (SemVer). Compatible with **adn-monitor 1.0.0**.
+
 ADN DMR conference bridge server. Configuration is YAML; the codebase follows clean architecture (domain, application, infrastructure).
 
 ## License
