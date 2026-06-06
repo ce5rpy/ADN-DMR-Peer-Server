@@ -270,11 +270,12 @@ def try_buffer_ta_from_voice_fragments(
 ) -> bool:
     """Reassemble embedded LC across voice bursts B–E (vseq 1–4) and store if it is a TA.
 
-    ``dmr_utils3.bptc.decode_emblc`` is correct on properly FEC-encoded input (the encode
-    helper is the buggy one), so a TA sent by a real radio decodes losslessly here.
+    ``adn_server.domain.dmr.bptc.decode_emblc`` is correct on properly FEC-encoded input (the encode
+    helper had an upstream bit-25 bug, fixed in our vendored copy), so a TA sent by a real radio
+    decodes losslessly here.
     Returns True when a TA block was decoded and stored.
     """
-    from dmr_utils3 import bptc, decode
+    from .dmr import bptc, decode
 
     if vseq not in (1, 2, 3, 4) or len(dmrpkt) < 33:
         return False

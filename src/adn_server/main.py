@@ -74,7 +74,7 @@ from .infrastructure.config_normalizer import (
     normalize_peer_config as _normalize_peer_config,
 )
 from .infrastructure.config_reload import BindSpec, reload_server_config
-from .infrastructure.dmr_bptc import encode_emblc
+from .domain.dmr.bptc import encode_emblc
 from .infrastructure.persistence import PickleSubMapStore
 from .infrastructure.persistence.alias_loader import DefaultAliasLoader
 from .infrastructure.persistence.keys_store import JsonKeysStore

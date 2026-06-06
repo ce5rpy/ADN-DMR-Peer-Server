@@ -1,7 +1,7 @@
 # ADN DMR Peer Server - Talker Alias embedded LC wire encoding
 # Copyright (C) 2026  Rodrigo Pérez, CE5RPY <ce5rpy@qmd.cl>
 
-"""Build embedded-LC burst dicts for Talker Alias (uses domain TA rules + ``dmr_bptc``)."""
+"""Build embedded-LC burst dicts for Talker Alias (uses domain TA rules + domain DMR BPTC)."""
 
 from __future__ import annotations
 
@@ -18,7 +18,7 @@ from ..domain.talker_alias import (
     talker_alias_decode_complete,
     talker_alias_lc_bytes,
 )
-from .dmr_bptc import encode_emblc
+from ..domain.dmr.bptc import encode_emblc
 
 if TYPE_CHECKING:
     from bitarray import bitarray

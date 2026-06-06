@@ -37,8 +37,8 @@ from hmac import new as hmac_new
 from random import randint
 from typing import Any, Callable
 
-from dmr_utils3 import decode
-from dmr_utils3.const import LC_OPT
+from ...domain.dmr import decode
+from ...domain.dmr.const import LC_OPT
 from twisted.internet import reactor, task
 from twisted.internet.protocol import DatagramProtocol
 

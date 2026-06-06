@@ -35,8 +35,8 @@ from time import perf_counter
 from typing import Any
 
 from bitarray import bitarray
-from dmr_utils3 import bptc, decode
-from dmr_utils3.const import LC_OPT
+from ..domain.dmr import bptc, decode
+from ..domain.dmr.const import LC_OPT
 
 from ..domain import HBPF_DATA_SYNC, HBPF_SLT_VHEAD, HBPF_SLT_VTERM, STREAM_TO, bytes_3, bytes_4, int_id
 from ..domain.talker_alias import DMRA_BLOCK_COUNT
