@@ -26,6 +26,12 @@ docs = ["mkdocs>=1.6", "mkdocs-material>=9.5", "pymdown-extensions>=10.3"]
 [tool.setuptools.packages.find]
 where = ["src"]
 
+[tool.pytest.ini_options]
+markers = [
+    "behavior: integration-style behavior tests (P0/P1)",
+    "smoke: quick routing smoke tests",
+]
+
 [tool.ruff.lint.per-file-ignores]
 # Entrypoints adjust sys.path before importing the package (intentional E402).
 "src/adn_server/main.py" = ["E402"]
