@@ -322,7 +322,7 @@ def main() -> None:
         config,
         send_to_system=send_to_system,
         get_protocols=lambda: protocols,
-        report_factory=report_factory,
+        reporting=reporting_use_cases,
         on_bridge_deactivated=lambda sys: reactor.callInThread(voice_use_cases.disconnected_voice, sys),
         send_bcsq=send_bcsq,
         send_dmra_to_system=send_dmra_to_system,
@@ -345,10 +345,8 @@ def main() -> None:
     # Reporting loop (REPORT_INTERVAL) — same logs as legacy after send_config/send_bridge
     def reporting_loop():
         logger.debug("(REPORT) Periodic reporting loop started")
-        report_factory.set_systems(config.get("SYSTEMS", {}))
-        report_factory.set_bridges(bridge_router.get_bridges())
-        report_factory.send_config()
-        report_factory.send_bridge()
+        reporting_use_cases.send_config(config.get("SYSTEMS", {}))
+        reporting_use_cases.send_bridge(bridge_router.get_bridges())
         # Legacy: peer count and SUB_MAP count
         systems_with_peers = sum(1 for s in config.get("SYSTEMS", {}) if config.get("SYSTEMS", {}).get(s, {}).get("PEERS"))
         logger.info("(REPORT) %s systems have at least one peer", systems_with_peers)
@@ -360,16 +358,14 @@ def main() -> None:
     # LoopingCalls (legacy intervals)
     def _rule_timer_in_thread():
         bridge_use_cases.rule_timer_loop()
-        reactor.callFromThread(report_factory.set_bridges, bridge_router.get_bridges())
-        reactor.callFromThread(report_factory.send_bridge)
+        reactor.callFromThread(reporting_use_cases.send_bridge, bridge_router.get_bridges())
     task.LoopingCall(lambda: threads.deferToThread(_rule_timer_in_thread)).start(52).addErrback(_looping_errback, logger)
     task.LoopingCall(bridge_use_cases.stream_trimmer_loop).start(5).addErrback(_looping_errback, logger)
     task.LoopingCall(bridge_use_cases.bridge_reset_loop).start(6).addErrback(_looping_errback, logger)
     if config.get("GLOBAL", {}).get("GEN_STAT_BRIDGES", False):
         def _stat_trimmer_in_thread():
             bridge_use_cases.stat_trimmer_loop()
-            reactor.callFromThread(report_factory.set_bridges, bridge_router.get_bridges())
-            reactor.callFromThread(report_factory.send_bridge)
+            reactor.callFromThread(reporting_use_cases.send_bridge, bridge_router.get_bridges())
         task.LoopingCall(lambda: threads.deferToThread(_stat_trimmer_in_thread)).start(303).addErrback(_looping_errback, logger)
 
     # KA Reporting (legacy kaReporting, 60s)
@@ -378,7 +374,7 @@ def main() -> None:
     # bridgeDebug (legacy 66s) — remove invalid bridges, fix >1 active dial per MASTER
     if config.get("GLOBAL", {}).get("DEBUG_BRIDGES"):
         task.LoopingCall(
-            lambda: (bridge_use_cases.bridge_debug_loop(), report_factory.set_bridges(bridge_router.get_bridges()), report_factory.send_bridge())
+            lambda: (bridge_use_cases.bridge_debug_loop(), reporting_use_cases.send_bridge(bridge_router.get_bridges()))
         ).start(66).addErrback(_looping_errback, logger)
 
     # Alias reload (STALE_DAYS -> seconds)
@@ -502,10 +498,8 @@ def main() -> None:
             port.stopListening()
 
     def _on_config_systems_changed() -> None:
-        report_factory.set_systems(config.get("SYSTEMS", {}))
-        report_factory.set_bridges(bridge_router.get_bridges())
-        report_factory.send_config()
-        report_factory.send_bridge()
+        reporting_use_cases.send_config(config.get("SYSTEMS", {}))
+        reporting_use_cases.send_bridge(bridge_router.get_bridges())
         user_passwords_loader.load(config)
 
     def _do_config_reload() -> None:

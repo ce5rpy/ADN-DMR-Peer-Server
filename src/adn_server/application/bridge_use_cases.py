@@ -34,6 +34,8 @@ from hashlib import blake2b
 from time import perf_counter
 from typing import Any
 
+from .reporting_use_cases import ReportingUseCases
+
 from bitarray import bitarray
 from ..domain.dmr import bptc, decode
 from ..domain.dmr.const import LC_OPT
@@ -90,7 +92,7 @@ class BridgeUseCases:
         config: dict[str, Any],
         send_to_system: Any = None,
         get_protocols: Any = None,
-        report_factory: Any = None,
+        reporting: ReportingUseCases | None = None,
         on_bridge_deactivated: Any = None,
         send_bcsq: Any = None,
         send_dmra_to_system: Any = None,
@@ -103,7 +105,7 @@ class BridgeUseCases:
         self._config = config
         self._send_to_system = send_to_system  # (system_name, packet, **kwargs) -> None
         self._get_protocols = get_protocols  # () -> dict[str, protocol]
-        self._report_factory = report_factory
+        self._reporting = reporting
         self._on_bridge_deactivated = on_bridge_deactivated  # (system_name: str) -> None; legacy disconnectedVoice
         self._send_bcsq = send_bcsq  # (system_name, tgid, stream_id) -> None; legacy OBP send_bcsq from router
         self._send_dmra_to_system = send_dmra_to_system
@@ -115,6 +117,20 @@ class BridgeUseCases:
         self._talker_alias = TalkerAliasUseCases(config, ta_emblc_encoder=ta_emblc_encoder)
         # (source_system, stream_id) -> {rf_src, peer, targets, timer}
         self._both_ta_wait: dict[tuple[str, bytes], dict[str, Any]] = {}
+
+    def _send_bridge_event(self, event: str | bytes) -> bool:
+        """Send BRDG_EVENT via ReportingUseCases when REPORT is enabled."""
+        if not self._config.get("REPORTS", {}).get("REPORT", True):
+            return False
+        if not self._reporting:
+            return False
+        if isinstance(event, bytes):
+            event = event.decode("utf-8", "ignore")
+        try:
+            self._reporting.send_bridge_event(event)
+            return True
+        except Exception:
+            return False
 
     def _get_stream_dmra_blocks(self, source_system: str, stream_id: bytes) -> dict[int, bytes] | None:
         if not self._get_dmra_blocks:
@@ -730,27 +746,22 @@ class BridgeUseCases:
             return False
         if not bool(self._config.get("REPORTS", {}).get("REPORT", True)):
             return False
-        report = self._report_factory
-        if not report or not hasattr(report, "send_bridge_event"):
-            return False
         rfs = tst.get("RFS", b"\x00\x00\x00")
         peer = tst.get("RX_PEER", b"\x00\x00\x00\x00")
         tgid_b = tst.get("TGID", b"\x00\x00\x00")
         start = tst.get("START", now)
         duration = max(0.0, now - start)
-        try:
-            report.send_bridge_event(
-                "GROUP VOICE,END,TX,{},{},{},{},{},{},{:.2f}".format(
-                    tgt_name,
-                    int_id(stream_id),
-                    int_id(peer),
-                    int_id(rfs),
-                    1,
-                    int_id(tgid_b),
-                    duration,
-                )
+        if not self._send_bridge_event(
+            "GROUP VOICE,END,TX,{},{},{},{},{},{},{:.2f}".format(
+                tgt_name,
+                int_id(stream_id),
+                int_id(peer),
+                int_id(rfs),
+                1,
+                int_id(tgid_b),
+                duration,
             )
-        except Exception:
+        ):
             return False
         tst["_end_tx_sent"] = True
         return True
@@ -806,9 +817,6 @@ class BridgeUseCases:
         self._obp_emit_end_tx_forward_leg(system_name, stream_id, tst, time.time())
 
     def flush_monitor_events_for_system(self, system_name: str, protocol: Any) -> None:
-        report = self._report_factory
-        if not report or not hasattr(report, "send_bridge_event"):
-            return
         if not self._config.get("REPORTS", {}).get("REPORT", True):
             return
         status = getattr(protocol, "STATUS", None)
@@ -823,7 +831,7 @@ class BridgeUseCases:
                     continue
                 trx = "TX" if "H_LC" in st else "RX"
                 start = st.get("START", now)
-                report.send_bridge_event(
+                self._send_bridge_event(
                     "GROUP VOICE,END,{},{},{},{},{},{},{},{:.2f}".format(
                         trx, system_name, int_id(stream_id),
                         int_id(st.get("RX_PEER", b"\x00\x00\x00\x00")),
@@ -847,7 +855,7 @@ class BridgeUseCases:
                 sid = slot_st.get(sid_key, b"\x00")
                 if sid in (b"\x00", b"") or slot_st.get(type_key) == HBPF_SLT_VTERM:
                     continue
-                report.send_bridge_event(
+                self._send_bridge_event(
                     "GROUP VOICE,END,{},{},{},{},{},{},{},{:.2f}".format(
                         trx, system_name, int_id(sid),
                         int_id(slot_st.get(peer_key, b"\x00\x00\x00\x00")),
@@ -863,7 +871,6 @@ class BridgeUseCases:
         protocols = self._get_protocols() if self._get_protocols else {}
         systems_cfg = self._config.get("SYSTEMS", {})
         now = time.time()
-        report = self._report_factory
         for system_name, protocol in protocols.items():
             if not getattr(protocol, "STATUS", None):
                 continue
@@ -894,20 +901,16 @@ class BridgeUseCases:
                             continue
                         # Stage 1: 5s idle, not yet timed out → mark _to, emit END
                         if "_to" not in st and "_fin" not in st and last < now - 5:
-                            try:
-                                rfs = st.get("RFS", b"\x00\x00\x00")
-                                peer = st.get("RX_PEER", b"\x00\x00\x00\x00")
-                                tgid = st.get("TGID", b"\x00\x00\x00")
-                                start = st.get("START", now)
-                                duration = max(0.0, last - start)
-                                if report and hasattr(report, "send_bridge_event"):
-                                    report.send_bridge_event(
-                                        "GROUP VOICE,END,RX,{},{},{},{},{},{},{:.2f}".format(
-                                            system_name, int_id(stream_id), int_id(peer), int_id(rfs), 1, int_id(tgid), duration
-                                        )
-                                    )
-                            except Exception:
-                                st["LAST"] = now
+                            rfs = st.get("RFS", b"\x00\x00\x00")
+                            peer = st.get("RX_PEER", b"\x00\x00\x00\x00")
+                            tgid = st.get("TGID", b"\x00\x00\x00")
+                            start = st.get("START", now)
+                            duration = max(0.0, last - start)
+                            self._send_bridge_event(
+                                "GROUP VOICE,END,RX,{},{},{},{},{},{},{:.2f}".format(
+                                    system_name, int_id(stream_id), int_id(peer), int_id(rfs), 1, int_id(tgid), duration
+                                )
+                            )
                             st["_to"] = True
                             # Legacy trimmer emits END,RX here only; forward legs waited ~180s.
                             # END,TX now (END_TX_FORWARD): same event as legacy VTERM path (~2039).
@@ -934,17 +937,13 @@ class BridgeUseCases:
                         system_name, int_id(_slot.get("RX_STREAM_ID", b"")), int_id(_slot.get("RX_RFS", b"")),
                         int_id(_slot.get("RX_TGID", b"")), slot, _slot.get("RX_TIME", 0) - _slot.get("RX_START", 0),
                     )
-                    if report and hasattr(report, "send_bridge_event"):
-                        try:
-                            report.send_bridge_event(
-                                "GROUP VOICE,END,RX,{},{},{},{},{},{},{:.2f}".format(
-                                    system_name, int_id(_slot.get("RX_STREAM_ID", b"")), int_id(_slot.get("RX_PEER", b"")),
-                                    int_id(_slot.get("RX_RFS", b"")), slot, int_id(_slot.get("RX_TGID", b"")),
-                                    _slot.get("RX_TIME", 0) - _slot.get("RX_START", 0),
-                                )
-                            )
-                        except Exception:
-                            pass
+                    self._send_bridge_event(
+                        "GROUP VOICE,END,RX,{},{},{},{},{},{},{:.2f}".format(
+                            system_name, int_id(_slot.get("RX_STREAM_ID", b"")), int_id(_slot.get("RX_PEER", b"")),
+                            int_id(_slot.get("RX_RFS", b"")), slot, int_id(_slot.get("RX_TGID", b"")),
+                            _slot.get("RX_TIME", 0) - _slot.get("RX_START", 0),
+                        )
+                    )
                 if _slot.get("RX_TIME", 0) < now - 60:
                     _slot["RX_STREAM_ID"] = b"\x00"
                 if _slot.get("TX_TYPE") != HBPF_SLT_VTERM and _slot.get("TX_TIME", 0) < now - 5:
@@ -954,17 +953,13 @@ class BridgeUseCases:
                         system_name, int_id(_slot.get("TX_STREAM_ID", b"")), int_id(_slot.get("TX_RFS", b"")),
                         int_id(_slot.get("TX_TGID", b"")), slot, _slot.get("TX_TIME", 0) - _slot.get("TX_START", 0),
                     )
-                    if report and hasattr(report, "send_bridge_event"):
-                        try:
-                            report.send_bridge_event(
-                                "GROUP VOICE,END,TX,{},{},{},{},{},{},{:.2f}".format(
-                                    system_name, int_id(_slot.get("TX_STREAM_ID", b"")), int_id(_slot.get("TX_PEER", b"")),
-                                    int_id(_slot.get("TX_RFS", b"")), slot, int_id(_slot.get("TX_TGID", b"")),
-                                    _slot.get("TX_TIME", 0) - _slot.get("TX_START", 0),
-                                )
-                            )
-                        except Exception:
-                            pass
+                    self._send_bridge_event(
+                        "GROUP VOICE,END,TX,{},{},{},{},{},{},{:.2f}".format(
+                            system_name, int_id(_slot.get("TX_STREAM_ID", b"")), int_id(_slot.get("TX_PEER", b"")),
+                            int_id(_slot.get("TX_RFS", b"")), slot, int_id(_slot.get("TX_TGID", b"")),
+                            _slot.get("TX_TIME", 0) - _slot.get("TX_START", 0),
+                        )
+                    )
             # -- Intentional divergence from legacy --
             # Legacy bridge_master.py:602 only iterates `range(1,3)` in the HBP branch,
             # so any STATUS[stream_id] entry seeded by voice_use_cases (announcements
@@ -2014,15 +2009,12 @@ class BridgeUseCases:
                 _inthops,
             )
             # INGRESS: debug-only (all OBP legs); monitor logs it but does not update OPENBRIDGES chips until START.
-            if _do_report and self._report_factory and hasattr(self._report_factory, "send_bridge_event"):
-                try:
-                    self._report_factory.send_bridge_event(
-                        "GROUP VOICE,INGRESS,RX,{},{},{},{},{},{}".format(
-                            system_name, int_id(stream_id), int_id(peer_id), int_id(rf_src), slot, int_id(dst_id)
-                        )
+            if _do_report:
+                self._send_bridge_event(
+                    "GROUP VOICE,INGRESS,RX,{},{},{},{},{},{}".format(
+                        system_name, int_id(stream_id), int_id(peer_id), int_id(rf_src), slot, int_id(dst_id)
                     )
-                except Exception:
-                    pass
+                )
         else:
             st = status[stream_id]
             if "packets" in st:
@@ -2109,21 +2101,18 @@ class BridgeUseCases:
                         call_duration,
                     )
                     st["LOOPLOG"] = True
-                    if _do_report and self._report_factory and hasattr(self._report_factory, "send_bridge_event"):
-                        try:
-                            self._report_factory.send_bridge_event(
-                                "GROUP VOICE,END,TX,{},{},{},{},{},{},{:.2f}".format(
-                                    system_name,
-                                    int_id(stream_id),
-                                    int_id(peer_id),
-                                    int_id(rf_src),
-                                    slot,
-                                    int_id(dst_id),
-                                    max(0.0, pkt_time - st.get("START", pkt_time)),
-                                )
+                    if _do_report:
+                        self._send_bridge_event(
+                            "GROUP VOICE,END,TX,{},{},{},{},{},{},{:.2f}".format(
+                                system_name,
+                                int_id(stream_id),
+                                int_id(peer_id),
+                                int_id(rf_src),
+                                slot,
+                                int_id(dst_id),
+                                max(0.0, pkt_time - st.get("START", pkt_time)),
                             )
-                        except Exception:
-                            pass
+                        )
                 st["LAST"] = pkt_time
                 if systems_cfg.get(system_name, {}).get("ENHANCED_OBP") and self._send_bcsq and "_bcsq" not in st:
                     self._send_bcsq(system_name, dst_id, stream_id)
@@ -2207,17 +2196,14 @@ class BridgeUseCases:
             st["lastData"] = data
 
         # Canonical START,RX for monitor CTABLE (OpenBridge / Linked / Active QSO) after loop win; INGRESS was debug-only.
-        if _do_report and self._report_factory and hasattr(self._report_factory, "send_bridge_event"):
+        if _do_report:
             if not st.get("_monitor_canonical_rx"):
-                try:
-                    self._report_factory.send_bridge_event(
-                        "GROUP VOICE,START,RX,{},{},{},{},{},{}".format(
-                            system_name, int_id(stream_id), int_id(peer_id), int_id(rf_src), slot, int_id(dst_id)
-                        )
+                self._send_bridge_event(
+                    "GROUP VOICE,START,RX,{},{},{},{},{},{}".format(
+                        system_name, int_id(stream_id), int_id(peer_id), int_id(rf_src), slot, int_id(dst_id)
                     )
-                    st["_monitor_canonical_rx"] = True
-                except Exception:
-                    pass
+                )
+                st["_monitor_canonical_rx"] = True
 
         st = status[stream_id]
         st["crcs"].add(_pkt_crc)
@@ -2503,36 +2489,32 @@ class BridgeUseCases:
             return True
 
         # Legacy bridge.py: BRDG_EVENT (OBP group/vcsbk START/END handled in _obp_group_voice_router_obp / post-forward VTERM)
-        if self._report_factory and hasattr(self._report_factory, "send_bridge_event"):
-            try:
-                _obp_grp = source_is_obp and call_type in ("group", "vcsbk")
-                if frame_type == HBPF_DATA_SYNC and dtype_vseq == HBPF_SLT_VHEAD:
-                    if not _obp_grp:
-                        self._report_factory.send_bridge_event(
-                            "GROUP VOICE,START,RX,{},{},{},{},{},{}".format(
-                                system_name, int_id(stream_id), int_id(peer_id), int_id(rf_src), slot, int_id(dst_id)
-                            )
-                        )
-                elif frame_type == HBPF_DATA_SYNC and dtype_vseq == HBPF_SLT_VTERM:
-                    if not _obp_grp:
-                        duration = 0.0
-                        protocols = self._get_protocols() if self._get_protocols else {}
-                        src_proto = protocols.get(system_name) if protocols else None
-                        if src_proto and getattr(src_proto, "STATUS", None):
-                            st = src_proto.STATUS
-                            ent = st.get(stream_id)
-                            start = ent.get("START") if isinstance(ent, dict) else None
-                            if start is None and slot in st:
-                                start = st.get(slot, {}).get("RX_START")
-                            if start is not None:
-                                duration = pkt_time - start
-                        self._report_factory.send_bridge_event(
-                            "GROUP VOICE,END,RX,{},{},{},{},{},{},{:.2f}".format(
-                                system_name, int_id(stream_id), int_id(peer_id), int_id(rf_src), slot, int_id(dst_id), duration
-                            )
-                        )
-            except Exception:
-                pass
+        _obp_grp = source_is_obp and call_type in ("group", "vcsbk")
+        if frame_type == HBPF_DATA_SYNC and dtype_vseq == HBPF_SLT_VHEAD:
+            if not _obp_grp:
+                self._send_bridge_event(
+                    "GROUP VOICE,START,RX,{},{},{},{},{},{}".format(
+                        system_name, int_id(stream_id), int_id(peer_id), int_id(rf_src), slot, int_id(dst_id)
+                    )
+                )
+        elif frame_type == HBPF_DATA_SYNC and dtype_vseq == HBPF_SLT_VTERM:
+            if not _obp_grp:
+                duration = 0.0
+                protocols = self._get_protocols() if self._get_protocols else {}
+                src_proto = protocols.get(system_name) if protocols else None
+                if src_proto and getattr(src_proto, "STATUS", None):
+                    st = src_proto.STATUS
+                    ent = st.get(stream_id)
+                    start = ent.get("START") if isinstance(ent, dict) else None
+                    if start is None and slot in st:
+                        start = st.get(slot, {}).get("RX_START")
+                    if start is not None:
+                        duration = pkt_time - start
+                self._send_bridge_event(
+                    "GROUP VOICE,END,RX,{},{},{},{},{},{},{:.2f}".format(
+                        system_name, int_id(stream_id), int_id(peer_id), int_id(rf_src), slot, int_id(dst_id), duration
+                    )
+                )
         # ── Exact port of legacy bridge.py routerOBP/routerHBP forwarding to targets ──
         pkt_time = time.time()
         dmrpkt = data[20:53] if len(data) >= 53 else b""
@@ -2674,15 +2656,11 @@ class BridgeUseCases:
                                 "(%s) Conference Bridge: %s, Call Bridged to OBP System: %s TS: %s, TGID: %s",
                                 system_name, _bridge_table_name, entry["SYSTEM"], entry.get("TS", 1), int_id(target_tgid),
                             )
-                            if self._report_factory and hasattr(self._report_factory, "send_bridge_event"):
-                                try:
-                                    self._report_factory.send_bridge_event(
-                                        "GROUP VOICE,START,TX,{},{},{},{},{},{}".format(
-                                            entry["SYSTEM"], int_id(stream_id), int_id(peer_id), int_id(rf_src), entry.get("TS", 1), int_id(target_tgid)
-                                        )
-                                    )
-                                except Exception:
-                                    pass
+                            self._send_bridge_event(
+                                "GROUP VOICE,START,TX,{},{},{},{},{},{}".format(
+                                    entry["SYSTEM"], int_id(stream_id), int_id(peer_id), int_id(rf_src), entry.get("TS", 1), int_id(target_tgid)
+                                )
+                            )
                         if "EMB_LC" not in _target_status[stream_id]:
                             try:
                                 dst_lc = source_lc[0:3] + target_tgid + rf_src
@@ -2714,16 +2692,12 @@ class BridgeUseCases:
                         elif frame_type == HBPF_DATA_SYNC and dtype_vseq == HBPF_SLT_VTERM:
                             dmrbits = _target_status[stream_id]["T_LC"][0:98] + dmrbits[98:166] + _target_status[stream_id]["T_LC"][98:197]
                             self._clear_talker_alias_embed(_target_status[stream_id])
-                            if self._report_factory and hasattr(self._report_factory, "send_bridge_event"):
-                                try:
-                                    call_duration = pkt_time - _target_status[stream_id].get("START", pkt_time)
-                                    self._report_factory.send_bridge_event(
-                                        "GROUP VOICE,END,TX,{},{},{},{},{},{},{:.2f}".format(
-                                            entry["SYSTEM"], int_id(stream_id), int_id(peer_id), int_id(rf_src), entry.get("TS", 1), int_id(target_tgid), call_duration
-                                        )
-                                    )
-                                except Exception:
-                                    pass
+                            call_duration = pkt_time - _target_status[stream_id].get("START", pkt_time)
+                            self._send_bridge_event(
+                                "GROUP VOICE,END,TX,{},{},{},{},{},{},{:.2f}".format(
+                                    entry["SYSTEM"], int_id(stream_id), int_id(peer_id), int_id(rf_src), entry.get("TS", 1), int_id(target_tgid), call_duration
+                                )
+                            )
                         elif dtype_vseq in (1, 2, 3, 4):
                             self._rewrite_embed_lc(
                                 dmrbits, _target_status[stream_id], dtype_vseq, "EMB_LC",
@@ -2807,15 +2781,11 @@ class BridgeUseCases:
                             "(%s) Conference Bridge: %s, Call Bridged to HBP System: %s TS: %s, TGID: %s",
                             system_name, _bridge_table_name, entry["SYSTEM"], entry_ts, int_id(entry_tgid_b),
                         )
-                        if self._report_factory and hasattr(self._report_factory, "send_bridge_event"):
-                            try:
-                                self._report_factory.send_bridge_event(
-                                    "GROUP VOICE,START,TX,{},{},{},{},{},{}".format(
-                                        entry["SYSTEM"], int_id(stream_id), int_id(peer_id), int_id(rf_src), entry_ts, int_id(entry_tgid_b)
-                                    )
-                                )
-                            except Exception:
-                                pass
+                        self._send_bridge_event(
+                            "GROUP VOICE,START,TX,{},{},{},{},{},{}".format(
+                                entry["SYSTEM"], int_id(stream_id), int_id(peer_id), int_id(rf_src), entry_ts, int_id(entry_tgid_b)
+                            )
+                        )
                         # First successful forward to HBP (may not be VHEAD if earlier frames were hangtime-blocked).
                         self._send_talker_alias_to_target(
                             system_name, entry["SYSTEM"], rf_src, stream_id, peer_id,
@@ -2836,16 +2806,12 @@ class BridgeUseCases:
                         dmrbits = _ts_st["TX_H_LC"][0:98] + dmrbits[98:166] + _ts_st["TX_H_LC"][98:197]
                     elif frame_type == HBPF_DATA_SYNC and dtype_vseq == HBPF_SLT_VTERM:
                         dmrbits = _ts_st["TX_T_LC"][0:98] + dmrbits[98:166] + _ts_st["TX_T_LC"][98:197]
-                        if self._report_factory and hasattr(self._report_factory, "send_bridge_event"):
-                            try:
-                                call_duration = pkt_time - _ts_st.get("TX_START", pkt_time)
-                                self._report_factory.send_bridge_event(
-                                    "GROUP VOICE,END,TX,{},{},{},{},{},{},{:.2f}".format(
-                                        entry["SYSTEM"], int_id(stream_id), int_id(peer_id), int_id(rf_src), entry_ts, int_id(entry_tgid_b), call_duration
-                                    )
-                                )
-                            except Exception:
-                                pass
+                        call_duration = pkt_time - _ts_st.get("TX_START", pkt_time)
+                        self._send_bridge_event(
+                            "GROUP VOICE,END,TX,{},{},{},{},{},{},{:.2f}".format(
+                                entry["SYSTEM"], int_id(stream_id), int_id(peer_id), int_id(rf_src), entry_ts, int_id(entry_tgid_b), call_duration
+                            )
+                        )
                     elif dtype_vseq in (1, 2, 3, 4):
                         self._rewrite_embed_lc(
                             dmrbits, _ts_st, dtype_vseq, "TX_EMB_LC",
@@ -2898,25 +2864,19 @@ class BridgeUseCases:
                     packet_rate,
                     loss_pct,
                 )
-                if self._config.get("REPORTS", {}).get("REPORT", True) and self._report_factory and hasattr(
-                    self._report_factory, "send_bridge_event"
-                ):
-                    try:
-                        self._report_factory.send_bridge_event(
-                            "GROUP VOICE,END,RX,{},{},{},{},{},{},{:.2f}".format(
-                                system_name,
-                                int_id(stream_id),
-                                int_id(peer_id),
-                                int_id(rf_src),
-                                slot,
-                                int_id(dst_id),
-                                call_duration,
-                            )
-                        )
-                        ost["_fin"] = True
-                        self._obp_emit_end_tx_for_forward_legs(stream_id, system_name, _end_t)
-                    except Exception:
-                        pass
+                self._send_bridge_event(
+                    "GROUP VOICE,END,RX,{},{},{},{},{},{},{:.2f}".format(
+                        system_name,
+                        int_id(stream_id),
+                        int_id(peer_id),
+                        int_id(rf_src),
+                        slot,
+                        int_id(dst_id),
+                        call_duration,
+                    )
+                )
+                ost["_fin"] = True
+                self._obp_emit_end_tx_for_forward_legs(stream_id, system_name, _end_t)
                 ost["lastSeq"] = False
         if forwarded:
             if frame_type == HBPF_DATA_SYNC and dtype_vseq == HBPF_SLT_VHEAD:
@@ -2975,15 +2935,11 @@ class BridgeUseCases:
             logger.warning("(%s) send_data_to_obp %s failed: %s", source_system, target, exc)
             return
         logger.debug("(%s) UNIT Data Bridged to OBP System: %s DST_ID: %s", source_system, target, int_id(dst_id))
-        if self._report_factory and hasattr(self._report_factory, "send_bridge_event"):
-            try:
-                self._report_factory.send_bridge_event(
-                    "UNIT DATA,DATA,TX,{},{},{},{},{},{}".format(
-                        target, int_id(stream_id), int_id(peer_id), int_id(rf_src), 1, int_id(dst_id),
-                    )
-                )
-            except Exception:
-                pass
+        self._send_bridge_event(
+            "UNIT DATA,DATA,TX,{},{},{},{},{},{}".format(
+                target, int_id(stream_id), int_id(peer_id), int_id(rf_src), 1, int_id(dst_id),
+            )
+        )
 
     def _send_data_to_hbp(
         self,
@@ -3006,15 +2962,11 @@ class BridgeUseCases:
             logger.warning("(%s) send_data_to_hbp %s failed: %s", source_system, d_system, exc)
             return
         logger.debug("(%s) UNIT Data Bridged to HBP System: %s DST_ID: %s", source_system, d_system, int_id(dst_id))
-        if self._report_factory and hasattr(self._report_factory, "send_bridge_event"):
-            try:
-                self._report_factory.send_bridge_event(
-                    "UNIT DATA,DATA,TX,{},{},{},{},{},{}".format(
-                        d_system, int_id(stream_id), int_id(peer_id), int_id(rf_src), 1, int_id(dst_id),
-                    )
-                )
-            except Exception:
-                pass
+        self._send_bridge_event(
+            "UNIT DATA,DATA,TX,{},{},{},{},{},{}".format(
+                d_system, int_id(stream_id), int_id(peer_id), int_id(rf_src), 1, int_id(dst_id),
+            )
+        )
 
     def _unit_data_received(
         self,
@@ -3149,17 +3101,13 @@ class BridgeUseCases:
                 system_name, int_id(stream_id), int_id(rf_src), int_id(peer_id), _int_dst_id, slot,
             )
 
-        if self._report_factory and hasattr(self._report_factory, "send_bridge_event"):
-            _dtype_labels = {3: "UNIT CSBK", 6: "UNIT DATA HEADER", 7: "UNIT VCSBK 1/2 DATA BLOCK", 8: "UNIT VCSBK 3/4 DATA BLOCK"}
-            _label = _dtype_labels.get(dtype_vseq, "UNIT DATA")
-            try:
-                self._report_factory.send_bridge_event(
-                    "{},DATA,RX,{},{},{},{},{},{}".format(
-                        _label, system_name, int_id(stream_id), int_id(peer_id), int_id(rf_src), slot, _int_dst_id,
-                    )
-                )
-            except Exception:
-                pass
+        _dtype_labels = {3: "UNIT CSBK", 6: "UNIT DATA HEADER", 7: "UNIT VCSBK 1/2 DATA BLOCK", 8: "UNIT VCSBK 3/4 DATA BLOCK"}
+        _label = _dtype_labels.get(dtype_vseq, "UNIT DATA")
+        self._send_bridge_event(
+            "{},DATA,RX,{},{},{},{},{},{}".format(
+                _label, system_name, int_id(stream_id), int_id(peer_id), int_id(rf_src), slot, _int_dst_id,
+            )
+        )
 
         # DATA-GATEWAY forwarding (legacy ~2281-2284 / ~3083-3087)
         if global_cfg.get("DATA_GATEWAY"):
@@ -3300,11 +3248,11 @@ class BridgeUseCases:
                 "(%s) *PRIVATE CALL START* STREAM ID: %s SUB: %s PEER: %s DST: %s, TS: %s, FORWARD: %s",
                 system_name, int_id(stream_id), int_id(rf_src), int_id(peer_id), int_id(dst_id), slot, self._pvt_targets,
             )
-            report = self._report_factory
-            if report and hasattr(report, "send_bridge_event"):
-                report.send_bridge_event(
-                    "PRIVATE VOICE,START,RX,{},{},{},{},{},{}".format(system_name, int_id(stream_id), int_id(peer_id), int_id(rf_src), slot, int_id(dst_id))
+            self._send_bridge_event(
+                "PRIVATE VOICE,START,RX,{},{},{},{},{},{}".format(
+                    system_name, int_id(stream_id), int_id(peer_id), int_id(rf_src), slot, int_id(dst_id)
                 )
+            )
         for _target in getattr(self, "_pvt_targets", []):
             target_proto = protocols.get(_target)
             if not target_proto:
@@ -3327,13 +3275,11 @@ class BridgeUseCases:
                         "(%s) PRIVATE call bridged to OBP System: %s TS: %s, UNIT: %s",
                         system_name, _target, slot if _target_system.get("BOTH_SLOTS") else 1, int_id(dst_id),
                     )
-                    report = self._report_factory
-                    if report and hasattr(report, "send_bridge_event"):
-                        report.send_bridge_event(
-                            "PRIVATE VOICE,START,TX,{},{},{},{},{},{}".format(
-                                _target, int_id(stream_id), int_id(peer_id), int_id(rf_src), slot, int_id(dst_id),
-                            ).encode("utf-8", "ignore")
-                        )
+                    self._send_bridge_event(
+                        "PRIVATE VOICE,START,TX,{},{},{},{},{},{}".format(
+                            _target, int_id(stream_id), int_id(peer_id), int_id(rf_src), slot, int_id(dst_id),
+                        ).encode("utf-8", "ignore")
+                    )
                 _target_status[stream_id]["LAST"] = pkt_time
                 if _target_system.get("BOTH_SLOTS"):
                     _tmp_bits = _bits
@@ -3366,13 +3312,11 @@ class BridgeUseCases:
                     ts_st["TX_RFS"] = rf_src
                     ts_st["TX_PEER"] = peer_id
                     logger.info("(%s) PRIVATE call bridged to HBP System: %s TS: %s, DST: %s", system_name, _target, slot, int_id(dst_id))
-                    report = self._report_factory
-                    if report and hasattr(report, "send_bridge_event"):
-                        report.send_bridge_event(
-                            "PRIVATE VOICE,START,TX,{},{},{},{},{},{}".format(
-                                _target, int_id(stream_id), int_id(peer_id), int_id(rf_src), slot, int_id(dst_id),
-                            ).encode("utf-8", "ignore")
-                        )
+                    self._send_bridge_event(
+                        "PRIVATE VOICE,START,TX,{},{},{},{},{},{}".format(
+                            _target, int_id(stream_id), int_id(peer_id), int_id(rf_src), slot, int_id(dst_id),
+                        ).encode("utf-8", "ignore")
+                    )
                 ts_st["TX_TIME"] = pkt_time
                 ts_st["TX_TYPE"] = dtype_vseq
                 send_data = data
@@ -3387,22 +3331,17 @@ class BridgeUseCases:
                 "(%s) *PRIVATE CALL END*   STREAM ID: %s SUB: %s PEER: %s DST: %s, TS %s, Duration: %.2f",
                 system_name, int_id(stream_id), int_id(rf_src), int_id(peer_id), int_id(dst_id), slot, call_duration,
             )
-            report = self._report_factory
-            if report and hasattr(report, "send_bridge_event"):
-                try:
-                    report.send_bridge_event(
-                        "PRIVATE VOICE,END,RX,{},{},{},{},{},{},{:.2f}".format(
-                            system_name,
-                            int_id(stream_id),
-                            int_id(peer_id),
-                            int_id(rf_src),
-                            slot,
-                            int_id(dst_id),
-                            call_duration,
-                        )
-                    )
-                except Exception:
-                    pass
+            self._send_bridge_event(
+                "PRIVATE VOICE,END,RX,{},{},{},{},{},{},{:.2f}".format(
+                    system_name,
+                    int_id(stream_id),
+                    int_id(peer_id),
+                    int_id(rf_src),
+                    slot,
+                    int_id(dst_id),
+                    call_duration,
+                )
+            )
         if slot_st:
             slot_st["RX_PEER"] = peer_id
             slot_st["RX_SEQ"] = seq
