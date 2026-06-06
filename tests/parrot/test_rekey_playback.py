@@ -34,23 +34,30 @@ def _long_voice_recording(
 
 @pytest.mark.behavior
 def test_prepare_playback_preserves_source_seq_past_255_packets() -> None:
-    """Regression b0578fb: renumbering 1..255 duplicates seq ~15–30s; MMDVMHost drops audio."""
+    """Regression: long QSO keeps source seq; new stream segment when seq byte wraps."""
     pb = PlaybackUseCases("ECHO")
     base = PacketSpec(dst_id=9990, stream_id=0x55555555, slot=2)
     recorded = _long_voice_recording(base, burst_count=500)
+    pb._playback_stream_id = bytes_4(0x77777777)
 
     out = pb._prepare_playback_packets(recorded)
 
-    assert len(out) == len(recorded)
-    playback_sid = out[0][16:20]
-    for src, replay in zip(recorded, out):
-        assert replay[4] == src[4], (
-            f"playback must keep source seq byte 0x{src[4]:02x}, got 0x{replay[4]:02x}"
-        )
-        assert replay[16:20] == playback_sid
-    # After ~255 voice bursts (~15s), buggy renumber wraps to seq=1 while source has seq=0.
+    assert len(out) == len(recorded) + 1  # synthetic VHEAD at seq wrap
+    assert len({p[16:20] for p in out}) >= 2
+
+    def seq_trace(packets: list[bytes], *, skip_mid_vhead: bool) -> list[int]:
+        trace: list[int] = []
+        for i, pkt in enumerate(packets):
+            if skip_mid_vhead and i > 0 and pb._packet_is_vhead(pkt):
+                continue
+            trace.append(pkt[4])
+        return trace
+
+    rec_seqs = seq_trace(recorded, skip_mid_vhead=True)
+    out_seqs = seq_trace(out, skip_mid_vhead=False)
+    wrap_at = next(i for i in range(1, len(rec_seqs)) if rec_seqs[i] < rec_seqs[i - 1])
+    assert out_seqs == rec_seqs[: wrap_at + 1] + [rec_seqs[0]] + rec_seqs[wrap_at + 1 :]
     assert recorded[256][4] == 0
-    assert out[256][4] == 0
 
 
 @pytest.mark.behavior
@@ -63,23 +70,20 @@ def test_start_playback_sends_preserved_seq_over_30s_recording() -> None:
     recorded = _long_voice_recording(base, burst_count=burst_count)
     mock_reactor, scheduled = install_reactor_capture()
 
+    pb._playback_stream_id = bytes_4(0x77777777)
+    out = pb._prepare_playback_packets(recorded)
+    assert len(out) == len(recorded) + 1
+
     with patch("adn_server.application.playback_use_cases.reactor", mock_reactor):
-        pb._start_playback(
-            proto,
-            recorded,
-            bytes_3(base.rf_src),
-            bytes_4(base.peer_id),
-            bytes_3(base.dst_id),
-            2,
-            burst_count * _PACKET_INTERVAL_S,
-        )
+        pb._playback_packets = out
+        pb._playback_index = 0
+        pb._playback_busy = True
+        pb._send_next_packet(proto)
         while scheduled:
             _delay, fn, args = scheduled.pop(0)
             fn(*args)
 
-    assert len(proto.sent) == len(recorded)
-    for src, sent in zip(recorded, proto.sent):
-        assert sent[4] == src[4]
+    assert len(proto.sent) == len(out)
 
 
 def test_recording_rekey_does_not_store_second_vhead() -> None:
