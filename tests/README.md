@@ -7,7 +7,7 @@ python3 -m pip install -e ".[dev]"
 python3 -m pytest tests/<path>/test_<name>.py -q          # single file
 python3 -m pytest tests/<path>/test_<name>.py::test_foo -q # single test
 python3 -m pytest tests/bridge/ -q                         # whole domain
-python3 -m pytest tests/ -q                                # full suite (142)
+python3 -m pytest tests/ -q                                # full suite (147)
 ```
 
 Use the project interpreter, e.g. `/opt/.pyenv/versions/3.11.8/bin/python3`.
@@ -103,6 +103,7 @@ Use the project interpreter, e.g. `/opt/.pyenv/versions/3.11.8/bin/python3`.
 | `smoke/test_bridge_routing.py` | 1 | Static TG forward smoke |
 | `smoke/test_packet_builder.py` | 1 | PacketSpec builder |
 | `infrastructure/test_logging_reload.py` | 2 | Log level reload |
+| `infrastructure/test_bridge_router_index.py` | 5 | BRIDGES O(1) index vs legacy scan |
 | `scripts/test_freedmr_cfg_to_yaml.py` | 5 | Legacy cfg → YAML |
 
 ## Examples (copy-paste)

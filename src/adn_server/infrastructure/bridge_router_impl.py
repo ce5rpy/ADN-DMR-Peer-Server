@@ -28,6 +28,7 @@ from __future__ import annotations
 from typing import Any
 
 from ..application.ports import BridgeRouter
+from ..domain import int_id
 
 
 def _int_id(val: bytes | int) -> int:
@@ -45,12 +46,39 @@ class InMemoryBridgeRouter(BridgeRouter):
 
     def __init__(self) -> None:
         self._bridges: dict[str, list[dict[str, Any]]] = {}
+        self._source_index: dict[tuple[str, int, int], list[str]] = {}
 
     def get_bridges(self) -> dict[str, list[dict[str, Any]]]:
         return self._bridges
 
     def set_bridges(self, bridges: dict[str, list[dict[str, Any]]]) -> None:
         self._bridges = bridges
+        self._source_index = {}
+
+    def rebuild_source_index(self) -> None:
+        """Rebuild O(1) lookup: (system, TS, dst_tgid) -> bridge table names with ACTIVE source row."""
+        index: dict[tuple[str, int, int], list[str]] = {}
+        for bridge_name, rows in self._bridges.items():
+            for row in rows:
+                if not row.get("ACTIVE"):
+                    continue
+                system = row.get("SYSTEM")
+                if not system:
+                    continue
+                ts = row.get("TS", 1)
+                if ts is None:
+                    ts = 1
+                tgid = int_id(row.get("TGID") or b"\x00\x00\x00")
+                key = (system, int(ts), tgid)
+                names = index.setdefault(key, [])
+                if bridge_name not in names:
+                    names.append(bridge_name)
+        self._source_index = index
+
+    def bridge_tables_with_active_source(self, system: str, ts: int, dst_tgid: int) -> list[str]:
+        """Bridge tables containing an ACTIVE source on (system, ts) for dst_tgid (legacy scan parity)."""
+        self.rebuild_source_index()
+        return list(self._source_index.get((system, int(ts), int(dst_tgid)), []))
 
     def acl_check(self, id_bytes_or_int: bytes | int, acl: tuple[bool, list[tuple[int, int]]]) -> bool:
         """Legacy acl_check: (action, ranges). If id in any range return action else not action."""

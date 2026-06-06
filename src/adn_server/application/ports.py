@@ -121,6 +121,16 @@ class BridgeRouter(ABC):
         ...
 
     @abstractmethod
+    def rebuild_source_index(self) -> None:
+        """Rebuild index of ACTIVE source rows by (system, TS, dst_tgid)."""
+        ...
+
+    @abstractmethod
+    def bridge_tables_with_active_source(self, system: str, ts: int, dst_tgid: int) -> list[str]:
+        """Return bridge table names with matching ACTIVE source (legacy full-scan parity)."""
+        ...
+
+    @abstractmethod
     def acl_check(self, id_bytes_or_int: bytes | int, acl: tuple[bool, list[tuple[int, int]]]) -> bool:
         """Check ID against ACL; return True if permitted."""
         ...
