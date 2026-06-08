@@ -303,3 +303,21 @@ class SubscriptionStore(ABC):
     @abstractmethod
     def list_by_phase(self, phase: "SubscriptionPhase") -> tuple["Subscription", ...]:
         ...
+
+
+class PeerTransport(Protocol):
+    """Built-in mesh codec (dmre_v5, obp_v1) — decode datagrams to ``MeshIngress``, encode ``MeshEgress``."""
+
+    @property
+    def name(self) -> str:
+        ...
+
+    def try_decode(self, datagram: bytes, config: "PeerMeshConfig") -> "MeshIngress | None":
+        ...
+
+    def encode(self, egress: "MeshEgress", config: "PeerMeshConfig") -> bytes | None:
+        ...
+
+
+if TYPE_CHECKING:
+    from adn_server.domain.mesh_routing import MeshEgress, MeshIngress, PeerMeshConfig
