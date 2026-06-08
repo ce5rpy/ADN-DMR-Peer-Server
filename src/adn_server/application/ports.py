@@ -305,6 +305,50 @@ class SubscriptionStore(ABC):
         ...
 
 
+class ProxySlotStore(ABC):
+    """Hotspot session registry: peer_id ↔ upstream port (Phase 3)."""
+
+    @abstractmethod
+    def bind(self, slot: "ClientSlot") -> None:
+        ...
+
+    @abstractmethod
+    def update_client(self, peer_id: bytes, host: str, port: int) -> None:
+        ...
+
+    @abstractmethod
+    def unbind(self, peer_id: bytes) -> "ClientSlot | None":
+        ...
+
+    @abstractmethod
+    def get_by_peer(self, peer_id: bytes) -> "ClientSlot | None":
+        ...
+
+    @abstractmethod
+    def get_by_upstream(self, upstream_port: int) -> "ClientSlot | None":
+        ...
+
+    @abstractmethod
+    def free_upstream_ports(self) -> tuple[int, ...]:
+        ...
+
+    @abstractmethod
+    def list_slots(self) -> tuple["ClientSlot", ...]:
+        ...
+
+
+class PendingRptoQueue(ABC):
+    """Pending RPTO payloads for self-service / login options push."""
+
+    @abstractmethod
+    def enqueue(self, peer_id: bytes, payload: bytes) -> None:
+        ...
+
+    @abstractmethod
+    def dequeue(self) -> tuple[bytes, bytes] | None:
+        ...
+
+
 class PeerTransport(Protocol):
     """Built-in mesh codec (dmre_v5, obp_v1) — decode datagrams to ``MeshIngress``, encode ``MeshEgress``."""
 
@@ -321,3 +365,4 @@ class PeerTransport(Protocol):
 
 if TYPE_CHECKING:
     from adn_server.domain.mesh_routing import MeshEgress, MeshIngress, PeerMeshConfig
+    from adn_server.domain.proxy import ClientSlot
