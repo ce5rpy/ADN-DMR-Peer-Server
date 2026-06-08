@@ -365,18 +365,22 @@ def main() -> None:
     report_interval = config.get("REPORTS", {}).get("REPORT_INTERVAL", 60)
     task.LoopingCall(reporting_loop).start(report_interval).addErrback(_looping_errback, logger)
 
-    # LoopingCalls (legacy intervals)
-    def _rule_timer_in_thread():
+    # LoopingCalls (legacy intervals). rule_timer / stat_trimmer mutate BRIDGES on reactor
+    # (V2-P0-006: no deferToThread — avoids races with dmrd_received on the same dict).
+    def _rule_timer_on_reactor() -> None:
         bridge_use_cases.rule_timer_loop()
-        reactor.callFromThread(reporting_use_cases.send_bridge, bridge_router.get_bridges())
-    task.LoopingCall(lambda: threads.deferToThread(_rule_timer_in_thread)).start(52).addErrback(_looping_errback, logger)
+        reporting_use_cases.send_bridge(bridge_router.get_bridges())
+
+    task.LoopingCall(_rule_timer_on_reactor).start(52).addErrback(_looping_errback, logger)
     task.LoopingCall(bridge_use_cases.stream_trimmer_loop).start(5).addErrback(_looping_errback, logger)
     task.LoopingCall(bridge_use_cases.bridge_reset_loop).start(6).addErrback(_looping_errback, logger)
     if config.get("GLOBAL", {}).get("GEN_STAT_BRIDGES", False):
-        def _stat_trimmer_in_thread():
+
+        def _stat_trimmer_on_reactor() -> None:
             bridge_use_cases.stat_trimmer_loop()
-            reactor.callFromThread(reporting_use_cases.send_bridge, bridge_router.get_bridges())
-        task.LoopingCall(lambda: threads.deferToThread(_stat_trimmer_in_thread)).start(303).addErrback(_looping_errback, logger)
+            reporting_use_cases.send_bridge(bridge_router.get_bridges())
+
+        task.LoopingCall(_stat_trimmer_on_reactor).start(303).addErrback(_looping_errback, logger)
 
     # KA Reporting (legacy kaReporting, 60s)
     task.LoopingCall(lambda: threads.deferToThread(reporting_use_cases.ka_reporting_loop)).start(60).addErrback(_looping_errback, logger)
