@@ -14,7 +14,7 @@ class SubscriptionRouter:
 
     def resolve(self, ingress: VoiceIngress) -> tuple[ForwardLeg, ...]:
         """Return active forward legs when the source has an ACTIVE row on the dst TG (legacy to_target)."""
-        match_slot: int = 1 if ingress.source_is_obp else int(ingress.slot)
+        match_slot = ingress.bridge_match_slot
         dst_tgid = ingress.dst_tgid.value
         tables = self.bridge_tables_with_active_source(
             ingress.source_system,

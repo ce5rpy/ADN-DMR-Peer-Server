@@ -15,9 +15,15 @@ class VoiceIngress:
     slot: Slot
     dst_tgid: TgId
     source_is_obp: bool = False
+    call_type: str = "group"
     stream_id: int | None = None
     peer_id: DmrId | None = None
     src_id: DmrId | None = None
+
+    @property
+    def bridge_match_slot(self) -> int:
+        """Slot used for BRIDGES source lookup (legacy: OBP always TS1)."""
+        return 1 if self.source_is_obp else int(self.slot)
 
 
 @dataclass(frozen=True, slots=True)
