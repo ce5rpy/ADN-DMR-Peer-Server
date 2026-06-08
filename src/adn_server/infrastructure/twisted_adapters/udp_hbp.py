@@ -31,9 +31,7 @@ import logging
 import time
 from binascii import a2b_hex as bhex
 from collections import deque
-from hashlib import blake2b, sha1, sha256
-from hmac import compare_digest
-from hmac import new as hmac_new
+from hashlib import sha256
 from random import randint
 from typing import Any, Callable
 
@@ -49,6 +47,18 @@ from ...domain.talker_alias import (
     parse_dmra_packet,
     store_ta_block,
     try_buffer_ta_from_voice_fragments,
+)
+from ..mesh.dmre_v5 import build_dmre, parse_dmre_trailer, verify_dmre_mac
+from ..mesh.obp_v1 import (
+    build_bcka,
+    build_bcve,
+    build_bcsq,
+    build_dmrd_v1,
+    verify_bcka,
+    verify_bcsq,
+    verify_bcst,
+    verify_bcve,
+    verify_dmrd_v1,
 )
 from ..hbp_constants import (
     BC,
@@ -400,30 +410,46 @@ class HBPProtocol(DatagramProtocol):
                 _server_id = _sid if isinstance(_sid, bytes) and len(_sid) >= 4 else bytes_4(int(_sid) & 0xFFFFFFFF if isinstance(_sid, int) else 0)
                 _passphrase = _get_passphrase_bytes(self._config)
                 _target_addr = (self._config["TARGET_IP"], self._config["TARGET_PORT"])
-                if "VER" in self._config and self._config["VER"] > 4:
-                    _ver = VER.to_bytes(1, "big")
-                    _packet = b"".join([DMRE, _packet[4:11], _server_id, _packet[15:], _ber, _rssi, _ver, time.time_ns().to_bytes(8, "big"), _source_server, _source_rptr, _hops])
-                    _h = blake2b(key=_passphrase, digest_size=16)
-                    _h.update(_packet)
-                    _hash = _h.digest()
-                    _packet = b"".join([_packet, _hash])
-                    self.transport.write(_packet, _target_addr)
-                elif "VER" in self._config and self._config["VER"] == 4:
-                    _ver = VER.to_bytes(1, "big")
-                    _packet = b"".join([DMRE, _packet[4:11], _server_id, _packet[15:], _ber, _rssi, _ver, time.time_ns().to_bytes(8, "big"), _source_server, _hops])
-                    _h = blake2b(key=_passphrase, digest_size=16)
-                    _h.update(_packet)
-                    _hash = _h.digest()
-                    _packet = b"".join([_packet, _hash])
-                    self.transport.write(_packet, _target_addr)
-                elif "VER" in self._config and self._config["VER"] == 3:
+                _ver_cfg = self._config.get("VER")
+                if "VER" in self._config and _ver_cfg is not None and _ver_cfg > 4:
+                    _wire = build_dmre(
+                        _packet,
+                        server_id=_server_id,
+                        ber=_ber,
+                        rssi=_rssi,
+                        embedded_ver=VER,
+                        timestamp_ns=time.time_ns(),
+                        source_server=_source_server,
+                        source_rptr=_source_rptr,
+                        hops=_hops,
+                        passphrase=_passphrase,
+                        extended_layout=True,
+                    )
+                    if _wire is not None:
+                        self.transport.write(_wire, _target_addr)
+                elif "VER" in self._config and _ver_cfg == 4:
+                    _wire = build_dmre(
+                        _packet,
+                        server_id=_server_id,
+                        ber=_ber,
+                        rssi=_rssi,
+                        embedded_ver=VER,
+                        timestamp_ns=time.time_ns(),
+                        source_server=_source_server,
+                        source_rptr=_source_rptr,
+                        hops=_hops,
+                        passphrase=_passphrase,
+                        extended_layout=False,
+                    )
+                    if _wire is not None:
+                        self.transport.write(_wire, _target_addr)
+                elif "VER" in self._config and _ver_cfg == 3:
                     logger.error("(%s) protocol version 3 no longer supported", self._system)
-                elif "VER" in self._config and self._config["VER"] == 2:
+                elif "VER" in self._config and _ver_cfg == 2:
                     logger.error("(%s) protocol version 2 no longer supported", self._system)
                 else:
-                    _packet = b"".join([DMRD, _packet[4:11], _server_id, _packet[15:]])
-                    _packet = b"".join([_packet, hmac_new(_passphrase, _packet, sha1).digest()])
-                    self.transport.write(_packet, _target_addr)
+                    _wire = build_dmrd_v1(_packet, _server_id, _passphrase)
+                    self.transport.write(_wire, _target_addr)
             else:
                 if not self._config.get("TARGET_IP"):
                     logger.debug("(%s) Not sent packet as TARGET_IP not currently known", self._system)
@@ -1205,8 +1231,7 @@ class HBPProtocol(DatagramProtocol):
         """Legacy send_bcka: BCKA + HMAC-SHA1 to TARGET. Uses TARGET_SOCK (IP only; hostnames resolved at startup or on first peer packet)."""
         _addr = self._config.get("TARGET_SOCK")
         if _addr and _addr[0]:
-            _packet = BCKA + hmac_new(self._config["PASSPHRASE"], BCKA, sha1).digest()
-            self.transport.write(_packet, _addr)
+            self.transport.write(build_bcka(_get_passphrase_bytes(self._config)), _addr)
         else:
             logger.debug("(%s) *BridgeControl* not sending KeepAlive, TARGET not currently known", self._system)
 
@@ -1214,9 +1239,7 @@ class HBPProtocol(DatagramProtocol):
         """Legacy send_bcve: BCVE + VER byte + HMAC-SHA1. Uses TARGET_SOCK (IP only)."""
         _addr = self._config.get("TARGET_SOCK")
         if self._config.get("ENHANCED_OBP") and _addr and _addr[0]:
-            _packet = BCVE + VER.to_bytes(1, "big")
-            _packet = _packet + hmac_new(self._config["PASSPHRASE"], _packet[4:5], sha1).digest()
-            self.transport.write(_packet, _addr)
+            self.transport.write(build_bcve(VER, _get_passphrase_bytes(self._config)), _addr)
         else:
             logger.debug("(%s) *BridgeControl* not sending BCVE, TARGET not currently known", self._system)
 
@@ -1253,9 +1276,10 @@ class HBPProtocol(DatagramProtocol):
                 _addr = (tip, tport)
                 self._config["TARGET_SOCK"] = _addr
         if _addr and _addr[0]:
-            _packet = BCSQ + _tgid + _stream_id
-            _packet = _packet + hmac_new(self._config["PASSPHRASE"], _packet, sha1).digest()
-            self.transport.write(_packet, _addr)
+            self.transport.write(
+                build_bcsq(_tgid, _stream_id, _get_passphrase_bytes(self._config)),
+                _addr,
+            )
         else:
             logger.warning(
                 "(%s) *BridgeControl* BCSQ not sent: no TARGET_SOCK/TARGET_IP — peer cannot be quenched",
@@ -1273,9 +1297,10 @@ class HBPProtocol(DatagramProtocol):
                     self._laststrid.append(_stream_id)
                 self._obp_send_bcve()
                 return
-            _hash = _packet[53:73]
-            _ckhs = hmac_new(self._config["PASSPHRASE"], _data, sha1).digest()
-            if compare_digest(_hash, _ckhs) and (_sockaddr == self._config.get("TARGET_SOCK") or self._config.get("RELAX_CHECKS")):
+            _passphrase = _get_passphrase_bytes(self._config)
+            _verified = verify_dmrd_v1(_packet, _passphrase)
+            if _verified is not None and (_sockaddr == self._config.get("TARGET_SOCK") or self._config.get("RELAX_CHECKS")):
+                _data = _verified.payload
                 self._obp_sync_target_sock_from_peer(_sockaddr)
                 _peer_id = _data[11:15]
                 if self._config.get("NETWORK_ID") != _peer_id:
@@ -1378,38 +1403,25 @@ class HBPProtocol(DatagramProtocol):
                 logger.warning("(%s) OpenBridge HMAC failed, packet discarded - OPCODE: %s SRC: %s", self._system, _packet[:4], _sockaddr)
         elif _packet[:4] == DMRE:
             # Legacy hblink.py OPENBRIDGE: DMRE (v5) incoming – 89-byte or 85-byte format, BLAKE2b
-            if len(_packet) < 69:
+            _trailer = parse_dmre_trailer(_packet)
+            if _trailer is None:
                 return
             _data = _packet[:53]
-            # Legacy hblink OPENBRIDGE DMRE: BER/RSSI before version split (`hblink.py` ~432–433)
-            _ber = _packet[53:54]
-            _rssi = _packet[54:55]
-            _embedded_version = _packet[55]
-            if _embedded_version > 4:
-                if len(_packet) < 89:
-                    return
-                _timestamp = _packet[56:64]
-                _source_server = _packet[64:68]
-                _source_rptr = _packet[68:72]
-                _hops = _packet[72]
-                _hash = _packet[73:89]
-                _hash_len = 73
-            else:
-                if len(_packet) < 85:
-                    return
-                _timestamp = _packet[56:64]
-                _source_server = _packet[64:68]
-                _source_rptr = b"\x00\x00\x00\x00"
-                _hops = _packet[68]
-                _hash = _packet[69:85]
-                _hash_len = 69
+            _ber = _trailer.ber
+            _rssi = _trailer.rssi
+            _embedded_version = _trailer.embedded_version
+            _timestamp = _trailer.timestamp
+            _source_server = _trailer.source_server
+            _source_rptr = _trailer.source_rptr
+            _hops = _trailer.hops
+            _hash_len = _trailer.hash_len
             self._config["VER"] = _embedded_version
             _passphrase = _get_passphrase_bytes(self._config)
-            _h = blake2b(key=_passphrase, digest_size=16)
-            _h.update(_packet[:_hash_len])
-            _ckhs = _h.digest()
             _stream_id = _data[16:20]
-            if not (compare_digest(_hash, _ckhs) and (_sockaddr == self._config.get("TARGET_SOCK") or self._config.get("RELAX_CHECKS"))):
+            if not (
+                verify_dmre_mac(_packet, _passphrase, _hash_len)
+                and (_sockaddr == self._config.get("TARGET_SOCK") or self._config.get("RELAX_CHECKS"))
+            ):
                 logger.warning("(%s) OpenBridge DMRE BLAKE2b failed, packet discarded - SRC: %s", self._system, _sockaddr)
                 return
             self._obp_sync_target_sock_from_peer(_sockaddr)
@@ -1565,10 +1577,9 @@ class HBPProtocol(DatagramProtocol):
         elif _packet[:4] == EOBP:
             logger.warning("(%s) *ProtoControl* KF7EEL EOBP protocol not supported", self._system)
         elif self._config.get("ENHANCED_OBP") and _packet[:2] == BC:
+            _passphrase = _get_passphrase_bytes(self._config)
             if _packet[:4] == BCKA and len(_packet) >= 24:
-                _hash = _packet[4:24]
-                _ckhs = hmac_new(self._config["PASSPHRASE"], _packet[:4], sha1).digest()
-                if compare_digest(_hash, _ckhs):
+                if verify_bcka(_packet, _passphrase):
                     self._config["_bcka"] = time.time()
                     if _sockaddr != self._config.get("TARGET_SOCK"):
                         logger.info("(%s) *BridgeControl* Source IP and Port has changed for OBP from %s:%s to %s:%s, updating", self._system, self._config.get("TARGET_IP"), self._config.get("TARGET_PORT"), _sockaddr[0], _sockaddr[1])
@@ -1580,11 +1591,10 @@ class HBPProtocol(DatagramProtocol):
                     logger.info("(%s) *BridgeControl* BCKA invalid KeepAlive, packet discarded", self._system)
             # Source quench — legacy hblink.py OPENBRIDGE ~629-639 (sets CONFIG['_bcsq'][tgid]=stream_id)
             if _packet[:4] == BCSQ and len(_packet) >= 31:
-                _hash_bcsq = _packet[11:]
-                _tgid_bcsq = _packet[4:7]
-                _stream_bcsq = _packet[7:11]
-                _ckhs_bcsq = hmac_new(self._config["PASSPHRASE"], _packet[:11], sha1).digest()
-                if compare_digest(_hash_bcsq, _ckhs_bcsq):
+                _bcsq = verify_bcsq(_packet, _passphrase)
+                if _bcsq is not None:
+                    _tgid_bcsq = _bcsq.tgid
+                    _stream_bcsq = _bcsq.stream_id
                     if "_bcsq" not in self._config:
                         self._config["_bcsq"] = {}
                     self._config["_bcsq"][_tgid_bcsq] = _stream_bcsq
@@ -1613,9 +1623,7 @@ class HBPProtocol(DatagramProtocol):
                     )
             # STUN — must match send_bcst: HMAC-SHA1 over opcode only (hblink.py ~282-285). RX used _packet[4:] in ~647 but that does not match TX.
             if _packet[:4] == BCST and len(_packet) >= 24:
-                _hash_bcst = _packet[4:24]
-                _ckhs_bcst = hmac_new(self._config["PASSPHRASE"], _packet[:4], sha1).digest()
-                if compare_digest(_hash_bcst, _ckhs_bcst):
+                if verify_bcst(_packet, _passphrase):
                     logger.trace("(%s) *BridgeControl* BCST STUN request received", self._system)
                     self._config["_STUN"] = True
                 else:
@@ -1625,10 +1633,8 @@ class HBPProtocol(DatagramProtocol):
                         _sockaddr,
                     )
             if _packet[:4] == BCVE and len(_packet) >= 25:
-                _ver = int.from_bytes(_packet[4:5], "big")
-                _hash = _packet[5:25]
-                _ckhs = hmac_new(self._config["PASSPHRASE"], _packet[4:5], sha1).digest()
-                if compare_digest(_hash, _ckhs):
+                _bcve_ok, _ver = verify_bcve(_packet, _passphrase)
+                if _bcve_ok and _ver is not None:
                     if _ver in (2, 3) or _ver > 5:
                         logger.info("(%s) *ProtoControl* BCVE Version not supported, Ver: %s", self._system, _ver)
                     elif _ver > self._config.get("VER", 5):
