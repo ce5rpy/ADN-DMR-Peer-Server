@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from adn_server.application.ports import SubscriptionStore
-from adn_server.domain.subscription import AudioChannel, SubscriptionPhase
 from adn_server.domain.voice_routing import ForwardLeg, VoiceIngress
 
 
@@ -14,34 +13,56 @@ class SubscriptionRouter:
         self._store = store
 
     def resolve(self, ingress: VoiceIngress) -> tuple[ForwardLeg, ...]:
-        """Return active forward legs when the source subscription is ACTIVE on the dst channel."""
-        table_key = str(ingress.dst_tgid.value)
+        """Return active forward legs when the source has an ACTIVE row on the dst TG (legacy to_target)."""
         match_slot: int = 1 if ingress.source_is_obp else int(ingress.slot)
-        source_channel = AudioChannel(tgid=ingress.dst_tgid, slot=match_slot)  # type: ignore[arg-type]
-
-        if not self._source_is_active(ingress.source_system, source_channel):
+        dst_tgid = ingress.dst_tgid.value
+        tables = self.bridge_tables_with_active_source(
+            ingress.source_system,
+            match_slot,
+            dst_tgid,
+        )
+        if not tables:
             return ()
 
         legs: list[ForwardLeg] = []
+        seen_obp: set[tuple[str, int]] = set()
+        for table_key in tables:
+            for sub in self._store.snapshot():
+                if sub.table_key() != table_key:
+                    continue
+                if sub.system.value == ingress.source_system:
+                    continue
+                if not sub.is_active():
+                    continue
+                if ingress.source_is_obp:
+                    obp_key = (sub.system.value, int(sub.channel.slot))
+                    if obp_key in seen_obp:
+                        continue
+                    seen_obp.add(obp_key)
+                legs.append(
+                    ForwardLeg(
+                        target_system=sub.system.value,
+                        slot=sub.channel.slot,
+                        target_tgid=sub.target_tgid,
+                    )
+                )
+        return tuple(legs)
+
+    def bridge_tables_with_active_source(self, system: str, slot: int, dst_tgid: int) -> tuple[str, ...]:
+        """Mirror ``BridgeRouter.bridge_tables_with_active_source`` on subscription rows."""
+        tables: list[str] = []
+        seen: set[str] = set()
         for sub in self._store.snapshot():
-            if sub.table_key() != table_key:
+            if sub.system.value != system:
                 continue
-            if sub.system.value == ingress.source_system:
+            if int(sub.channel.slot) != int(slot):
                 continue
             if not sub.is_active():
                 continue
-            legs.append(
-                ForwardLeg(
-                    target_system=sub.system.value,
-                    slot=sub.channel.slot,
-                    target_tgid=sub.target_tgid,
-                )
-            )
-        return tuple(legs)
-
-    def _source_is_active(self, source_system: str, channel: AudioChannel) -> bool:
-        for sub in self._store.list_by_channel(channel):
-            if sub.system.value != source_system:
+            if int(sub.target_tgid) != int(dst_tgid):
                 continue
-            return sub.state.phase == SubscriptionPhase.ACTIVE
-        return False
+            key = sub.table_key()
+            if key not in seen:
+                seen.add(key)
+                tables.append(key)
+        return tuple(sorted(tables))

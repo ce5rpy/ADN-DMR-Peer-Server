@@ -76,6 +76,7 @@ def test_obp_ingress_uses_ts1_for_source_match():
         ]
     )
     router = SubscriptionRouter(store)
+    assert router.bridge_tables_with_active_source("OBP-CL", 1, 730444) == ("730444",)
     ingress = VoiceIngress(
         source_system="OBP-CL",
         slot=2,
