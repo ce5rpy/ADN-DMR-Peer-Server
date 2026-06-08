@@ -1,5 +1,11 @@
 """Report application layer: payload mapping and protocol mode (no Twisted / wire bytes)."""
 
+from .queue import (
+    DEFAULT_MAX_DRAIN_PER_TICK,
+    DEFAULT_MAX_EVENTS,
+    BoundedReportQueue,
+    QueuedReportSender,
+)
 from .payloads import (
     REPORT_FEATURES,
     REPORT_PROTOCOL,
@@ -12,6 +18,10 @@ from .payloads import (
 )
 
 __all__ = [
+    "DEFAULT_MAX_DRAIN_PER_TICK",
+    "DEFAULT_MAX_EVENTS",
+    "BoundedReportQueue",
+    "QueuedReportSender",
     "REPORT_FEATURES",
     "REPORT_PROTOCOL",
     "build_routing_table",

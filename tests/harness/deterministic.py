@@ -193,6 +193,12 @@ class FakeReportSender:
     def __init__(self, factory: FakeReportFactory) -> None:
         self._factory = factory
 
+    def set_systems(self, systems: dict[str, Any]) -> None:
+        pass
+
+    def set_bridges(self, bridges: dict[str, Any]) -> None:
+        pass
+
     def send_config(self, systems: dict[str, Any], *, incremental: bool = False) -> None:
         pass
 

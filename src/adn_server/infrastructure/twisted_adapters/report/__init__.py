@@ -14,11 +14,14 @@ from adn_server.application.ports import ReportWireEncoder
 
 from .opcodes import REPORT_OPCODES
 from .wire import ReportWire
+from .worker import DEFAULT_DRAIN_INTERVAL_SEC, start_report_queue_worker
 
 __all__ = [
+    "DEFAULT_DRAIN_INTERVAL_SEC",
     "REPORT_OPCODES",
     "ReportWire",
     "create_report_wire",
+    "start_report_queue_worker",
 ]
 
 

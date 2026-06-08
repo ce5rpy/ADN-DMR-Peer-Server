@@ -532,7 +532,7 @@ class HBPProtocol(DatagramProtocol):
         if hasattr(report, "set_systems"):
             report.set_systems(systems)
         if hasattr(report, "send_config"):
-            report.send_config()
+            report.send_config(systems)
             logger.debug("(REPORT) Pushed CONFIG_SND after peer state change on %s", self._system)
 
     def datagramReceived(self, data: bytes, addr: tuple[str, int]) -> None:

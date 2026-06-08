@@ -116,6 +116,16 @@ class ReportSender(ABC):
     """Send config and bridge state to report TCP clients (CONFIG_SND, BRIDGE_SND, BRDG_EVENT)."""
 
     @abstractmethod
+    def set_systems(self, systems: dict[str, Any]) -> None:
+        """Update cached SYSTEMS snapshot used by the wire encoder."""
+        ...
+
+    @abstractmethod
+    def set_bridges(self, bridges: dict[str, Any]) -> None:
+        """Update cached BRIDGES snapshot used by the wire encoder."""
+        ...
+
+    @abstractmethod
     def send_config(self, systems: dict[str, Any], *, incremental: bool = False) -> None:
         """Send CONFIG_SND (pickle systems) or topology / delta JSON."""
         ...

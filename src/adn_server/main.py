@@ -88,6 +88,8 @@ from .infrastructure.persistence.keys_store import JsonKeysStore
 from .infrastructure.security.password_download import DefaultSecurityDownloader, StubSecurityDownloader
 from .infrastructure.security.user_passwords_loader import UserPasswordsLoader
 from .infrastructure.talker_alias_emblc import default_ta_emblc_encoder
+from .application.report.queue import BoundedReportQueue, QueuedReportSender
+from .infrastructure.twisted_adapters.report.worker import start_report_queue_worker
 from .infrastructure.twisted_adapters.report_server import ReportServerFactory
 from .infrastructure.twisted_adapters.udp_hbp import HBPProtocolFactory
 from .infrastructure.voice import DefaultVoiceProvider, StubVoiceProvider
@@ -99,6 +101,12 @@ class ReportSenderAdapter(ReportSender):
 
     def __init__(self, factory: ReportServerFactory) -> None:
         self._factory = factory
+
+    def set_systems(self, systems) -> None:
+        self._factory.set_systems(systems)
+
+    def set_bridges(self, bridges) -> None:
+        self._factory.set_bridges(bridges)
 
     def send_config(self, systems, *, incremental: bool = False) -> None:
         self._factory.set_systems(systems)
@@ -277,7 +285,9 @@ def main() -> None:
         if p is not None and hasattr(p, "_obp_send_bcsq"):
             p._obp_send_bcsq(tgid, stream_id)
 
-    report_sender = ReportSenderAdapter(report_factory)
+    report_inner = ReportSenderAdapter(report_factory)
+    report_queue = BoundedReportQueue()
+    report_sender = QueuedReportSender(report_queue, report_inner)
     report_factory.set_systems(systems_cfg)
     report_factory.set_bridges(bridge_router.get_bridges())
     reporting_use_cases = ReportingUseCases(report_sender, config)
@@ -351,6 +361,11 @@ def main() -> None:
         port = config["REPORTS"].get("REPORT_PORT", 4321)
         reactor.listenTCP(port, report_factory)
         logger.info("(REPORT) Report server listening on TCP %s", port)
+        start_report_queue_worker(
+            report_queue,
+            report_inner,
+            on_errback=lambda e: _looping_errback(e, logger),
+        )
 
     # Reporting loop (REPORT_INTERVAL) — same logs as legacy after send_config/send_bridge
     def reporting_loop():
@@ -490,7 +505,7 @@ def main() -> None:
         return HBPProtocolFactory(
             system_name,
             config,
-            report_factory,
+            report_sender,
             router=bridge_router,
             dmrd_received=bridge_use_cases.dmrd_received,
             get_user_password_callback=user_passwords_loader.get_user_password,

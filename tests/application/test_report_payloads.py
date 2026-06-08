@@ -28,6 +28,25 @@ def validator() -> jsonschema.Draft202012Validator:
     return jsonschema.Draft202012Validator(schema)
 
 
+def test_build_topology_exports_peer_connected_at() -> None:
+    login_ts = 1717555100.0
+    systems = {
+        "MASTER-A": {
+            "MODE": "MASTER",
+            "ENABLED": True,
+            "PEERS": {
+                bytes_3(3120001): {
+                    "CONNECTION": "YES",
+                    "CONNECTED": login_ts,
+                }
+            },
+        },
+    }
+    doc = build_topology(systems, seq=1, ts=1717555200.0)
+    peer = doc["systems"][0]["peers"][0]
+    assert peer["connected_at"] == int(login_ts)
+
+
 def test_build_topology_matches_example(validator: jsonschema.Draft202012Validator) -> None:
     with (_EXAMPLES_DIR / "topology.json").open(encoding="utf-8") as fh:
         expected = json.load(fh)

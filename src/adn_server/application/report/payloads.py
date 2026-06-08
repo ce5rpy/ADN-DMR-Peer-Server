@@ -65,11 +65,26 @@ _TOPOLOGY_PEER_FIELDS: tuple[tuple[str, str], ...] = (
 )
 
 
+def _peer_connected_at(peer: dict[str, Any]) -> int | None:
+    """Unix time when peer logged in (legacy CONFIG ``CONNECTED``), or None."""
+    if not _peer_connected(peer):
+        return None
+    raw = peer.get("CONNECTED", 0)
+    try:
+        ts = int(float(raw))
+    except (TypeError, ValueError):
+        return None
+    return ts if ts > 0 else None
+
+
 def _topology_peer_row(peer_key: Any, peer: dict[str, Any]) -> dict[str, Any]:
     row: dict[str, Any] = {
         "id": _dmr_id(peer_key),
         "connected": _peer_connected(peer),
     }
+    connected_at = _peer_connected_at(peer)
+    if connected_at is not None:
+        row["connected_at"] = connected_at
     if peer.get("IP"):
         row["ip"] = str(peer["IP"])
     if peer.get("PORT") is not None:
