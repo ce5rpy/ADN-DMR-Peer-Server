@@ -32,6 +32,7 @@ from .subscription import (
     SubscriptionState,
     SystemId,
 )
+from .voice_routing import ForwardLeg, VoiceIngress
 from .errors import ACLError, ConfigError, DomainError
 from .hbp_protocol import (
     HBPF_DATA_SYNC,
@@ -58,6 +59,8 @@ __all__ = [
     "SubscriptionRole",
     "SubscriptionState",
     "SystemId",
+    "VoiceIngress",
+    "ForwardLeg",
     "DmrId",
     "TgId",
     "Slot",
