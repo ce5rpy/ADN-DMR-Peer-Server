@@ -27,7 +27,10 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from collections.abc import Sequence
-from typing import Any, Protocol
+from typing import TYPE_CHECKING, Any, Protocol
+
+if TYPE_CHECKING:
+    from adn_server.domain.subscription import AudioChannel, Subscription, SubscriptionId, SubscriptionPhase, SystemId
 
 
 class ConfigLoader(ABC):
@@ -255,4 +258,48 @@ class TalkerAliasEmblcEncoder(Protocol):
         ...
 
     def encode_blocks(self, blocks: dict[int, bytes]) -> tuple[list[dict[int, Any]], int]:
+        ...
+
+
+class SubscriptionStore(ABC):
+    """Authoritative in-memory subscription registry (Phase 2; replaces BRIDGES dict over time)."""
+
+    @abstractmethod
+    def get(self, sub_id: "SubscriptionId") -> "Subscription | None":
+        ...
+
+    @abstractmethod
+    def upsert(self, subscription: "Subscription") -> None:
+        ...
+
+    @abstractmethod
+    def remove(self, sub_id: "SubscriptionId") -> bool:
+        ...
+
+    @abstractmethod
+    def clear(self) -> None:
+        ...
+
+    @abstractmethod
+    def replace_all(self, subscriptions: Sequence["Subscription"]) -> None:
+        ...
+
+    @abstractmethod
+    def snapshot(self) -> tuple["Subscription", ...]:
+        ...
+
+    @abstractmethod
+    def list_by_channel(self, channel: "AudioChannel") -> tuple["Subscription", ...]:
+        ...
+
+    @abstractmethod
+    def list_by_system(self, system: "SystemId") -> tuple["Subscription", ...]:
+        ...
+
+    @abstractmethod
+    def list_active(self) -> tuple["Subscription", ...]:
+        ...
+
+    @abstractmethod
+    def list_by_phase(self, phase: "SubscriptionPhase") -> tuple["Subscription", ...]:
         ...
