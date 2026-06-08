@@ -80,6 +80,16 @@
           "$ref": "#/$defs/dmr_id",
           "description": "OPENBRIDGE NETWORK_ID (legacy CONFIG bytes_4 value as integer)."
         },
+        "ts1_static": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "MASTER slot-1 static talkgroups (from YAML and peer RPTO OPTIONS)."
+        },
+        "ts2_static": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "MASTER slot-2 static talkgroups (from YAML and peer RPTO OPTIONS)."
+        },
         "peers": {
           "type": "array",
           "items": {
@@ -101,7 +111,17 @@
               "package_id": { "type": "string" },
               "software_id": { "type": "string" },
               "colorcode": { "type": "string" },
-              "tx_power": { "type": "string" }
+              "tx_power": { "type": "string" },
+              "ts1_static": {
+                "type": "array",
+                "items": { "type": "string" },
+                "description": "Slot-1 static TGs from this peer's RPTO OPTIONS."
+              },
+              "ts2_static": {
+                "type": "array",
+                "items": { "type": "string" },
+                "description": "Slot-2 static TGs from this peer's RPTO OPTIONS."
+              }
             }
           }
         }

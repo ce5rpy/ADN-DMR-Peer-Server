@@ -19,7 +19,7 @@ REPORT_FEATURES = (
     "DELTA_UPDATES",
 )
 
-_SYSTEM_MODES = frozenset({"MASTER", "PEER", "OPENBRIDGE"})
+_SYSTEM_MODES = frozenset({"MASTER", "PEER", "XLXPEER", "OPENBRIDGE"})
 _TO_TYPES = frozenset({"ON", "OFF", "STAT", "NONE"})
 _CSV_FAMILIES = {
     "GROUP VOICE": "GROUP",
@@ -36,6 +36,60 @@ def _dmr_id(value: Any) -> int:
 
 def _peer_connected(peer: dict[str, Any]) -> bool:
     return peer.get("CONNECTION") == "YES"
+
+
+def static_tg_list(value: Any) -> list[str]:
+    """Normalize legacy TS1_STATIC / TS2_STATIC (comma string or list) to string TG ids."""
+    if value is None:
+        return []
+    if isinstance(value, str):
+        return [x.strip() for x in value.split(",") if x.strip()]
+    if isinstance(value, list):
+        return [str(x).strip() for x in value if str(x).strip()]
+    text = str(value).strip()
+    return [text] if text else []
+
+
+def parse_peer_options_static(options: Any) -> tuple[list[str], list[str]]:
+    """Parse hotspot RPTO OPTIONS (``TS1=…;TS2=…;``) into static TG id lists."""
+    if options is None:
+        return [], []
+    if isinstance(options, bytes):
+        text = options.decode("utf-8", errors="replace")
+    else:
+        text = str(options)
+    text = text.rstrip("\x00").strip()
+    if not text:
+        return [], []
+    parsed: dict[str, str] = {}
+    for part in text.split(";"):
+        part = part.strip()
+        if "=" not in part:
+            continue
+        key, value = part.split("=", 1)
+        parsed[key.strip().upper()] = value.strip()
+    for old, new in (("TS1", "TS1_STATIC"), ("TS2", "TS2_STATIC")):
+        if old in parsed and new not in parsed:
+            parsed[new] = parsed[old]
+    ts1_parts: list[str] = []
+    if "TS1_1" in parsed:
+        ts1_parts.append(parsed["TS1_1"])
+        for i in range(2, 10):
+            p = parsed.get(f"TS1_{i}")
+            if p:
+                ts1_parts.append(p)
+    elif parsed.get("TS1_STATIC"):
+        ts1_parts = [x.strip() for x in parsed["TS1_STATIC"].split(",") if x.strip()]
+    ts2_parts: list[str] = []
+    if "TS2_1" in parsed:
+        ts2_parts.append(parsed["TS2_1"])
+        for i in range(2, 10):
+            p = parsed.get(f"TS2_{i}")
+            if p:
+                ts2_parts.append(p)
+    elif parsed.get("TS2_STATIC"):
+        ts2_parts = [x.strip() for x in parsed["TS2_STATIC"].split(",") if x.strip()]
+    return ts1_parts, ts2_parts
 
 
 def _peer_field_json(value: Any) -> str | None:
@@ -95,6 +149,12 @@ def _topology_peer_row(peer_key: Any, peer: dict[str, Any]) -> dict[str, Any]:
         text = _peer_field_json(peer[legacy_key])
         if text is not None:
             row[json_key] = text
+    if "OPTIONS" in peer:
+        ts1, ts2 = parse_peer_options_static(peer.get("OPTIONS"))
+        if ts1:
+            row["ts1_static"] = ts1
+        if ts2:
+            row["ts2_static"] = ts2
     return row
 
 
@@ -159,6 +219,13 @@ def build_topology(systems: dict[str, Any], *, seq: int, ts: float | None = None
             entry["enhanced_obp"] = True
         if mode == "OPENBRIDGE" and cfg.get("NETWORK_ID") is not None:
             entry["network_id"] = _dmr_id(cfg["NETWORK_ID"])
+        if mode == "MASTER":
+            ts1 = static_tg_list(cfg.get("TS1_STATIC"))
+            ts2 = static_tg_list(cfg.get("TS2_STATIC"))
+            if ts1:
+                entry["ts1_static"] = ts1
+            if ts2:
+                entry["ts2_static"] = ts2
         peers_out: list[dict[str, Any]] = []
         for peer_key, peer in cfg.get("PEERS", {}).items():
             if not isinstance(peer, dict):

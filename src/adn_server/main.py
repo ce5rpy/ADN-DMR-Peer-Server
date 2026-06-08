@@ -89,6 +89,11 @@ from .infrastructure.security.password_download import DefaultSecurityDownloader
 from .infrastructure.security.user_passwords_loader import UserPasswordsLoader
 from .infrastructure.talker_alias_emblc import default_ta_emblc_encoder
 from .application.report.queue import BoundedReportQueue, QueuedReportSender
+from .infrastructure.twisted_adapters.report.mqtt_config import mqtt_settings_from_config
+from .infrastructure.twisted_adapters.report.mqtt_publisher import (
+    create_report_mqtt_publisher,
+    reconcile_mqtt_publisher,
+)
 from .infrastructure.twisted_adapters.report.worker import start_report_queue_worker
 from .infrastructure.twisted_adapters.report_server import ReportServerFactory
 from .infrastructure.twisted_adapters.udp_hbp import HBPProtocolFactory
@@ -256,7 +261,8 @@ def main() -> None:
     # Protocol registry for send_to_system (legacy: systems[name].send_system(packet))
     protocols: dict[str, Any] = {}
     udp_ports: dict[str, Any] = {}
-    report_factory = ReportServerFactory(config)
+    report_mqtt = create_report_mqtt_publisher(config)
+    report_factory = ReportServerFactory(config, mqtt=report_mqtt)
 
     def send_to_system(system_name: str, packet: bytes, **kwargs: Any) -> None:
         p = protocols.get(system_name)
@@ -366,6 +372,9 @@ def main() -> None:
             report_inner,
             on_errback=lambda e: _looping_errback(e, logger),
         )
+        if report_mqtt is not None:
+            report_factory.start_mqtt()
+            reactor.addSystemEventTrigger("during", "shutdown", report_mqtt.stop)
 
     # Reporting loop (REPORT_INTERVAL) — same logs as legacy after send_config/send_bridge
     def reporting_loop():
@@ -535,6 +544,8 @@ def main() -> None:
         user_passwords_loader.load(config)
 
     def _do_config_reload() -> None:
+        nonlocal report_mqtt
+        mqtt_before = mqtt_settings_from_config(config)
         new_config = prepare_reload_config(runtime_holder)
         try:
             result = reload_server_config(
@@ -551,6 +562,15 @@ def main() -> None:
                 log=logger,
             )
             swap_runtime_config(runtime_holder, new_config, config_path=config_path)
+            report_factory.set_config(config)
+            mqtt_after = mqtt_settings_from_config(config)
+            report_mqtt = reconcile_mqtt_publisher(
+                report_factory,
+                report_mqtt,
+                mqtt_before,
+                mqtt_after,
+                report_enabled=config.get("REPORTS", {}).get("REPORT", True),
+            )
             if result.added or result.removed or result.updated or result.rebound:
                 _on_config_systems_changed()
         except Exception as e:

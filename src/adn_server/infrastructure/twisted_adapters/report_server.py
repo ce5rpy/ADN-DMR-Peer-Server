@@ -31,7 +31,7 @@ from typing import Any
 from twisted.internet.protocol import Factory
 from twisted.protocols.basic import NetstringReceiver
 
-from adn_server.application.ports import ReportWireEncoder
+from adn_server.application.ports import ReportMqttPublisher, ReportWireEncoder
 
 from .report import REPORT_OPCODES, create_report_wire
 
@@ -70,9 +70,15 @@ class ReportProtocol(NetstringReceiver):
 class ReportServerFactory(Factory):
     """Twisted factory: ACL, client list, broadcast via injected ``ReportWireEncoder``."""
 
-    def __init__(self, config: dict[str, Any]) -> None:
+    def __init__(
+        self,
+        config: dict[str, Any],
+        *,
+        mqtt: ReportMqttPublisher | None = None,
+    ) -> None:
         self._config = config
         self._wire: ReportWireEncoder = create_report_wire(config)
+        self._mqtt = mqtt
         self.clients: list[ReportProtocol] = []
         self._systems: dict[str, Any] = {}
         self._bridges: dict[str, Any] = {}
@@ -85,6 +91,12 @@ class ReportServerFactory(Factory):
             return ReportProtocol(self)
         return None
 
+    def set_config(self, config: dict[str, Any]) -> None:
+        self._config = config
+
+    def set_mqtt(self, mqtt: ReportMqttPublisher | None) -> None:
+        self._mqtt = mqtt
+
     def set_systems(self, systems: dict[str, Any]) -> None:
         self._systems = systems
 
@@ -94,6 +106,16 @@ class ReportServerFactory(Factory):
     def _send_frames(self, client: ReportProtocol, frames: tuple[bytes, ...]) -> None:
         for frame in frames:
             client.sendString(frame)
+
+    def _broadcast_frames(self, frames: tuple[bytes, ...]) -> None:
+        if not frames:
+            return
+        for client in self.clients:
+            self._send_frames(client, frames)
+
+    def start_mqtt(self) -> None:
+        if self._mqtt is not None:
+            self._mqtt.start(self._wire, lambda: self._systems, lambda: self._bridges)
 
     def _send_hello_to(self, client: ReportProtocol) -> None:
         try:
@@ -108,16 +130,17 @@ class ReportServerFactory(Factory):
         self._send_frames(client, self._wire.bridge_frames(self._bridges, full_snapshot=full_snapshot))
 
     def send_config(self, *, incremental: bool = False) -> None:
-        full = not incremental
-        for client in self.clients:
-            self._send_config_to(client, full_snapshot=full)
+        frames = self._wire.config_frames(self._systems, full_snapshot=not incremental)
+        self._broadcast_frames(frames)
+        if self._mqtt is not None:
+            self._mqtt.publish_dashboard(self._systems)
 
     def send_bridge(self, *, incremental: bool = False) -> None:
-        full = not incremental
-        for client in self.clients:
-            self._send_bridge_to(client, full_snapshot=full)
+        frames = self._wire.bridge_frames(self._bridges, full_snapshot=not incremental)
+        self._broadcast_frames(frames)
 
     def send_bridge_event(self, event: str) -> None:
         frames = self._wire.bridge_event_frames(event)
-        for client in self.clients:
-            self._send_frames(client, frames)
+        self._broadcast_frames(frames)
+        if self._mqtt is not None:
+            self._mqtt.publish_frames(frames)

@@ -15,6 +15,7 @@ from adn_server.application.report import (
     parse_bridge_event_csv,
     routing_table_delta,
 )
+from adn_server.application.report.payloads import parse_peer_options_static
 from adn_server.domain import bytes_3
 
 _SCHEMA_PATH = Path(__file__).resolve().parents[2] / "schemas" / "report-v2.json"
@@ -26,6 +27,47 @@ def validator() -> jsonschema.Draft202012Validator:
     with _SCHEMA_PATH.open(encoding="utf-8") as fh:
         schema = json.load(fh)
     return jsonschema.Draft202012Validator(schema)
+
+
+def test_parse_peer_options_static_ts2():
+    ts1, ts2 = parse_peer_options_static(b"TS2=730444;TIMER=15;")
+    assert ts1 == []
+    assert ts2 == ["730444"]
+
+
+def test_build_topology_exports_peer_options_static() -> None:
+    systems = {
+        "SYSTEM-10": {
+            "MODE": "MASTER",
+            "ENABLED": True,
+            "PEERS": {
+                bytes_3(7301896): {
+                    "CONNECTION": "YES",
+                    "CONNECTED": 1000,
+                    "OPTIONS": b"TS2=730444;TIMER=15;",
+                },
+            },
+        },
+    }
+    doc = build_topology(systems, seq=1)
+    peer = doc["systems"][0]["peers"][0]
+    assert peer["ts2_static"] == ["730444"]
+
+
+def test_build_topology_exports_master_static_tgs() -> None:
+    systems = {
+        "MASTER-A": {
+            "MODE": "MASTER",
+            "ENABLED": True,
+            "TS1_STATIC": "91,92",
+            "TS2_STATIC": "730",
+            "PEERS": {},
+        },
+    }
+    doc = build_topology(systems, seq=1)
+    master = doc["systems"][0]
+    assert master["ts1_static"] == ["91", "92"]
+    assert master["ts2_static"] == ["730"]
 
 
 def test_build_topology_exports_peer_connected_at() -> None:

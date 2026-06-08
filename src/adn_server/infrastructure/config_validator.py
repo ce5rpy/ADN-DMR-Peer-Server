@@ -157,6 +157,29 @@ def _validate_global(global_cfg: dict[str, Any], errors: list[str]) -> None:
             errors.append("GLOBAL.PASS_SECURITY: required when GLOBAL.URL_SECURITY is set.")
 
 
+def _validate_mqtt(reports_cfg: dict[str, Any], errors: list[str]) -> None:
+    mqtt_block = reports_cfg.get("MQTT")
+    if isinstance(mqtt_block, dict):
+        if "ENABLED" in mqtt_block:
+            _expect_bool("REPORTS.MQTT.ENABLED", mqtt_block["ENABLED"], errors)
+        if mqtt_block.get("ENABLED") is True:
+            url = mqtt_block.get("URL") or reports_cfg.get("MQTT_URL")
+            if _is_empty(url):
+                errors.append("REPORTS.MQTT.URL: required when REPORTS.MQTT.ENABLED is true.")
+        if "QOS" in mqtt_block:
+            qos = mqtt_block["QOS"]
+            if not isinstance(qos, int) or qos < 0 or qos > 2:
+                errors.append(f"REPORTS.MQTT.QOS: expected integer 0–2, got {qos!r}.")
+    if "MQTT_ENABLED" in reports_cfg:
+        _expect_bool("REPORTS.MQTT_ENABLED", reports_cfg["MQTT_ENABLED"], errors)
+    if reports_cfg.get("MQTT_ENABLED") is True and _is_empty(reports_cfg.get("MQTT_URL")):
+        errors.append("REPORTS.MQTT_URL: required when REPORTS.MQTT_ENABLED is true.")
+    if "MQTT_QOS" in reports_cfg:
+        qos = reports_cfg["MQTT_QOS"]
+        if not isinstance(qos, int) or qos < 0 or qos > 2:
+            errors.append(f"REPORTS.MQTT_QOS: expected integer 0–2, got {qos!r}.")
+
+
 def _validate_reports(reports_cfg: dict[str, Any], errors: list[str]) -> None:
     if "REPORT" in reports_cfg:
         _expect_bool("REPORTS.REPORT", reports_cfg["REPORT"], errors)
@@ -169,6 +192,7 @@ def _validate_reports(reports_cfg: dict[str, Any], errors: list[str]) -> None:
             errors.append(
                 f"REPORTS.REPORT_CLIENTS: expected string or list, got {type(clients).__name__} ({clients!r})."
             )
+    _validate_mqtt(reports_cfg, errors)
 
 
 def _validate_logger(logger_cfg: dict[str, Any], errors: list[str]) -> None:

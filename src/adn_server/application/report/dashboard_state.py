@@ -1,0 +1,137 @@
+"""Minimal dashboard snapshot for external MQTT consumers (not full topology / routing)."""
+
+from __future__ import annotations
+
+import time
+from typing import Any
+
+from adn_server.domain import int_id
+from .payloads import _peer_field_json, build_topology, static_tg_list
+
+
+def _connected_topology_peers(system: dict[str, Any]) -> list[dict[str, Any]]:
+    return [p for p in system.get("peers", []) if isinstance(p, dict) and p.get("connected")]
+
+
+def _upstream_peer_connected(cfg: dict[str, Any]) -> bool:
+    mode = cfg.get("MODE", "MASTER")
+    if mode not in ("PEER", "XLXPEER"):
+        return False
+    for key in ("XLXSTATS", "STATS"):
+        block = cfg.get(key)
+        if isinstance(block, dict) and block.get("CONNECTION") == "YES":
+            return True
+    return False
+
+
+def _upstream_peer_block(name: str, cfg: dict[str, Any]) -> dict[str, Any]:
+    """Homebrew / XLX upstream (``CTABLE.PEERS``), not hotspots under a MASTER."""
+    mode = cfg.get("MODE", "PEER")
+    block: dict[str, Any] = {"mode": mode, "connected": True}
+    for legacy_key, json_key in (
+        ("CALLSIGN", "callsign"),
+        ("LOCATION", "location"),
+        ("DESCRIPTION", "description"),
+        ("URL", "url"),
+        ("MASTER_IP", "master_ip"),
+        ("MASTER_PORT", "master_port"),
+    ):
+        text = _peer_field_json(cfg.get(legacy_key))
+        if text is not None:
+            block[json_key] = text
+    radio_id = cfg.get("RADIO_ID")
+    if radio_id is not None:
+        block["radio_id"] = int_id(radio_id)
+    stats_key = "XLXSTATS" if mode == "XLXPEER" else "STATS"
+    stats = cfg.get(stats_key)
+    if isinstance(stats, dict) and stats.get("CONNECTED"):
+        try:
+            block["connected_at"] = int(float(stats["CONNECTED"]))
+        except (TypeError, ValueError):
+            pass
+    return block
+
+
+def _openbridge_block(name: str, cfg: dict[str, Any], topology_row: dict[str, Any] | None) -> dict[str, Any]:
+    """Enabled OPENBRIDGE legs (``CTABLE.OPENBRIDGES``); STREAMS stay empty here (live chips = monitor/voice)."""
+    block: dict[str, Any] = {"mode": "OPENBRIDGE", "streams": {}}
+    network_id = cfg.get("NETWORK_ID")
+    if network_id is not None:
+        block["network_id"] = int_id(network_id)
+    row = topology_row or {}
+    if row.get("ip"):
+        block["ip"] = row["ip"]
+    if row.get("port") is not None:
+        block["port"] = int(row["port"])
+    if row.get("enhanced_obp") or cfg.get("ENHANCED_OBP"):
+        block["enhanced_obp"] = True
+    return block
+
+
+def build_dashboard_state(
+    systems: dict[str, Any],
+    *,
+    server_id: str | None = None,
+    ts: float | None = None,
+) -> dict[str, Any]:
+    """Slim linked-systems view (masters with peers, homebrew peers, openbridges).
+
+    Mirrors adn-monitor WebSocket ``ctable_for_lnksys`` + ``ctable_for_opb`` intent:
+    no routing_table, no idle masters, no secrets.
+    """
+    epoch = time.time() if ts is None else ts
+    topology = build_topology(systems, seq=0, ts=epoch)
+    topology_by_name = {
+        s["name"]: s
+        for s in topology.get("systems", [])
+        if isinstance(s, dict) and s.get("name")
+    }
+    masters: dict[str, Any] = {}
+    peers: dict[str, Any] = {}
+    openbridges: dict[str, Any] = {}
+
+    for name, cfg in systems.items():
+        if not isinstance(cfg, dict) or not cfg.get("ENABLED", True):
+            continue
+        mode = cfg.get("MODE", "MASTER")
+        topo = topology_by_name.get(name)
+
+        if mode == "MASTER":
+            if topo is None:
+                continue
+            live = _connected_topology_peers(topo)
+            if not live:
+                continue
+            block: dict[str, Any] = {
+                "mode": "MASTER",
+                "peers": {int(p["id"]): p for p in live if "id" in p},
+            }
+            if topo.get("ip"):
+                block["ip"] = topo["ip"]
+            if topo.get("port") is not None:
+                block["port"] = int(topo["port"])
+            master_ts1 = static_tg_list(cfg.get("TS1_STATIC"))
+            master_ts2 = static_tg_list(cfg.get("TS2_STATIC"))
+            for peer_row in block["peers"].values():
+                if master_ts1 and "ts1_static" not in peer_row:
+                    peer_row["ts1_static"] = master_ts1
+                if master_ts2 and "ts2_static" not in peer_row:
+                    peer_row["ts2_static"] = master_ts2
+            masters[name] = block
+        elif mode == "OPENBRIDGE":
+            openbridges[name] = _openbridge_block(name, cfg, topo)
+        elif mode in ("PEER", "XLXPEER") and _upstream_peer_connected(cfg):
+            peers[name] = _upstream_peer_block(name, cfg)
+
+    payload: dict[str, Any] = {
+        "type": "dashboard_state",
+        "ts": float(epoch),
+        "ctable": {
+            "MASTERS": masters,
+            "PEERS": peers,
+            "OPENBRIDGES": openbridges,
+        },
+    }
+    if server_id is not None:
+        payload["server_id"] = server_id
+    return payload

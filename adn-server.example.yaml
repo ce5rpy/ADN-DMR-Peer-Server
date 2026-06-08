@@ -29,6 +29,18 @@ REPORTS:
   REPORT_INTERVAL: 60
   REPORT_PORT: 4321
   REPORT_CLIENTS: "127.0.0.1"
+  # Optional MQTT (disabled unless explicitly enabled).
+  # MQTT:
+  #   ENABLED: true
+  #   URL: mqtt://127.0.0.1:1883
+  #   # Auth: USERNAME/PASSWORD here, or mqtt://user:pass@host:1883 in URL (YAML overrides URL).
+  #   USERNAME: "<set-in-adn-server.yaml>"
+  #   PASSWORD: "<set-in-adn-server.yaml>"
+  #   # TLS (mqtts://): optional CA bundle for broker verification
+  #   CAFILE: ""
+  #   TOPIC_PREFIX: adn/73010
+  #   QOS: 0
+  #   Wire: state (retained), voice_event (live)
 
 LOGGER:
   # ENABLED: false   # omit or true = normal; false = no console/file logs (NullHandler)

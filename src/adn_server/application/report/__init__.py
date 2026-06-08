@@ -6,6 +6,7 @@ from .queue import (
     BoundedReportQueue,
     QueuedReportSender,
 )
+from .dashboard_state import build_dashboard_state
 from .payloads import (
     REPORT_FEATURES,
     REPORT_PROTOCOL,
@@ -24,6 +25,7 @@ __all__ = [
     "QueuedReportSender",
     "REPORT_FEATURES",
     "REPORT_PROTOCOL",
+    "build_dashboard_state",
     "build_routing_table",
     "build_topology",
     "hello_connected_system_names",

@@ -252,6 +252,61 @@ REPORTS:
 
 No `PROTOCOL` switch on **2.x** — wire is always JSON (`infrastructure/twisted_adapters/report/wire.py`). Payload mapping: **`application/report/`**.
 
+### Optional MQTT mirror (V2-P1-006)
+
+By default the server sends reports **only** over TCP netstring (adn-monitor and other TCP clients). MQTT is **disabled** unless you explicitly enable it.
+
+**Enable** only when both are set:
+
+1. `REPORTS.MQTT.ENABLED: true` (boolean `true`, not merely present)
+2. `REPORTS.MQTT.URL` — broker URL (`mqtt://host:1883` or `mqtts://host:8883`)
+
+```yaml
+REPORTS:
+  REPORT: true
+  REPORT_PORT: 4321
+  MQTT:
+    ENABLED: true
+    URL: mqtt://127.0.0.1:1883
+    TOPIC_PREFIX: adn/73010   # optional; default adn/{GLOBAL.SERVER_ID}
+    USERNAME: my-mqtt-user     # optional; overrides user in URL
+    PASSWORD: my-mqtt-secret   # optional; overrides password in URL
+    CAFILE: /path/to/ca.pem    # optional; broker TLS trust store (mqtts://)
+    QOS: 0                    # optional, 0–2
+```
+
+**Client ID:** auto-generated at startup as `adn-server-{GLOBAL.SERVER_ID}-{random}` (not configurable; random suffix avoids broker session collisions on restart).
+
+**Authentication:** username/password via `USERNAME` and `PASSWORD`, or embedded in the URL (`mqtt://user:pass@host:1883`). YAML credentials override URL userinfo. Password may be empty if the broker allows it. With `mqtts://`, set `CAFILE` when the broker uses a private CA.
+
+Requires optional dependency: `pip install 'adn-server[mqtt]'` (paho-mqtt). If MQTT is enabled but the library is missing, the server logs an error and continues with TCP only.
+
+**MQTT wire (fixed, not configurable):** only **`voice_event`** (telemetry) and **`state`** (snapshot). TCP-only types (`topology`, `routing_table`, `delta`, `hello`) are **not** published on MQTT.
+
+**Topic convention** (shared under `{prefix}`):
+
+| Topic | Direction | JSON `type` | Retain |
+|-------|-----------|-------------|--------|
+| `voice_event` | server → broker | `voice_event` | no |
+| `state` | server → broker | `dashboard_state` | yes |
+
+`state` carries masters with connected peers, homebrew peers, and openbridges (monitor WebSocket `conf,lnksys` + `conf,opb` intent). It is **retained** so new subscribers receive the last snapshot without requesting it. **Topology-driven refreshes** republish `{prefix}/state` when the dashboard changes (dedup).
+
+**Triggers:** live `voice_event`; retained `{prefix}/state` on topology changes and after MQTT connect (dedup).
+
+**Example** (`SERVER_ID` 7302):
+
+```bash
+mosquitto_sub -h BROKER -p 1883 -u USER -P PASS -t 'adn/7302/state' -v
+mosquitto_sub -h BROKER -p 1883 -u USER -P PASS -t 'adn/7302/voice_event' -v
+```
+
+**Broker ACL:** consumers need **subscribe** on `adn/7302/state` and `adn/7302/voice_event`; the server `client_id` needs **publish** on those two topics only (no server-side subscribe).
+
+**Reload (`systemctl reload` / SIGHUP):** when `REPORTS.MQTT` changes (enable/disable, URL, credentials, TLS, `TOPIC_PREFIX`, `QOS`), the server disconnects the old MQTT client and connects with the new settings, or stays offline if `ENABLED` becomes false.
+
+**QoS:** configurable via `MQTT.QOS` (default `0`).
+
 **`rule_timer`**, **`stat_trimmer`**, and **`bridgeDebug`** use **routing deltas** when only part of `BRIDGES` changed; connect, `REPORT_INTERVAL`, reload, and client `CONFIG_REQ` / `BRIDGE_REQ` send **full** snapshots.
 
 ## Version pairing (supported combinations)

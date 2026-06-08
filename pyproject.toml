@@ -21,7 +21,8 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-dev = ["pytest>=7.0", "jsonschema>=4.0"]
+mqtt = ["paho-mqtt>=2.0"]
+dev = ["pytest>=7.0", "jsonschema>=4.0", "paho-mqtt>=2.0"]
 docs = ["mkdocs>=1.6", "mkdocs-material>=9.5", "pymdown-extensions>=10.3"]
 
 [tool.setuptools.packages.find]

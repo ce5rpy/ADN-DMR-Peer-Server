@@ -112,6 +112,35 @@ class ReportWireEncoder(ABC):
         ...
 
 
+class ReportMqttPublisher(ABC):
+    """Optional second sink: publish the same report v2 JSON payloads to an MQTT broker."""
+
+    @abstractmethod
+    def start(
+        self,
+        wire: ReportWireEncoder,
+        get_systems: Any,
+        get_bridges: Any,
+    ) -> None:
+        """Connect to broker and publish bootstrap snapshots (hello + full topology + routing)."""
+        ...
+
+    @abstractmethod
+    def publish_frames(self, frames: tuple[bytes, ...]) -> None:
+        """Publish zero or more wire frames (opcode + JSON) to MQTT topics."""
+        ...
+
+    @abstractmethod
+    def publish_dashboard(self, systems: dict[str, Any]) -> None:
+        """Publish slim ``dashboard_state`` (linked systems only)."""
+        ...
+
+    @abstractmethod
+    def stop(self) -> None:
+        """Disconnect from broker."""
+        ...
+
+
 class ReportSender(ABC):
     """Send config and bridge state to report TCP clients (CONFIG_SND, BRIDGE_SND, BRDG_EVENT)."""
 
