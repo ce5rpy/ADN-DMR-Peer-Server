@@ -21,47 +21,23 @@
 #   Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301  USA
 ###############################################################################
 
-"""Report server: CONFIG_SND, BRIDGE_SND, BRDG_EVENT (legacy reportFactory, bridgeReportFactory)."""
+"""TCP report transport (Twisted). Encoding delegated to ``report/`` wire adapters."""
 
 from __future__ import annotations
 
-import json
 import logging
-import pickle
 from typing import Any
 
 from twisted.internet.protocol import Factory
 from twisted.protocols.basic import NetstringReceiver
 
+from adn_server.application.ports import ReportWireEncoder
+
+from .report import REPORT_OPCODES, create_report_wire
+
 logger = logging.getLogger(__name__)
 
-REPORT_OPCODES = {
-    "CONFIG_REQ": b"\x00",
-    "CONFIG_SND": b"\x01",
-    "BRIDGE_REQ": b"\x02",
-    "BRIDGE_SND": b"\x03",
-    "CONFIG_UPD": b"\x04",
-    "BRIDGE_UPD": b"\x05",
-    "LINK_EVENT": b"\x06",
-    "BRDG_EVENT": b"\x07",
-    "HELLO": b"\xff",
-}
-
-SERVER_NAME = "adn-server"
-PROTOCOL_VERSION = 1
-SERVER_FEATURES = ("INGRESS", "END_TX_FORWARD", "PUSH_ON_CONNECT")
-
-
-def _server_version() -> str:
-    try:
-        from importlib.metadata import PackageNotFoundError, version
-
-        try:
-            return version("adn-server")
-        except PackageNotFoundError:
-            return "0.0.0"
-    except Exception:
-        return "0.0.0"
+__all__ = ["REPORT_OPCODES", "ReportServerFactory"]
 
 
 class ReportProtocol(NetstringReceiver):
@@ -76,8 +52,8 @@ class ReportProtocol(NetstringReceiver):
         addr = f"{peer.host}:{peer.port}" if peer else "?"
         logger.info("(REPORT) Client connected from %s (%s client(s))", addr, len(self._factory.clients))
         self._factory._send_hello_to(self)
-        self._factory._send_config_to(self)
-        self._factory._send_bridge_to(self)
+        self._factory._send_config_to(self, full_snapshot=True)
+        self._factory._send_bridge_to(self, full_snapshot=True)
 
     def connectionLost(self, reason: Any = None) -> None:
         if self in self._factory.clients:
@@ -86,18 +62,17 @@ class ReportProtocol(NetstringReceiver):
 
     def stringReceived(self, data: bytes) -> None:
         if data[:1] == REPORT_OPCODES["CONFIG_REQ"]:
-            self._factory._send_config_to(self)
+            self._factory._send_config_to(self, full_snapshot=True)
         elif data[:1] == REPORT_OPCODES["BRIDGE_REQ"]:
-            self._factory._send_bridge_to(self)
-        else:
-            pass  # unknown opcode
+            self._factory._send_bridge_to(self, full_snapshot=True)
 
 
 class ReportServerFactory(Factory):
-    """Factory for report protocol; holds config and bridges and sends to clients."""
+    """Twisted factory: ACL, client list, broadcast via injected ``ReportWireEncoder``."""
 
     def __init__(self, config: dict[str, Any]) -> None:
         self._config = config
+        self._wire: ReportWireEncoder = create_report_wire(config)
         self.clients: list[ReportProtocol] = []
         self._systems: dict[str, Any] = {}
         self._bridges: dict[str, Any] = {}
@@ -116,50 +91,33 @@ class ReportServerFactory(Factory):
     def set_bridges(self, bridges: dict[str, Any]) -> None:
         self._bridges = bridges
 
+    def _send_frames(self, client: ReportProtocol, frames: tuple[bytes, ...]) -> None:
+        for frame in frames:
+            client.sendString(frame)
+
     def _send_hello_to(self, client: ReportProtocol) -> None:
-        info = {
-            "server": SERVER_NAME,
-            "version": _server_version(),
-            "protocol": PROTOCOL_VERSION,
-            "features": list(SERVER_FEATURES),
-        }
-        payload = json.dumps(info, separators=(",", ":")).encode("utf-8")
         try:
-            client.sendString(REPORT_OPCODES["HELLO"] + payload)
-            logger.debug("(REPORT) Sent HELLO to client: %s", info)
+            self._send_frames(client, self._wire.hello_frames(self._systems))
         except Exception as e:
             logger.warning("(REPORT) Failed to send HELLO: %s", e)
 
-    def _send_config_to(self, client: ReportProtocol) -> None:
-        """Send CONFIG_SND to a single client (e.g. on connect or CONFIG_REQ)."""
-        payload = pickle.dumps(self._systems, protocol=2)
-        msg = REPORT_OPCODES["CONFIG_SND"] + payload
-        client.sendString(msg)
-        logger.debug("(REPORT) Sent CONFIG_SND to client (%d systems)", len(self._systems))
+    def _send_config_to(self, client: ReportProtocol, *, full_snapshot: bool) -> None:
+        self._send_frames(client, self._wire.config_frames(self._systems, full_snapshot=full_snapshot))
 
-    def _send_bridge_to(self, client: ReportProtocol) -> None:
-        """Send BRIDGE_SND to a single client (e.g. on connect or BRIDGE_REQ)."""
-        payload = pickle.dumps(self._bridges, protocol=2)
-        msg = REPORT_OPCODES["BRIDGE_SND"] + payload
-        client.sendString(msg)
-        logger.debug("(REPORT) Sent BRIDGE_SND to client (%d bridges)", len(self._bridges))
+    def _send_bridge_to(self, client: ReportProtocol, *, full_snapshot: bool) -> None:
+        self._send_frames(client, self._wire.bridge_frames(self._bridges, full_snapshot=full_snapshot))
 
-    def send_config(self) -> None:
-        """Send CONFIG_SND (pickle SYSTEMS) to all clients."""
-        n = len(self.clients)
-        logger.debug("(REPORT) Sending CONFIG_SND to %s client(s)", n)
-        for c in self.clients:
-            self._send_config_to(c)
+    def send_config(self, *, incremental: bool = False) -> None:
+        full = not incremental
+        for client in self.clients:
+            self._send_config_to(client, full_snapshot=full)
 
-    def send_bridge(self) -> None:
-        """Send BRIDGE_SND (pickle BRIDGES) to all clients."""
-        n = len(self.clients)
-        logger.debug("(REPORT) Sending BRIDGE_SND to %s client(s)", n)
-        for c in self.clients:
-            self._send_bridge_to(c)
+    def send_bridge(self, *, incremental: bool = False) -> None:
+        full = not incremental
+        for client in self.clients:
+            self._send_bridge_to(client, full_snapshot=full)
 
     def send_bridge_event(self, event: str) -> None:
-        """Send BRDG_EVENT."""
-        msg = REPORT_OPCODES["BRDG_EVENT"] + event.encode("utf-8", errors="ignore")
-        for c in self.clients:
-            c.sendString(msg)
+        frames = self._wire.bridge_event_frames(event)
+        for client in self.clients:
+            self._send_frames(client, frames)

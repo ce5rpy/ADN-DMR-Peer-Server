@@ -8,7 +8,7 @@ python3 -m pip install --no-user -e ".[dev]"
 python3 -m pytest tests/<path>/test_<name>.py -q          # single file
 python3 -m pytest tests/<path>/test_<name>.py::test_foo -q # single test
 python3 -m pytest tests/bridge/ -q                         # whole domain
-python3 -m pytest tests/ -q                                # full suite (169 + 1 skip)
+python3 -m pytest tests/ -q                                # full suite (177 + 1 skip)
 ```
 
 Use the project interpreter, e.g. `/opt/.pyenv/versions/3.11.8/bin/python3`.
@@ -25,6 +25,8 @@ Use the project interpreter, e.g. `/opt/.pyenv/versions/3.11.8/bin/python3`.
 | `parrot/` | Recording timers, playback loop, seq preservation, ingress path |
 | `replay/` | JSONL session replay (V2-P0-007) |
 | `schemas/` | Report v2 JSON Schema validation (`jsonschema` dev dep) |
+| `application/test_report_payloads.py` | Report payload builders + CSV parse |
+| `infrastructure/test_report_server_wire.py` | Report server wire opcodes |
 | `smoke/` | Quick routing smoke + packet builder |
 | `infrastructure/` | Logging reload, bridge router index |
 | `application/` | RuntimeContext holder / config proxy |

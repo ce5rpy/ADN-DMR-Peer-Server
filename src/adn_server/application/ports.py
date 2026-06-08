@@ -88,17 +88,41 @@ class KeysStore(ABC):
         ...
 
 
+class ReportWireEncoder(ABC):
+    """Outbound port: encode one report protocol variant into zero or more TCP frames."""
+
+    @abstractmethod
+    def hello_frames(self, systems: dict[str, Any]) -> tuple[bytes, ...]:
+        """HELLO (0xFF) frame(s) for this variant."""
+        ...
+
+    @abstractmethod
+    def config_frames(self, systems: dict[str, Any], *, full_snapshot: bool) -> tuple[bytes, ...]:
+        """CONFIG_SND / TOPOLOGY_SND / delta frames (empty if nothing to send)."""
+        ...
+
+    @abstractmethod
+    def bridge_frames(self, bridges: dict[str, Any], *, full_snapshot: bool) -> tuple[bytes, ...]:
+        """BRIDGE_SND / ROUTING_TABLE_SND / delta frames."""
+        ...
+
+    @abstractmethod
+    def bridge_event_frames(self, event: str) -> tuple[bytes, ...]:
+        """BRDG_EVENT / VOICE_EVENT_SND frames."""
+        ...
+
+
 class ReportSender(ABC):
     """Send config and bridge state to report TCP clients (CONFIG_SND, BRIDGE_SND, BRDG_EVENT)."""
 
     @abstractmethod
-    def send_config(self, systems: dict[str, Any]) -> None:
-        """Send CONFIG_SND (pickle systems)."""
+    def send_config(self, systems: dict[str, Any], *, incremental: bool = False) -> None:
+        """Send CONFIG_SND (pickle systems) or topology / delta JSON."""
         ...
 
     @abstractmethod
-    def send_bridge(self, bridges: dict[str, Any]) -> None:
-        """Send BRIDGE_SND (pickle bridges)."""
+    def send_bridge(self, bridges: dict[str, Any], *, incremental: bool = False) -> None:
+        """Send BRIDGE_SND (pickle bridges) or routing_table / delta JSON."""
         ...
 
     @abstractmethod

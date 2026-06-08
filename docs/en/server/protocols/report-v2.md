@@ -4,7 +4,9 @@
 
 ## Goals
 
-Replace monitor snapshots that today use **pickle** (`CONFIG_SND`, `BRIDGE_SND`) and **CSV strings** (`BRDG_EVENT`) with **typed JSON** that any client can decode. Legacy mode remains available via `REPORTS.PROTOCOL: legacy` (shim, V2-P1-003).
+Replace monitor snapshots that today use **pickle** (`CONFIG_SND`, `BRIDGE_SND`) and **CSV strings** (`BRDG_EVENT`) with **typed JSON** that any client can decode.
+
+**Release policy:** **adn-server 1.0.x** + **adn-monitor 1.0.x** = report v1 (frozen tag pair). **2.x** server emits **report v2 only** (no pickle shim, no `dual`); **adn-monitor 2.x** is required on the same release line.
 
 ## Transport (unchanged)
 
@@ -46,7 +48,7 @@ On connect the server sends **`HELLO` (`0xFF`)** first (same as today). v2 clien
 | `report_protocol` | **2** for this schema. Distinct from legacy field `protocol: 1`. |
 | `features` | v1 tokens unchanged; v2 adds `REPORT_V2` and payload capabilities. |
 
-Monitors that only understand v1 ignore unknown `features` and continue with pickle opcodes when `REPORTS.PROTOCOL=legacy`.
+Monitor **1.0.x** does not speak this wire; use the **1.0.x** server tag for that pair.
 
 ## Message types
 
@@ -240,21 +242,26 @@ OpenBridge **INGRESS** vs **START** semantics match [Monitoring and reports](../
 - Clients track last applied `seq`; `delta` messages set `since_seq` to the client watermark.
 - Full snapshots may still be sent on connect and on `REPORTS.REPORT_INTERVAL` (same triggers as v1 CONFIG/BRIDGE).
 
-## Configuration (planned)
+## Configuration
 
 ```yaml
 REPORTS:
   REPORT: true
   REPORT_PORT: 4321
-  PROTOCOL: legacy   # legacy | v2 (default legacy until 2.0.0)
 ```
 
-## Compatibility
+No `PROTOCOL` switch on **2.x** — wire is always JSON (`infrastructure/twisted_adapters/report/wire.py`). Payload mapping: **`application/report/`**.
 
-| Server | Monitor | Mode |
-|--------|---------|------|
-| 1.0.x | 1.0.x | legacy + HELLO v1 |
-| 2.0.0-alpha | 1.0.x | legacy shim |
-| 2.0.0-alpha | 2.x | report v2 opt-in |
+**`rule_timer`**, **`stat_trimmer`**, and **`bridgeDebug`** use **routing deltas** when only part of `BRIDGES` changed; connect, `REPORT_INTERVAL`, reload, and client `CONFIG_REQ` / `BRIDGE_REQ` send **full** snapshots.
+
+## Version pairing (supported combinations)
+
+| Server | Monitor | Report wire | Notes |
+|--------|---------|-------------|--------|
+| **1.0.x** | **1.0.x** | v1 (pickle/CSV) | Frozen pair; no cross-upgrade of report protocol |
+| **2.0.0-alpha.\*** | **2.x** (dev) | v2 only | Current `develop` line |
+| **2.0.0** | **2.0.x** | v2 only | GA pair; monitor 1.0.x **not** supported |
+
+Do **not** run monitor 1.0.x against server 2.0.0 or monitor 2.x against server 1.0.x for production.
 
 See also [Monitoring and reports](../user-guide/monitoring.md).

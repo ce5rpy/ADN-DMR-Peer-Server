@@ -41,13 +41,13 @@ class ReportingUseCases:
         self._sender = report_sender
         self._config = config
 
-    def send_config(self, systems: dict[str, Any]) -> None:
-        """Send CONFIG_SND to all report clients."""
-        self._sender.send_config(systems)
+    def send_config(self, systems: dict[str, Any], *, incremental: bool = False) -> None:
+        """Send CONFIG_SND or v2 topology to all report clients."""
+        self._sender.send_config(systems, incremental=incremental)
 
-    def send_bridge(self, bridges: dict[str, Any]) -> None:
-        """Send BRIDGE_SND to all report clients."""
-        self._sender.send_bridge(bridges)
+    def send_bridge(self, bridges: dict[str, Any], *, incremental: bool = False) -> None:
+        """Send BRIDGE_SND or v2 routing_table to all report clients."""
+        self._sender.send_bridge(bridges, incremental=incremental)
 
     def send_bridge_event(self, event: str) -> None:
         """Send BRDG_EVENT to all report clients."""

@@ -100,13 +100,13 @@ class ReportSenderAdapter(ReportSender):
     def __init__(self, factory: ReportServerFactory) -> None:
         self._factory = factory
 
-    def send_config(self, systems) -> None:
+    def send_config(self, systems, *, incremental: bool = False) -> None:
         self._factory.set_systems(systems)
-        self._factory.send_config()
+        self._factory.send_config(incremental=incremental)
 
-    def send_bridge(self, bridges) -> None:
+    def send_bridge(self, bridges, *, incremental: bool = False) -> None:
         self._factory.set_bridges(bridges)
-        self._factory.send_bridge()
+        self._factory.send_bridge(incremental=incremental)
 
     def send_bridge_event(self, event: str) -> None:
         self._factory.send_bridge_event(event)
@@ -369,7 +369,7 @@ def main() -> None:
     # (V2-P0-006: no deferToThread — avoids races with dmrd_received on the same dict).
     def _rule_timer_on_reactor() -> None:
         bridge_use_cases.rule_timer_loop()
-        reporting_use_cases.send_bridge(bridge_router.get_bridges())
+        reporting_use_cases.send_bridge(bridge_router.get_bridges(), incremental=True)
 
     task.LoopingCall(_rule_timer_on_reactor).start(52).addErrback(_looping_errback, logger)
     task.LoopingCall(bridge_use_cases.stream_trimmer_loop).start(5).addErrback(_looping_errback, logger)
@@ -378,7 +378,7 @@ def main() -> None:
 
         def _stat_trimmer_on_reactor() -> None:
             bridge_use_cases.stat_trimmer_loop()
-            reporting_use_cases.send_bridge(bridge_router.get_bridges())
+            reporting_use_cases.send_bridge(bridge_router.get_bridges(), incremental=True)
 
         task.LoopingCall(_stat_trimmer_on_reactor).start(303).addErrback(_looping_errback, logger)
 
@@ -388,7 +388,10 @@ def main() -> None:
     # bridgeDebug (legacy 66s) — remove invalid bridges, fix >1 active dial per MASTER
     if config.get("GLOBAL", {}).get("DEBUG_BRIDGES"):
         task.LoopingCall(
-            lambda: (bridge_use_cases.bridge_debug_loop(), reporting_use_cases.send_bridge(bridge_router.get_bridges()))
+            lambda: (
+                bridge_use_cases.bridge_debug_loop(),
+                reporting_use_cases.send_bridge(bridge_router.get_bridges(), incremental=True),
+            )
         ).start(66).addErrback(_looping_errback, logger)
 
     # Alias reload (STALE_DAYS -> seconds)

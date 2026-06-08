@@ -4,7 +4,9 @@
 
 ## Objetivos
 
-Sustituir instantáneas al monitor que hoy usan **pickle** (`CONFIG_SND`, `BRIDGE_SND`) y **CSV** (`BRDG_EVENT`) por **JSON tipado**. El modo legacy sigue con `REPORTS.PROTOCOL: legacy` (shim, V2-P1-003).
+Sustituir instantáneas al monitor que hoy usan **pickle** (`CONFIG_SND`, `BRIDGE_SND`) y **CSV** (`BRDG_EVENT`) por **JSON tipado**.
+
+**Política de releases:** **adn-server 1.0.x** + **adn-monitor 1.0.x** = report v1 (tags congelados). El servidor **2.x** emite **solo report v2** (sin shim pickle ni `dual`); requiere **adn-monitor 2.x** en la misma línea.
 
 ## Transporte (sin cambios)
 
@@ -237,21 +239,26 @@ Semántica OpenBridge INGRESS/START: ver [Monitor e informes](../user-guide/moni
 - `topology` y `routing_table` llevan `seq` (uint) y `ts` (epoch float).
 - `delta` indica `since_seq` respecto al último `seq` aplicado por el cliente.
 
-## Configuración (prevista)
+## Configuración
 
 ```yaml
 REPORTS:
   REPORT: true
   REPORT_PORT: 4321
-  PROTOCOL: legacy   # legacy | v2
 ```
 
-## Compatibilidad
+Sin `PROTOCOL` en **2.x** — wire siempre JSON (`wire.py`). Mapeo: **`application/report/`**.
 
-| Servidor | Monitor | Modo |
-|----------|---------|------|
-| 1.0.x | 1.0.x | legacy + HELLO v1 |
-| 2.0.0-alpha | 1.0.x | shim legacy |
-| 2.0.0-alpha | 2.x | report v2 opt-in |
+Los timers usan **deltas** cuando solo cambia parte de `BRIDGES`; conexión, `REPORT_INTERVAL`, reload y `CONFIG_REQ` / `BRIDGE_REQ` envían instantáneas **completas**.
+
+## Acoplamiento de versiones (combinaciones soportadas)
+
+| Servidor | Monitor | Wire de informes | Notas |
+|----------|---------|------------------|--------|
+| **1.0.x** | **1.0.x** | v1 (pickle/CSV) | Par congelado |
+| **2.0.0-alpha.\*** | **2.x** (dev) | solo v2 | Línea `develop` actual |
+| **2.0.0** | **2.0.x** | solo v2 | Par GA; monitor 1.0.x **no** soportado |
+
+No usar monitor 1.0.x con servidor 2.0.0 ni monitor 2.x con servidor 1.0.x en producción.
 
 Ver también [Monitor e informes](../user-guide/monitoring.md).

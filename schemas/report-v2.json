@@ -60,7 +60,7 @@
         "systems": {
           "type": "array",
           "items": { "type": "string" },
-          "description": "Optional system names known at handshake (full topology follows in topology message)."
+          "description": "Optional hint: enabled system names with at least one connected peer or upstream link. Omitted when none. Full topology (all systems) follows in the topology message."
         }
       }
     },
@@ -76,6 +76,10 @@
         "port": { "type": "integer", "minimum": 0, "maximum": 65535 },
         "repeat": { "type": "boolean" },
         "enhanced_obp": { "type": "boolean" },
+        "network_id": {
+          "$ref": "#/$defs/dmr_id",
+          "description": "OPENBRIDGE NETWORK_ID (legacy CONFIG bytes_4 value as integer)."
+        },
         "peers": {
           "type": "array",
           "items": {
@@ -86,7 +90,18 @@
               "id": { "$ref": "#/$defs/dmr_id" },
               "connected": { "type": "boolean" },
               "ip": { "type": "string" },
-              "port": { "type": "integer", "minimum": 0, "maximum": 65535 }
+              "port": { "type": "integer", "minimum": 0, "maximum": 65535 },
+              "callsign": { "type": "string" },
+              "rx_freq": { "type": "string", "description": "RX frequency digits or formatted string from HBP config." },
+              "tx_freq": { "type": "string" },
+              "location": { "type": "string" },
+              "description": { "type": "string" },
+              "url": { "type": "string" },
+              "slots": { "type": "string" },
+              "package_id": { "type": "string" },
+              "software_id": { "type": "string" },
+              "colorcode": { "type": "string" },
+              "tx_power": { "type": "string" }
             }
           }
         }
@@ -176,7 +191,8 @@
         },
         "phase": {
           "type": "string",
-          "enum": ["INGRESS", "START", "END"]
+          "enum": ["INGRESS", "START", "END", "DATA"],
+          "description": "DATA is used for UNIT DATA events (legacy BRDG_EVENT CSV)."
         },
         "direction": {
           "type": "string",

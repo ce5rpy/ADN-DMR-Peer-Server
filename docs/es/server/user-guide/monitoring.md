@@ -5,10 +5,12 @@
 Cuando **`REPORTS`** está habilitado en la config del servidor, el **ADN DMR Peer Server** escucha en TCP y los **clientes de informes** (típicamente **adn-monitor**) se conectan y reciben:
 
 - **HELLO** (opcode **`0xFF`**) — JSON enviado **el primero** en cada conexión TCP por **ADN DMR Server** (`adn-server`): nombre **`server`**, **`version`** del paquete, número de **`protocol`** y lista **`features`** (p. ej. `INGRESS`, `END_TX_FORWARD`, `PUSH_ON_CONNECT`). Permite al monitor marcar la sesión como **v2** antes de las cargas pickle.
-- **CONFIG_SND** / **BRIDGE_SND** — instantáneas pickle de sistemas y bridges (tras HELLO al conectar, en **`CONFIG_REQ`** / **`BRIDGE_REQ`**, en **reload** de config (**SIGHUP**), cuando un hotspot **MASTER** **registra o desconecta**, y en el bucle periódico **`REPORT_INTERVAL`**).
-- **BRDG_EVENT** — eventos de texto para llamadas (`GROUP VOICE`, `PRIVATE VOICE`, etc.).
+- **Report v1 (par 1.0.x):** **CONFIG_SND** / **BRIDGE_SND** (pickle), **BRDG_EVENT** (CSV).
+- **Report v2 (par 2.x):** **TOPOLOGY_SND** / **ROUTING_TABLE_SND** (JSON), **VOICE_EVENT_SND**, **DELTA_SND** opcional — mismos disparadores (conexión, **`CONFIG_REQ`** / **`BRIDGE_REQ`**, reload, peers, **`REPORT_INTERVAL`**).
 
-**Informes v2 (borrador):** mensajes JSON tipados (`topology`, `routing_table`, `voice_event`, `delta`) sustituirán pickle/CSV con `REPORTS.PROTOCOL: v2` (Fase 1). Esquema y wire: [Protocolo de informes v2 (JSON)](../protocols/report-v2.md).
+**Informes v2:** JSON tipado (`topology`, `routing_table`, `voice_event`, `delta`) sustituye pickle/CSV en el par **servidor 2.x + monitor 2.x**. Esquema: [Protocolo de informes v2 (JSON)](../protocols/report-v2.md).
+
+**Acoplamiento de versiones:** **servidor 1.0.x + monitor 1.0.x** = report v1 (tags). **servidor 2.x** emite **solo report v2** — requiere **monitor 2.x**. Sin wire `dual`; monitor 1.0.x no decodifica este servidor.
 
 Las pilas antiguas (**legado** estilo `adn-dmr-server`) pueden **omitir** HELLO. **adn-monitor** espera hasta **`ADN_CONNECTION.HELLO_TIMEOUT_MS`** (ver [Configuración del monitor](../../monitor/configuration.md#adn_connection)); si no llega HELLO, asume informes **legacy**.
 
