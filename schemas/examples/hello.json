@@ -1,0 +1,17 @@
+{
+  "type": "hello",
+  "server": "adn-server",
+  "version": "2.0.0-alpha.1",
+  "report_protocol": 2,
+  "features": [
+    "INGRESS",
+    "END_TX_FORWARD",
+    "PUSH_ON_CONNECT",
+    "REPORT_V2",
+    "TOPOLOGY_JSON",
+    "ROUTING_TABLE_JSON",
+    "VOICE_EVENT_JSON",
+    "DELTA_UPDATES"
+  ],
+  "systems": ["MASTER-A", "MASTER-B", "OBP-CL"]
+}

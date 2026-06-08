@@ -8,6 +8,8 @@ When **`REPORTS`** is enabled in the server config, the **ADN DMR Peer Server** 
 - **CONFIG_SND** / **BRIDGE_SND** — pickled snapshots of systems and bridges (sent immediately after HELLO on connect, on **`CONFIG_REQ`** / **`BRIDGE_REQ`**, on **SIGHUP** config reload, when a **MASTER** hotspot **registers or disconnects**, and on the periodic **`REPORT_INTERVAL`** loop).
 - **BRDG_EVENT** — text events for calls (`GROUP VOICE`, `PRIVATE VOICE`, etc.).
 
+**Report v2 (draft):** typed JSON messages (`topology`, `routing_table`, `voice_event`, `delta`) will replace pickle/CSV when `REPORTS.PROTOCOL: v2` (Phase 1). Schema and wire layout: [Report protocol v2 (JSON)](../protocols/report-v2.md).
+
 Older stacks (**legacy** `adn-dmr-server`-style) may **omit** HELLO. **adn-monitor** waits up to **`ADN_CONNECTION.HELLO_TIMEOUT_MS`** (see [Monitor configuration](../../monitor/configuration.md#adn_connection)); if no HELLO arrives, it assumes **legacy** reporting.
 
 The **monitor** decodes these messages, updates its **CTABLE** / **BTABLE**, and (when MySQL is configured) persists Last Heard / statistics.

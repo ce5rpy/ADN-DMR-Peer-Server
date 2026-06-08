@@ -8,6 +8,8 @@ Cuando **`REPORTS`** está habilitado en la config del servidor, el **ADN DMR Pe
 - **CONFIG_SND** / **BRIDGE_SND** — instantáneas pickle de sistemas y bridges (tras HELLO al conectar, en **`CONFIG_REQ`** / **`BRIDGE_REQ`**, en **reload** de config (**SIGHUP**), cuando un hotspot **MASTER** **registra o desconecta**, y en el bucle periódico **`REPORT_INTERVAL`**).
 - **BRDG_EVENT** — eventos de texto para llamadas (`GROUP VOICE`, `PRIVATE VOICE`, etc.).
 
+**Informes v2 (borrador):** mensajes JSON tipados (`topology`, `routing_table`, `voice_event`, `delta`) sustituirán pickle/CSV con `REPORTS.PROTOCOL: v2` (Fase 1). Esquema y wire: [Protocolo de informes v2 (JSON)](../protocols/report-v2.md).
+
 Las pilas antiguas (**legado** estilo `adn-dmr-server`) pueden **omitir** HELLO. **adn-monitor** espera hasta **`ADN_CONNECTION.HELLO_TIMEOUT_MS`** (ver [Configuración del monitor](../../monitor/configuration.md#adn_connection)); si no llega HELLO, asume informes **legacy**.
 
 El **monitor** decodifica estos mensajes, actualiza **CTABLE** / **BTABLE** y (con MySQL configurado) persiste Last Heard / estadísticas.

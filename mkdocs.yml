@@ -62,6 +62,7 @@ nav:
           - HBP (DMRD): server/protocols/hbp.md
           - OpenBridge (DMRE): server/protocols/openbridge.md
           - DMRE v5 frame layout: server/protocols/dmre-v5.md
+          - Report protocol v2 (JSON): server/protocols/report-v2.md
       - Development:
           - Architecture: server/development/architecture.md
           - Behaviour and timers: server/development/behaviour-and-timers.md

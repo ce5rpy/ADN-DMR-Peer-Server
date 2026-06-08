@@ -62,6 +62,7 @@ nav:
           - HBP (DMRD): server/protocols/hbp.md
           - OpenBridge (DMRE): server/protocols/openbridge.md
           - Trama DMRE v5: server/protocols/dmre-v5.md
+          - Protocolo de informes v2 (JSON): server/protocols/report-v2.md
       - Desarrollo:
           - Arquitectura: server/development/architecture.md
           - Comportamiento y temporizadores: server/development/behaviour-and-timers.md

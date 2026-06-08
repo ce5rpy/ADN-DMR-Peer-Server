@@ -3,11 +3,12 @@
 One **topic per file** — run only what you need while developing or validating a change.
 
 ```bash
-python3 -m pip install -e ".[dev]"
+# Install into the pyenv site-packages (not ~/.local); Cursor/VS Code pytest sets PYTHONNOUSERSITE=1
+python3 -m pip install --no-user -e ".[dev]"
 python3 -m pytest tests/<path>/test_<name>.py -q          # single file
 python3 -m pytest tests/<path>/test_<name>.py::test_foo -q # single test
 python3 -m pytest tests/bridge/ -q                         # whole domain
-python3 -m pytest tests/ -q                                # full suite (152)
+python3 -m pytest tests/ -q                                # full suite (169 + 1 skip)
 ```
 
 Use the project interpreter, e.g. `/opt/.pyenv/versions/3.11.8/bin/python3`.
@@ -22,6 +23,8 @@ Use the project interpreter, e.g. `/opt/.pyenv/versions/3.11.8/bin/python3`.
 | `voice/` | Announcements, TTS schedule, broadcast queue, disconnected voice, in-band signalling |
 | `talker_alias/` | Encode/decode, passthrough, MMDVM wire, bridge inject |
 | `parrot/` | Recording timers, playback loop, seq preservation, ingress path |
+| `replay/` | JSONL session replay (V2-P0-007) |
+| `schemas/` | Report v2 JSON Schema validation (`jsonschema` dev dep) |
 | `smoke/` | Quick routing smoke + packet builder |
 | `infrastructure/` | Logging reload, bridge router index |
 | `application/` | RuntimeContext holder / config proxy |

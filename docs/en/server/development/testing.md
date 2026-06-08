@@ -1,6 +1,6 @@
 # Testing
 
-Regression tests live under **`tests/`**, **one topic per file**, grouped by domain (`bridge/`, `hbp/`, `obp/`, …). See **[`tests/README.md`](../../../tests/README.md)** for the full file index.
+Regression tests live under **`tests/`**, **one topic per file**, grouped by domain (`bridge/`, `hbp/`, `obp/`, …). Full file index: `tests/README.md` (repo root, maintainer checkout).
 
 They use an in-process **deterministic harness** (no Twisted reactor, no UDP sockets).
 
