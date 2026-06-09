@@ -361,6 +361,16 @@ class BridgeTableMixin:
                 _tmout = 35791394
             new_ts1 = str(_options.get("TS1_STATIC") or "").strip()
             new_ts2 = str(_options.get("TS2_STATIC") or "").strip()
+            # Legacy options_config: malformed TS1/TS2 aborts the whole OPTIONS apply (continue).
+            if new_ts1 and re.search(r"[^\d,]", new_ts1):
+                return
+            if new_ts2 and re.search(r"[^\d,]", new_ts2):
+                return
+            merged = self._merged_static_tg_lists_for_master(system_name)
+            if merged is not None:
+                _tmout, ts1_nums, ts2_nums = merged
+                new_ts1 = ",".join(str(x) for x in ts1_nums)
+                new_ts2 = ",".join(str(x) for x in ts2_nums)
             if re.search(r"[^\d,]", new_ts1) or re.search(r"[^\d,]", new_ts2):
                 return
             # Peers may resend identical RPTO on every voice burst. YAML may already match parsed TS — do not
@@ -509,23 +519,76 @@ class BridgeTableMixin:
                 _tmout = 35791394
             ts1_list: list[int] = []
             ts2_list: list[int] = []
-            for tg_s in str(_options.get("TS1_STATIC") or "").split(","):
-                try:
-                    tg1 = int(tg_s.strip())
-                    if tg1 not in (0, 1, 2, 3, 4, 5, 9, 9990, 9991, 9992, 9993, 9994, 9995, 9996, 9997, 9998, 9999):
-                        ts1_list.append(tg1)
-                except ValueError:
-                    pass
-            for tg_s in str(_options.get("TS2_STATIC") or "").split(","):
-                try:
-                    tg2 = int(tg_s.strip())
-                    if 0 < tg2 < 16777215 and tg2 not in (9990, 9991, 9992, 9993, 9994, 9995, 9996, 9997, 9998, 9999):
-                        ts2_list.append(tg2)
-                except ValueError:
-                    pass
+            ts1_raw = str(_options.get("TS1_STATIC") or "").strip()
+            ts2_raw = str(_options.get("TS2_STATIC") or "").strip()
+            if ts1_raw and not re.search(r"[^\d,]", ts1_raw):
+                for tg_s in ts1_raw.split(","):
+                    try:
+                        tg1 = int(tg_s.strip())
+                        if tg1 not in (0, 1, 2, 3, 4, 5, 9, 9990, 9991, 9992, 9993, 9994, 9995, 9996, 9997, 9998, 9999):
+                            ts1_list.append(tg1)
+                    except ValueError:
+                        pass
+            if ts2_raw and not re.search(r"[^\d,]", ts2_raw):
+                for tg_s in ts2_raw.split(","):
+                    try:
+                        tg2 = int(tg_s.strip())
+                        if 0 < tg2 < 16777215 and tg2 not in (9990, 9991, 9992, 9993, 9994, 9995, 9996, 9997, 9998, 9999):
+                            ts2_list.append(tg2)
+                    except ValueError:
+                        pass
             return (_tmout, ts1_list, ts2_list)
         except Exception:
             return None
+
+    def _merged_static_tg_lists_for_master(
+        self, system_name: str
+    ) -> tuple[float, list[int], list[int]] | None:
+        """Union static TG ids from runtime YAML and every connected peer RPTO (inject proxy)."""
+        sys_cfg = self._config.get("SYSTEMS", {}).get(system_name, {})
+        if sys_cfg.get("MODE") != "MASTER":
+            return None
+        tmout = float(sys_cfg.get("DEFAULT_UA_TIMER", 10))
+        if tmout <= 0:
+            tmout = 35791394.0
+        ts1_set: set[int] = set()
+        ts2_set: set[int] = set()
+        runtime = self._static_tg_lists_from_runtime_cfg(sys_cfg)
+        if runtime is not None:
+            tmout, ts1_list, ts2_list = runtime
+            ts1_set.update(ts1_list)
+            ts2_set.update(ts2_list)
+        protocols = self._get_protocols() if self._get_protocols else {}
+        proto = protocols.get(system_name)
+        peers = getattr(proto, "_peers", {}) if proto is not None else {}
+        if isinstance(peers, dict):
+            for peer in peers.values():
+                if not isinstance(peer, dict) or peer.get("CONNECTION") != "YES":
+                    continue
+                opt = peer.get("OPTIONS")
+                if opt is None:
+                    continue
+                if isinstance(opt, bytes):
+                    opt_str = opt.decode("utf8", errors="replace")
+                else:
+                    opt_str = str(opt)
+                parsed = self._parse_options_static_tgs(opt_str, sys_cfg)
+                if parsed is None:
+                    continue
+                peer_tmout, ts1_list, ts2_list = parsed
+                if peer_tmout > 0:
+                    tmout = max(tmout, peer_tmout)
+                ts1_set.update(ts1_list)
+                ts2_set.update(ts2_list)
+        if not ts1_set and not ts2_set and "OPTIONS" in sys_cfg:
+            parsed = self._parse_options_static_tgs(sys_cfg["OPTIONS"], sys_cfg)
+            if parsed is not None:
+                tmout, ts1_list, ts2_list = parsed
+                ts1_set.update(ts1_list)
+                ts2_set.update(ts2_list)
+        if not ts1_set and not ts2_set:
+            return None
+        return (tmout, sorted(ts1_set), sorted(ts2_set))
 
     def apply_static_tg_to_bridge(self, tg_int: int) -> None:
         """When a bridge was just created from OBP, mark MASTER systems that have this TG in static TS1/TS2 (runtime lists or OPTIONS) ACTIVE so the first OBP traffic reaches them."""
@@ -535,10 +598,7 @@ class BridgeTableMixin:
                 continue
             if not systems_cfg.get(_system, {}).get("ENABLED", True):
                 continue
-            sys_cfg = systems_cfg[_system]
-            parsed = self._static_tg_lists_from_runtime_cfg(sys_cfg)
-            if parsed is None and "OPTIONS" in sys_cfg:
-                parsed = self._parse_options_static_tgs(sys_cfg["OPTIONS"], sys_cfg)
+            parsed = self._merged_static_tg_lists_for_master(_system)
             if not parsed:
                 continue
             _tmout, ts1_list, ts2_list = parsed
@@ -707,6 +767,11 @@ class BridgeTableMixin:
                 cur_ts2 = systems_cfg[_system].get("TS2_STATIC") or ""
                 new_ts1 = _options.get("TS1_STATIC") or ""
                 new_ts2 = _options.get("TS2_STATIC") or ""
+                merged = self._merged_static_tg_lists_for_master(_system)
+                if merged is not None:
+                    _tmout, ts1_nums, ts2_nums = merged
+                    new_ts1 = ",".join(str(x) for x in ts1_nums) if ts1_nums else ""
+                    new_ts2 = ",".join(str(x) for x in ts2_nums) if ts2_nums else ""
                 if str(new_ts1) != str(cur_ts1) or ua_timer_changed:
                     logger.debug("(OPTIONS) %s TS1 static TGs changed, updating", _system)
                     if cur_ts1:

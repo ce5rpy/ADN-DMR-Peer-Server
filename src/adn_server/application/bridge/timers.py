@@ -99,7 +99,9 @@ class BridgeTimerMixin:
                             bridge_used = True
                             _debug_msgs.append('(ROUTER) Conference Bridge ACTIVE (no change): System: %s Bridge: %s, TS: %s, TGID: %s' % (system_name, bridge_key, sys_entry.get("TS"), int_id(sys_entry.get("TGID", b""))))
                     else:
-                        if not is_obp or (is_obp and to_type == "STAT"):
+                        # OBP legs from make_single_bridge use TO_TYPE NONE (legacy parity); keep the
+                        # bridge table while the OBP source row is ACTIVE (do not trim as "unused").
+                        if not is_obp or (is_obp and (to_type == "STAT" or active)):
                             bridge_used = True
                         _debug_msgs.append('(ROUTER) Conference Bridge NO ACTION: System: %s, Bridge: %s, TS: %s, TGID: %s' % (system_name, bridge_key, sys_entry.get("TS"), int_id(sys_entry.get("TGID", b""))))
 

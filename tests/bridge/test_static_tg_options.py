@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
-from tests.harness.deterministic import DeterministicScenario, active_bridge
+from tests.harness.deterministic import DeterministicScenario, active_bridge, add_openbridge_system
 
-from adn_server.domain import bytes_3
+from adn_server.domain import bytes_3, bytes_4
 
 
 def _master_with_options(options: str) -> DeterministicScenario:
@@ -83,6 +83,55 @@ def test_bridge_reset_restores_prohibited_static_legs() -> None:
     leg = next(e for e in scenario.bridge.get_bridges()["9990"] if e["SYSTEM"] == "MASTER-A")
     assert leg["ACTIVE"] is True
     assert leg["TO_TYPE"] == "NONE"
+
+
+def test_options_merge_static_tgs_from_all_connected_peers() -> None:
+    """Last peer RPTO must not drop other hotspots' static TG bridges (inject proxy)."""
+    scenario = DeterministicScenario()
+    add_openbridge_system(scenario.config)
+    scenario._wire_protocols_from_config()
+    scenario.bridge._get_protocols = lambda: scenario.protocols  # noqa: SLF001
+    master = scenario.config["SYSTEMS"]["MASTER-A"]
+    master["OPTIONS"] = "TS2=8730444;TIMER=300"
+    proto = scenario.protocols["MASTER-A"]
+    proto._peers = {
+        bytes_4(730039101): {
+            "CONNECTION": "YES",
+            "OPTIONS": b"TS2=730444;TIMER=300",
+        },
+        bytes_4(730266501): {
+            "CONNECTION": "YES",
+            "OPTIONS": b"TS2=8730444;TIMER=300",
+        },
+    }
+
+    scenario.bridge.options_config_for_system("MASTER-A")
+
+    sys_cfg = scenario.config["SYSTEMS"]["MASTER-A"]
+    assert "730444" in sys_cfg["TS2_STATIC"]
+    assert "8730444" in sys_cfg["TS2_STATIC"]
+    bridges = scenario.bridge.get_bridges()
+    assert "730444" in bridges
+    assert "8730444" in bridges
+    leg_730444 = next(e for e in bridges["730444"] if e["SYSTEM"] == "MASTER-A" and e["TS"] == 2)
+    assert leg_730444["ACTIVE"] is True
+
+
+def test_rule_timer_keeps_bridge_with_active_obp_none_leg() -> None:
+    """Static TG bridges must survive rule_timer when OBP uses TO_TYPE NONE (make_single_bridge)."""
+    scenario = DeterministicScenario()
+    add_openbridge_system(scenario.config)
+    scenario._wire_protocols_from_config()
+    scenario.bridge.make_single_bridge(bytes_3(730444), "MASTER-A", 2, 300.0)
+    bridges = scenario.bridge.get_bridges()
+    for entry in bridges["730444"]:
+        if entry["SYSTEM"] == "OBP-CL":
+            entry["ACTIVE"] = True
+            entry["TO_TYPE"] = "NONE"
+
+    scenario.bridge.rule_timer_loop()
+
+    assert "730444" in scenario.bridge.get_bridges()
 
 
 def test_options_applies_valid_static_tg_once() -> None:
