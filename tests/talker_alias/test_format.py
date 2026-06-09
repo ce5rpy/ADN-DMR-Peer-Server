@@ -21,9 +21,18 @@ def test_talker_alias_clear_stream_allows_resend() -> None:
     key = ("MASTER-B", stream_id)
 
     assert ta.should_send_on_vhead("MASTER-B", stream_id) is True
-    ta.mark_dmra_sent("MASTER-B", stream_id)
+    ta.mark_dmra_sent("MASTER-B", stream_id, kind="inject")
     assert ta.should_send_on_vhead("MASTER-B", stream_id) is False
 
     ta.clear_stream("MASTER-B", stream_id)
     assert key not in ta._sent_streams
     assert ta.should_send_on_vhead("MASTER-B", stream_id) is True
+
+
+def test_clear_dmra_sent_preserves_embed_log_dedupe() -> None:
+    ta = make_talker_alias_use_cases(talker_alias_config())
+    stream_id = PacketSpec(stream_id=0x93939393).data()[16:20]
+    ta._embed_logged.add(("MASTER-A", "MASTER-B", stream_id))
+
+    ta.clear_dmra_sent("MASTER-B", stream_id)
+    assert ("MASTER-A", "MASTER-B", stream_id) in ta._embed_logged

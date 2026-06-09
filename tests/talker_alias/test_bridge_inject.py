@@ -83,7 +83,8 @@ def test_both_mode_without_ta_still_rewrites_group_embedded_lc() -> None:
     )
 
     ts_st = scenario.protocols["MASTER-B"].STATUS[2]
-    assert ts_st.get("TX_TA_EMB") is not None  # both mode injects template at VHEAD
+    # both + MASTER source: TA overlay deferred until source TA or 2s fallback (see docs).
+    assert ts_st.get("TX_TA_EMB") is None
     bursts = [p for p in scenario.capture.for_system("MASTER-B") if p.fields["dtype_vseq"] == 1]
     assert bursts, "voice burst B should be forwarded to MASTER-B"
     bits = bitarray(endian="big")

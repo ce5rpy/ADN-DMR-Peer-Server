@@ -318,6 +318,30 @@ class HBPProtocol(DatagramProtocol):
         if not self._ta_buffer_enabled() or not stream_id:
             return
         self._dmra_rf_stream[(peer_id, rf_src)] = stream_id
+        self._promote_dmra_provisional_key(rf_src, stream_id)
+
+    def _promote_dmra_provisional_key(self, provisional: bytes, stream_id: bytes) -> None:
+        """Move TA blocks buffered under ``rf_src`` (pre-VHEAD) to the real stream id."""
+        if provisional == stream_id:
+            return
+        entry = self._dmra_by_stream.pop(provisional, None)
+        if not entry:
+            return
+        target = self._dmra_by_stream.setdefault(
+            stream_id,
+            {
+                "blocks": {},
+                "rf_src": entry.get("rf_src", b""),
+                "peer": entry.get("peer", b""),
+                "last": entry.get("last", time.time()),
+            },
+        )
+        target["blocks"].update(entry.get("blocks", {}))
+        target["last"] = max(float(target.get("last", 0)), float(entry.get("last", 0)))
+        if entry.get("rf_src"):
+            target["rf_src"] = entry["rf_src"]
+        if entry.get("peer"):
+            target["peer"] = entry["peer"]
 
     def store_dmra_packet(self, peer_id: bytes, data: bytes) -> None:
         """Buffer one DMRA block from a hotspot (MASTER receive path)."""
@@ -327,7 +351,8 @@ class HBPProtocol(DatagramProtocol):
         rf_src, block_id, payload = parsed
         stream_id = self._dmra_rf_stream.get((peer_id, rf_src))
         if not stream_id:
-            return
+            # Legacy hblink: DMRA may arrive before the first DMRD; key by rf_src until then.
+            stream_id = rf_src
         now = time.time()
         entry = self._dmra_by_stream.setdefault(
             stream_id,

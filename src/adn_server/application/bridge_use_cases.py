@@ -89,6 +89,8 @@ class BridgeUseCases(BridgeTimerMixin, BridgeObpForwardMixin, BridgeHbpForwardMi
         self._talker_alias = TalkerAliasUseCases(config, ta_emblc_encoder=ta_emblc_encoder)
         # (source_system, stream_id) -> {rf_src, peer, targets, timer}
         self._both_ta_wait: dict[tuple[str, bytes], dict[str, Any]] = {}
+        # Passthrough DMRA/embed relay already applied for this source stream.
+        self._passthrough_relayed: set[tuple[str, bytes]] = set()
 
     def _send_bridge_event(self, event: str | bytes) -> bool:
         """Send BRDG_EVENT via ReportingUseCases when REPORT is enabled."""
@@ -562,12 +564,13 @@ class BridgeUseCases(BridgeTimerMixin, BridgeObpForwardMixin, BridgeHbpForwardMi
                         _ts_st["TX_H_LC"] = bptc.encode_header_lc(dst_lc)
                         _ts_st["TX_T_LC"] = bptc.encode_terminator_lc(dst_lc)
                         _ts_st["TX_EMB_LC"] = self._encode_emblc(dst_lc)
-                        self._init_talker_alias_embed(
+                        self._dispatch_talker_alias_on_bridge_open(
                             _ts_st,
                             system_name,
                             entry["SYSTEM"],
                             rf_src,
                             stream_id,
+                            peer_id,
                         )
                         logger.info(
                             "(%s) Conference Bridge: %s, Call Bridged to HBP System: %s TS: %s, TGID: %s",
@@ -582,10 +585,6 @@ class BridgeUseCases(BridgeTimerMixin, BridgeObpForwardMixin, BridgeHbpForwardMi
                                 entry_ts,
                                 int_id(entry_tgid_b),
                             )
-                        )
-                        # First successful forward to HBP (may not be VHEAD if earlier frames were hangtime-blocked).
-                        self._send_talker_alias_to_target(
-                            system_name, entry["SYSTEM"], rf_src, stream_id, peer_id,
                         )
                     _ts_st["TX_TIME"] = pkt_time
                     _ts_st["TX_TYPE"] = dtype_vseq

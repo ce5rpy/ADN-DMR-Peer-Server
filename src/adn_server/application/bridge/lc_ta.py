@@ -37,6 +37,10 @@ class BridgeLcTaMixin:
             "OPENBRIDGE",
         )
 
+    def _master_ta_wait_source(self, source_system: str) -> bool:
+        """``both`` mode waits for hotspot TA only on HBP MASTER sources (not OBP)."""
+        return self._config.get("SYSTEMS", {}).get(source_system, {}).get("MODE") == "MASTER"
+
     def _cancel_both_ta_wait(self, source_system: str, stream_id: bytes) -> None:
         wait = self._both_ta_wait.pop(self._both_ta_key(source_system, stream_id), None)
         if wait and wait.get("timer") and getattr(wait["timer"], "cancel", None):
@@ -109,6 +113,8 @@ class BridgeLcTaMixin:
                     continue
                 if st.get("TX_TA_ON"):
                     continue
+                if st.get("_ta_embed_kind") == "passthrough" and not force_inject:
+                    continue
                 if st.get("TX_STREAM_ID") == stream_id and st.get("TX_RFS") == rf_src:
                     target = st.get("_ta_target_system", source_system)
                     self._init_talker_alias_embed(
@@ -137,9 +143,10 @@ class BridgeLcTaMixin:
         blocks = self._get_stream_dmra_blocks(source_system, stream_id)
         if not blocks or not passthrough_complete(blocks):
             return
-        key = self._both_ta_key(source_system, stream_id)
-        wait = self._both_ta_wait.get(key)
-        if wait:
+        relay_key = self._both_ta_key(source_system, stream_id)
+        already_relayed = relay_key in self._passthrough_relayed
+        wait = self._both_ta_wait.get(relay_key)
+        if wait and not already_relayed:
             wait["peer"] = peer_id
             self._cancel_both_ta_wait(source_system, stream_id)
             for target_system in wait["targets"]:
@@ -147,7 +154,9 @@ class BridgeLcTaMixin:
                     source_system, target_system, rf_src, stream_id, peer_id, force=True,
                 )
         self._apply_both_ta_embed(source_system, rf_src, stream_id)
-        self._relay_passthrough_dmra(source_system, peer_id, rf_src, stream_id)
+        if not already_relayed:
+            self._relay_passthrough_dmra(source_system, peer_id, rf_src, stream_id)
+            self._passthrough_relayed.add(relay_key)
 
     def _relay_passthrough_dmra(
         self,
@@ -179,8 +188,38 @@ class BridgeLcTaMixin:
                     )
         src_cfg = self._config.get("SYSTEMS", {}).get(source_system, {})
         if src_cfg.get("MODE") == "MASTER" and src_cfg.get("REPEAT", True):
-            self._talker_alias.clear_stream(source_system, stream_id)
             self.send_talker_alias_local_repeat(source_system, peer_id, rf_src, stream_id)
+
+    def _dispatch_talker_alias_on_bridge_open(
+        self,
+        target_st: dict[str, Any],
+        source_system: str,
+        target_system: str,
+        rf_src: bytes,
+        stream_id: bytes,
+        source_peer: bytes,
+    ) -> None:
+        """Prepare TA on a new bridged HBP leg (VHEAD or first burst after hangtime)."""
+        settings = talker_alias_settings(self._config, source_system)
+        if not settings["enabled"]:
+            return
+        blocks = self._get_stream_dmra_blocks(source_system, stream_id)
+        have_source_ta = bool(blocks and passthrough_complete(blocks))
+        if settings["mode"] == "both" and self._master_ta_wait_source(source_system) and not have_source_ta:
+            self._register_both_ta_wait(
+                source_system, target_system, rf_src, stream_id, source_peer,
+            )
+            return
+        self._init_talker_alias_embed(
+            target_st,
+            source_system,
+            target_system,
+            rf_src,
+            stream_id,
+        )
+        self._send_talker_alias_to_target(
+            source_system, target_system, rf_src, stream_id, source_peer,
+        )
 
     def _send_talker_alias_to_target(
         self,
@@ -201,8 +240,12 @@ class BridgeLcTaMixin:
             return
         blocks = self._get_stream_dmra_blocks(source_system, stream_id)
         have_passthrough = bool(blocks and passthrough_complete(blocks))
-        if have_passthrough and force:
-            self._talker_alias.clear_stream(target_system, stream_id)
+        if have_passthrough:
+            if force:
+                if not self._talker_alias.should_resend_passthrough_dmra(target_system, stream_id):
+                    return
+            elif not self._talker_alias.should_send_on_vhead(target_system, stream_id):
+                return
         elif not self._talker_alias.should_send_on_vhead(target_system, stream_id):
             return
         if not have_passthrough:
@@ -224,7 +267,11 @@ class BridgeLcTaMixin:
         except Exception as e:
             logger.warning("(ROUTER) send_dmra_to_system %s failed: %s", target_system, e)
             return
-        self._talker_alias.mark_dmra_sent(target_system, stream_id)
+        self._talker_alias.mark_dmra_sent(
+            target_system,
+            stream_id,
+            kind="passthrough" if have_passthrough else "inject",
+        )
         sid = int_id(stream_id)
         if peer_count:
             logger.debug(
@@ -311,6 +358,7 @@ class BridgeLcTaMixin:
     def clear_talker_alias_stream(self, system_name: str, stream_id: bytes) -> None:
         """Release per-stream TA dedupe state after VTERM."""
         self._cancel_both_ta_wait(system_name, stream_id)
+        self._passthrough_relayed.discard(self._both_ta_key(system_name, stream_id))
         self._talker_alias.clear_stream(system_name, stream_id)
         if not self._get_protocols:
             return
@@ -375,6 +423,11 @@ class BridgeLcTaMixin:
             st["TX_TA_PHASE"] = 0
             # First B1–B4 cycle carries group LC; TA on the next cycle.
             st["TX_TA_ON"] = False
+            blocks = self._get_stream_dmra_blocks(source_system, stream_id)
+            if blocks and passthrough_complete(blocks) and not force_inject:
+                st["_ta_embed_kind"] = "passthrough"
+            else:
+                st["_ta_embed_kind"] = "inject"
 
     def _rewrite_embed_lc(
         self,
@@ -412,4 +465,5 @@ class BridgeLcTaMixin:
         st.pop("TX_TA_PHASE", None)
         st.pop("TX_TA_BLOCK_COUNT", None)
         st.pop("TX_TA_ON", None)
+        st.pop("_ta_embed_kind", None)
 
