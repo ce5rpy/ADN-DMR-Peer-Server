@@ -50,8 +50,8 @@ These processes handle **`SIGUSR2`** by reopening **`logging.FileHandler`** stre
 
 | Process | Typical config keys |
 |---------|---------------------|
-| **`adn-server`** / **`adn-parrot`** | **`LOGGER.LOG_FILE`** (see `adn-server.example.yaml`) |
-| **`adn-proxy`** | **`LOG.PATH`** + **`LOG.LOG_FILE`** in `adn-proxy.yaml` |
+| **`adn-server`** / **`adn-parrot`** | **`LOGGER.LOG_FILE`** (integrated proxy logs appear in the same file) |
+| **`adn-proxy`** (standalone, legacy) | **`LOG.PATH`** + **`LOG.LOG_FILE`** in `adn-proxy.yaml` — omit if using integrated **`PROXY`** in `adn-server.yaml` |
 | **`adn-monitor`** | **`LOG.PATH`** + **`LOG.LOG_FILE`** in `adn-monitor.yaml` |
 
 Example **`/etc/logrotate.d/adn`** fragment (adjust paths and service names):
@@ -71,7 +71,7 @@ Example **`/etc/logrotate.d/adn`** fragment (adjust paths and service names):
 }
 ```
 
-Repeat **`postrotate`** with **`kill -USR2`** for **`adn-parrot`**, **`adn-proxy`**, and **`adn-monitor`** units if those logs are rotated on the same host. Use the correct **PID** (systemd **`MainPID`**, a pidfile, or **`kill`** targeting the process you manage).
+Repeat **`postrotate`** with **`kill -USR2`** for **`adn-parrot`** and **`adn-monitor`** units if those logs are rotated on the same host. Add **`adn-proxy`** only when you still run the **standalone** proxy (not needed when proxy is integrated into **`adn-server`**). Use the correct **PID** (systemd **`MainPID`**, a pidfile, or **`kill`** targeting the process you manage).
 
 ## Requirements
 
@@ -80,4 +80,6 @@ Repeat **`postrotate`** with **`kill -USR2`** for **`adn-parrot`**, **`adn-proxy
 
 ## Self-service and hotspots
 
-Operators editing **device options** from the dashboard use the **self-service** flow (MySQL **`Clients`**, proxy **RPTO**). That is documented under [Self-service](../../monitor/self-service.md); it is **not** part of the peer server binary alone. For **hotspot proxy** configuration (`PROXY` in **`adn-proxy.yaml`** by default), how it binds to the peer server **UDP port range**, and how the process starts, see [Hotspot proxy](../../monitor/hotspot-proxy.md).
+Operators editing **device options** from the dashboard use the **self-service** flow (MySQL **`Clients`**, **RPTO** toward the conference MASTER). In current **ADN DMR Peer Server** deployments this runs **inside `adn-server.py`**: configure **`SELF_SERVICE`** and **`PROXY`** in **`adn-server.yaml`** (see [Hotspot proxy](hotspot-proxy.md)). Dashboard semantics: [Self-service](../../monitor/self-service.md).
+
+Legacy stacks may still use a **standalone** **`adn-proxy`** process and **`adn-proxy.yaml`** — see [Hotspot proxy (standalone)](../../monitor/hotspot-proxy.md). Do not run both on the same **`LISTEN_PORT`**.

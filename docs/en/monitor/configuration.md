@@ -2,7 +2,7 @@
 
 This document describes **`adn-monitor.yaml`**, used by the **Python monitor** (`monitor/monitor.py`) and the **PHP backend** (`backend/public/index.php`). Default path is usually **`monitor/adn-monitor.yaml`** (override with **`ADN_CONFIG_PATH`**).
 
-The **hotspot proxy** loads a **separate** file by default — **`proxy/adn-proxy.yaml`** — see [Hotspot proxy](hotspot-proxy.md). **`SELF_SERVICE`** (MySQL / PBKDF2) must stay **identical** between the two YAML files when both are used.
+**Integrated hotspot proxy:** **`PROXY`** and **`SELF_SERVICE`** in **`adn-server.yaml`** (see [Hotspot proxy (integrated)](../server/user-guide/hotspot-proxy.md)). **Standalone (legacy):** **`proxy/adn-proxy.yaml`** — see [Hotspot proxy](hotspot-proxy.md). **`SELF_SERVICE`** (MySQL / PBKDF2) must stay **identical** across **`adn-server.yaml`**, **`adn-monitor.yaml`**, and legacy **`adn-proxy.yaml`** when used.
 
 The example shipped in the **adn-monitor** repo (`monitor/adn-monitor.yaml.example`) is the template for the monitor; keys below match that file and `monitor/src/adn_monitor/infrastructure/config_loader.py` (internal names may differ).
 
@@ -50,9 +50,9 @@ If the PHP backend cannot connect, **auth** and **self-service** API routes are 
 
 ## `PROXY`
 
-Hotspot **UDP proxy** — full guide: [Hotspot proxy](hotspot-proxy.md). In current layouts, these keys live in **`proxy/adn-proxy.yaml`**, not in `adn-monitor.yaml`. **Legacy:** a single file can still contain **PROXY** if the proxy is started with **`ADN_CONFIG_PATH`** pointing at that file (see resolution order in [Hotspot proxy](hotspot-proxy.md#configuration-file)).
+Hotspot **UDP proxy** — full guide: [Hotspot proxy](hotspot-proxy.md). **Integrated** deployments use **`PROXY`** in **`adn-server.yaml`** (fan-in, no port range). **Standalone** layouts keep these keys in **`proxy/adn-proxy.yaml`** (or a legacy combined file via **`ADN_CONFIG_PATH`**).
 
-Summary: **`PORT`** + **`GENERATOR`** must match **`SYSTEM.PORT`** + **`SYSTEM.GENERATOR`** in `adn-server`; each client is forwarded to **`MASTER`** at one UDP port in **`PORT`…`PORT+GENERATOR-1`** (see also [Architecture](architecture.md)).
+**Standalone summary:** **`PORT`** + **`GENERATOR`** must match **`SYSTEM.PORT`** + **`SYSTEM.GENERATOR`** in `adn-server`; each client is forwarded to **`MASTER`** at one UDP port in **`PORT`…`PORT+GENERATOR-1`** (see also [Architecture](architecture.md)).
 
 | Key | Meaning |
 |-----|---------|

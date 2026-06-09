@@ -34,14 +34,16 @@ Same opcodes as documented for the server: **CONFIG_SND**, **BRIDGE_SND**, **BRD
 
 ## Hotspot proxy
 
+**Integrated (default):** **`adn-server.py`** runs UDP fan-in from **`PROXY.LISTEN_PORT`** into **`PROXY.TARGET_SYSTEM`**; **`SELF_SERVICE`** in **`adn-server.yaml`** drives **RPTO** from MySQL **`Clients`**. See [Hotspot proxy (integrated)](../server/user-guide/hotspot-proxy.md).
+
+**Standalone (legacy, adn-monitor repo):**
+
 - Entry: `proxy/proxy.py`; package `src/adn_proxy/` (domain / application / infrastructure).
-- Reads **`PROXY`** and **`SELF_SERVICE`** from **`adn-proxy.yaml`** by default (or from the same file as the monitor when **`ADN_CONFIG_PATH`** is used without **`ADN_PROXY_CONFIG_PATH`** — see [Hotspot proxy](hotspot-proxy.md#configuration-file)).
-- For each hotspot client, allocates a UDP port in **`PORT`…`PORT+GENERATOR-1`** (YAML **`PORT`** + **`GENERATOR`**, matching **`adn-server`**) and forwards to **`MASTER`**.
-- When **self-service** updates **`Clients.options`** and sets **`modified=1`**, the proxy sends **RPTO** to the **master** on a timer (~10 s). The **peer server** then applies options to the hotspot path (see [Self-service](self-service.md)).
+- Reads **`PROXY`** and **`SELF_SERVICE`** from **`adn-proxy.yaml`** by default (or from a combined monitor YAML via **`ADN_CONFIG_PATH`** — see [Hotspot proxy](hotspot-proxy.md#configuration-file)).
+- For each hotspot client, allocates a UDP port in **`PORT`…`PORT+GENERATOR-1`** and forwards to **`MASTER`**.
+- When **self-service** updates **`Clients.options`** and sets **`modified=1`**, the proxy sends **RPTO** to the **master** on a timer (~10 s).
 
-**Why it is not part of the peer server binary:** it shares deployment, **`SELF_SERVICE`** MySQL, and packaging with the monitor stack — see [Why it ships with the monitor](hotspot-proxy.md#why-it-ships-with-the-monitor-not-inside-the-peer-server).
-
-**Details:** [Hotspot proxy](hotspot-proxy.md) (config keys, peer server port range, startup).
+**Details:** [Hotspot proxy](hotspot-proxy.md) (integrated vs standalone, config keys, startup).
 
 ## Typical deployment topology
 

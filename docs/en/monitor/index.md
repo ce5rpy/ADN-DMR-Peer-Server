@@ -1,6 +1,6 @@
 # ADN Monitor (overview)
 
-**ADN Monitor** is a separate project from the **ADN DMR Peer Server**, but the two are normally deployed **together**: the server sends **TCP reports** (config, bridges, call events) to the monitor; the monitor drives the **web dashboard** (React) and **WebSocket** live updates. Optional components include the **PHP API** (Slim), **MySQL** (self-service / device registry), and the **hotspot proxy** (UDP between hotspots and the peer server).
+**ADN Monitor** is a separate project from the **ADN DMR Peer Server**, but the two are normally deployed **together**: the server sends **TCP reports** (config, bridges, call events) to the monitor; the monitor drives the **web dashboard** (React) and **WebSocket** live updates. Optional components include the **PHP API** (Slim), **MySQL** (self-service / device registry), and the **hotspot proxy** (UDP between hotspots and the peer server — **integrated in `adn-server.py`** by default; standalone `adn-proxy` remains for legacy layouts).
 
 This chapter documents the **adn-monitor** stack at the same level of detail as the server guides. Source code lives in the **adn-monitor** repository, not in the **adn-server** repository (where this documentation is maintained).
 
@@ -11,16 +11,17 @@ This chapter documents the **adn-monitor** stack at the same level of detail as 
 | **`monitor/monitor.py`** | Python (Twisted): connects to the peer server’s **report TCP** port, decodes netstring payloads (`CONFIG_SND`, `BRIDGE_SND`, `BRDG_EVENT`), maintains **CTABLE** / **BTABLE**, writes **Last Heard** / TG stats to **MySQL** when configured, serves **WebSocket** JSON to the dashboard. |
 | **`backend/`** | PHP **Slim** app: `/api/config/dashboard`, auth, optional **self-service** APIs, alias proxies. Reads **`adn-monitor.yaml`** via **`ADN_CONFIG_PATH`**. |
 | **`frontend/`** | React (Vite): dashboard UI; consumes backend API + WebSocket. |
-| **`proxy/`** | Python (Twisted): UDP **hotspot proxy**; forwards Homebrew between hotspots and the peer server; reads **`Clients`** in MySQL for **RPTO** options (self-service). Loads **`adn-proxy.yaml`** by default (see [Hotspot proxy](hotspot-proxy.md)). |
+| **`proxy/`** | Python (Twisted): **standalone** UDP hotspot proxy (legacy); forwards Homebrew between hotspots and the peer server port range; reads **`Clients`** in MySQL for **RPTO**. Prefer integrated **`PROXY`** in **`adn-server.yaml`** — see [Hotspot proxy](hotspot-proxy.md). |
 
 ## Configuration files
 
 | File | Used by | Typical env |
 |------|---------|-------------|
+| **`adn-server.yaml`** | **`adn-server.py`** (integrated **`PROXY`** / **`SELF_SERVICE`**) | `-c` / default path next to binary |
 | **`monitor/adn-monitor.yaml`** | **`monitor.py`**, **PHP backend** | **`ADN_CONFIG_PATH`** |
-| **`proxy/adn-proxy.yaml`** | **`proxy/proxy.py`** | **`ADN_PROXY_CONFIG_PATH`** (optional; defaults and legacy fallback in [Hotspot proxy](hotspot-proxy.md#configuration-file)) |
+| **`proxy/adn-proxy.yaml`** | **`proxy/proxy.py`** (legacy standalone) | **`ADN_PROXY_CONFIG_PATH`** (optional; see [Hotspot proxy](hotspot-proxy.md#configuration-file)) |
 
-**`SELF_SERVICE`** (MySQL / PBKDF2) must **match** between both YAML files when you split config. **`ADN_CONNECTION`**, dashboard, WebSocket, and aliases live in **`adn-monitor.yaml`**; **`PROXY`** listen/master/range settings live in **`adn-proxy.yaml`** unless you use a **legacy** single file via **`ADN_CONFIG_PATH`** for the proxy.
+**`SELF_SERVICE`** (MySQL / PBKDF2) must **match** between **`adn-server.yaml`** (integrated proxy), **`adn-monitor.yaml`**, and legacy **`adn-proxy.yaml`** when used. **`ADN_CONNECTION`**, dashboard, WebSocket, and aliases live in **`adn-monitor.yaml`**; integrated **`PROXY`** / **`SELF_SERVICE`** live in **`adn-server.yaml`**; standalone proxy settings remain in **`adn-proxy.yaml`**.
 
 ## Link to the peer server
 

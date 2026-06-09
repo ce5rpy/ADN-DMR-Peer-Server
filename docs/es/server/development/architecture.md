@@ -20,6 +20,8 @@
 | HBP / OpenBridge UDP | `infrastructure/twisted_adapters/udp_hbp.py` |
 | Informes TCP | `infrastructure/twisted_adapters/report_server.py` (fábrica), eventos de bridge desde casos de uso |
 | Voz / TTS | `application/voice_use_cases.py`, `infrastructure/voice/` |
+| Proxy hotspot (fan-in) | `infrastructure/proxy/` (`udp_fanin.py`, `runtime.py`), casos de uso en `application/proxy/` |
+| Self-service (MySQL) | `infrastructure/proxy/self_service_bridge.py`, `infrastructure/proxy/persistence/` |
 
 ## Configuración como estado compartido
 

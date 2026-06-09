@@ -34,14 +34,16 @@ Los mismos opcodes que en la documentación del servidor: **CONFIG_SND**, **BRID
 
 ## Proxy hotspot
 
+**Integrado (predeterminado):** **`adn-server.py`** ejecuta fan-in UDP desde **`PROXY.LISTEN_PORT`** hacia **`PROXY.TARGET_SYSTEM`**; **`SELF_SERVICE`** en **`adn-server.yaml`** impulsa **RPTO** desde MySQL **`Clients`**. Ver [Proxy hotspot (integrado)](../server/user-guide/hotspot-proxy.md).
+
+**Independiente (legado, repo adn-monitor):**
+
 - Entrada: `proxy/proxy.py`; paquete `src/adn_proxy/` (dominio / aplicación / infraestructura).
-- Lee **`PROXY`** y **`SELF_SERVICE`** desde **`adn-proxy.yaml`** por defecto (o desde el mismo fichero que el monitor si se usa solo **`ADN_CONFIG_PATH`** sin **`ADN_PROXY_CONFIG_PATH`** — ver [Proxy hotspot](hotspot-proxy.md#configuration-file)).
-- Por cada cliente hotspot, asigna un puerto UDP en **`PORT`…`PORT+GENERATOR-1`** (**`PORT`** + **`GENERATOR`** en YAML, alineados con **`adn-server`**) y reenvía a **`MASTER`**.
-- Cuando **self-service** actualiza **`Clients.options`** y pone **`modified=1`**, el proxy envía **RPTO** al **master** en un temporizador (~10 s). El **peer server** aplica entonces las opciones al camino del hotspot (ver [Self-service](self-service.md)).
+- Lee **`PROXY`** y **`SELF_SERVICE`** desde **`adn-proxy.yaml`** por defecto (o YAML combinado del monitor vía **`ADN_CONFIG_PATH`** — ver [Proxy hotspot](hotspot-proxy.md#configuration-file)).
+- Por cada cliente hotspot, asigna un puerto UDP en **`PORT`…`PORT+GENERATOR-1`** y reenvía a **`MASTER`**.
+- Cuando **self-service** actualiza **`Clients.options`** y pone **`modified=1`**, el proxy envía **RPTO** al **master** en un temporizador (~10 s).
 
-**Por qué no forma parte del binario del peer server:** comparte implantación, **self-service** MySQL y empaquetado con la pila del monitor — ver [Por qué va con el monitor](hotspot-proxy.md#why-it-ships-with-the-monitor-not-inside-the-peer-server).
-
-**Detalle:** [Proxy hotspot](hotspot-proxy.md) (claves de config, rango de puertos del peer, arranque).
+**Detalle:** [Proxy hotspot](hotspot-proxy.md) (integrado vs independiente, claves, arranque).
 
 ## Topología típica de despliegue
 

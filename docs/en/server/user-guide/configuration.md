@@ -33,9 +33,9 @@ With **systemd**, add to your unit file:
 ExecReload=/bin/kill -HUP $MAINPID
 ```
 
-**Reload applies:** `GLOBAL`, `REPORTS`, `ALIASES`, **`LOGGER.LOG_LEVEL`** (without process restart), per-system settings, **new/removed SYSTEMS** (including `GENERATOR` expansion and new OpenBridge legs), and updated bind addresses (listener restart for that system only).
+**Reload applies:** `GLOBAL`, `REPORTS`, `ALIASES`, **`LOGGER.LOG_LEVEL`** (without process restart), **`PROXY`** (timeouts, debug, block lists — not bind or target), **`SELF_SERVICE`** (merged; enabling/disabling DB loops needs restart), per-system settings, **new/removed SYSTEMS** (including `GENERATOR` expansion/collapse and new OpenBridge legs), and updated bind addresses (listener restart for that system only).
 
-**Not reloaded:** `adn-voice.yaml` (separate 15 s loop), Python code, subscriber alias files (separate periodic reload). **BRIDGES** table is not rebuilt on reload — restart if bridge rules changed in a way that requires a full reset.
+**Not reloaded:** `adn-voice.yaml` (separate 15 s loop), Python code, subscriber alias files (separate periodic reload). **BRIDGES** table is not rebuilt on reload — restart if bridge rules changed in a way that requires a full reset. **`PROXY.LISTEN_PORT`**, **`LISTEN_IP`**, and **`TARGET_SYSTEM`** require a **full restart** to take effect.
 
 **Secrets:** Never commit real passphrases, security URLs, or `user_passwords.json` / `encryption_key.secret`. Use placeholders in templates and keep production files local.
 
@@ -115,16 +115,16 @@ These appear mainly on **MASTER** (and often on **PEER**). OpenBridge uses a dif
 | Key | Meaning |
 |-----|---------|
 | **REPEAT** | If true, received traffic can be **repeated** to other connected peers on the MASTER (typical conference behaviour). |
-| **MAX_PEERS** | Maximum connected hotspots. |
+| **MAX_PEERS** | Maximum connected hotspots. On the **proxy target** MASTER, caps concurrent fan-in sessions. |
 | **EXPORT_AMBE** | Feature flag for AMBE export (if enabled in build). |
 | **SINGLE_MODE** | Affects OPTIONS / generator expansion (single-user style). |
 | **VOICE_IDENT** | Enables periodic **voice ident** when conditions are met (see `IdentUseCases`). |
 | **TS1_STATIC** / **TS2_STATIC** | Comma-separated static TG lists pushed via OPTIONS handling (see `options_config`). |
 | **DEFAULT_REFLECTOR** | Default **reflector** number for `#` dial bridges (0 = none). |
 | **OVERRIDE_IDENT_TG** | Optional TG for voice ident instead of all-call. |
-| **GENERATOR** | If **> 1**, this MASTER is expanded into **`NAME-0`**, **`NAME-1`**, … with consecutive ports (see `expand_generator` in code). |
+| **GENERATOR** | If **> 1**, this MASTER is expanded into **`NAME-0`**, **`NAME-1`**, … with consecutive ports (see `expand_generator` in code). Legacy standalone **`adn-proxy`** used the same range; the **integrated** proxy instead uses **inject-only** **`PROXY.TARGET_SYSTEM`** (no per-hotspot UDP ports on the server). |
 
-**MASTER** listens for PEER connections; each authenticated peer is stored under **`PEERS`** at runtime.
+**MASTER** listens for PEER connections (unless it is the **inject-only** proxy target — see [Hotspot proxy](hotspot-proxy.md)); each authenticated peer is stored under **`PEERS`** at runtime.
 
 ---
 
@@ -183,6 +183,28 @@ TCP report channel for **adn-monitor** (or compatible dashboards).
 | **REPORT_CLIENTS** | Comma-separated or list of allowed client IPs (see example). |
 
 Details: [Monitoring and reports](monitoring.md).
+
+---
+
+## `PROXY` (integrated hotspot proxy)
+
+Always started when a **`PROXY`** block is present (see `adn-server.example.yaml`). Hotspots connect to **`LISTEN_PORT`**; traffic is injected into **`TARGET_SYSTEM`**. Full guide: [Hotspot proxy](hotspot-proxy.md).
+
+| Key | Meaning |
+|-----|---------|
+| **LISTEN_PORT** / **LISTEN_IP** | UDP bind for hotspot connections. |
+| **TARGET_SYSTEM** | **MASTER** system name receiving injected HBP. That system becomes **inject-only** (`IP` / `PORT` removed at load). |
+| **TIMEOUT** | Session idle timeout (seconds). |
+| **DEBUG** / **CLIENT_INFO** | Logging verbosity. |
+| **BLACK_LIST** / **IP_BLACK_LIST** | Block radio IDs or client IPs. |
+
+Do **not** run standalone **`adn-proxy`** on the same **`LISTEN_PORT`** when the integrated proxy is enabled.
+
+---
+
+## `SELF_SERVICE` (MySQL / dashboard options)
+
+Optional; requires `pip install -e ".[selfservice]"` when **`USE_SELFSERVICE: true`**. Uses the same **`Clients`** table and PBKDF2 parameters as **adn-monitor**. Keys match the monitor docs — see [Self-service](../../monitor/self-service.md) and [Hotspot proxy](hotspot-proxy.md#self_service-keys).
 
 ---
 
@@ -247,3 +269,4 @@ Use the project interpreter (see workspace rules), e.g. `python3.11` from pyenv,
 - [Bridges and talkgroups](bridges-and-talkgroups.md) — `BRIDGES` semantics.
 - [Special numbers](special-numbers.md) — reserved TGs and server IDs.
 - [Parrot](parrot.md) — PEER example (parrot process).
+- [Hotspot proxy](hotspot-proxy.md) — integrated **`PROXY`** / **`SELF_SERVICE`**.

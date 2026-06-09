@@ -1,24 +1,33 @@
 # Proxy hotspot
 
-El **proxy hotspot** forma parte del repositorio **adn-monitor**. Es un **relé UDP** entre **hotspots DMR** (Homebrew / HBP) y el **MASTER** del **ADN DMR Peer Server**: cada hotspot conectado se asigna a un **puerto de destino** dedicado en el host del peer server, de modo que muchos hotspots puedan compartir una IP pública sin choques de puertos.
+## Proxy integrado (predeterminado actual)
+
+**ADN DMR Peer Server** incluye un **proxy hotspot integrado** en **`adn-server.py`**. Configura **`PROXY`** y **`SELF_SERVICE`** en **`adn-server.yaml`** — ver [Proxy hotspot (integrado)](../server/user-guide/hotspot-proxy.md).
+
+- Los hotspots se conectan solo a **`PROXY.LISTEN_PORT`** (fan-in).
+- El tráfico se inyecta en **`PROXY.TARGET_SYSTEM`** (MASTER solo inyección, **`MAX_PEERS`**).
+- El self-service MySQL usa la misma tabla **`Clients`** que este stack del monitor.
+- **Desactiva** **`adn-proxy`** independiente en el mismo host para evitar conflictos en **`LISTEN_PORT`**.
+
+---
+
+## Proxy independiente (legado, repo adn-monitor)
+
+El repositorio **adn-monitor** sigue teniendo un **relé UDP independiente** (`proxy/proxy.py`). Asigna a cada hotspot un **puerto de destino dedicado** en el host del peer server (rango de puertos + **`GENERATOR`**). Usa este layout solo si mantienes el proxy separado de **`adn-server`** a propósito.
 
 Estructura: `proxy/proxy.py`, paquete `proxy/src/adn_proxy/` (arquitectura limpia). **GPL v3** (derivado del proxy original de Simon Adlem, G7RZU).
 
-### Por qué va con el monitor (y no dentro del peer server) {#why-it-ships-with-the-monitor-not-inside-the-peer-server}
+### Por qué también va con el monitor {#why-it-ships-with-the-monitor-not-inside-the-peer-server}
 
-No hay un despliegue obligatorio único, pero **hoy el proxy vive en el repo adn-monitor** a propósito:
-
-- **Mismo despliegue** que el panel: **`ADN_CONFIG_PATH`** / **`ADN_PROXY_CONFIG_PATH`**, **`adn-monitor.yaml`** + **`adn-proxy.yaml`**, y normalmente el mismo host que **PHP** y **MySQL**.
-- El **self-service** (**`Clients`**, RPTO, **`modified`**) está montado sobre ese ecosistema; el binario del peer server no posee esa base de datos ni el bloque **`PROXY`**.
-- **División de roles:** el **ADN DMR Peer Server** es el **núcleo de radio** (HBP/OpenBridge, bridges, voz, informes TCP). El proxy hotspot es un **frente UDP opcional** hacia un MASTER que ya escucha en un **rango** de puertos — útil cuando muchos hotspots comparten una dirección pública.
-
-**Integrar el proxy en el peer server** (un binario, un `adn-server.yaml`) es imaginable para empaquetado, pero implica **unificar configuración**, **replantear el cableado de self-service** y más mantenimiento — solo compensa si quieres explícitamente un servidor “todo en uno” desplegable.
+- **Mismo despliegue** que el panel: **`adn-monitor.yaml`**, **`adn-proxy.yaml`**, **PHP**, **MySQL**.
+- Separación histórica: peer server = núcleo radio; proxy = frontal UDP opcional en un **rango** de puertos.
+- Los despliegues ADN nuevos deben preferir el proxy **integrado** salvo que mantengas una unidad **`adn-proxy`** existente.
 
 ---
 
 ## Fichero de configuración {#configuration-file}
 
-El proxy **no** usa `adn-server.yaml`. Lee un YAML que incluye **`PROXY`**, **`SELF_SERVICE`** y **`LOGGER`** (log del proxy).
+El proxy **independiente** **no** usa `adn-server.yaml` para su propio proceso. Lee un YAML que incluye **`PROXY`**, **`SELF_SERVICE`** y **`LOGGER`** (log del proxy). El proxy **integrado** lee esos bloques desde **`adn-server.yaml`**.
 
 ### Orden de resolución
 

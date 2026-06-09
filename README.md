@@ -21,6 +21,8 @@ GPL v3. Derived from FreeDMR / HBlink.
 
 Copy `adn-server.example.yaml` to `adn-server.yaml` and edit with your settings. Production config is not committed.
 
+The example includes an **integrated hotspot proxy** (`PROXY`) and optional **MySQL self-service** (`SELF_SERVICE`). For self-service, install the optional extra: `pip install -e ".[selfservice]"`. See [Hotspot proxy (integrated)](docs/en/server/user-guide/hotspot-proxy.md). Disable standalone **`adn-proxy`** if you use the integrated proxy on the same host.
+
 ### Voice configuration
 
 Voice features (announcements, TTS, recording) use a separate config file. Copy `adn-voice.example.yaml` to `adn-voice.yaml` and edit. If the file does not exist, voice features are disabled (no error). Changes are hot-reloaded every 15 seconds.

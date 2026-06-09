@@ -2,7 +2,7 @@
 
 Este documento describe **`adn-monitor.yaml`**, usado por el **monitor Python** (`monitor/monitor.py`) y el **backend PHP** (`backend/public/index.php`). La ruta por defecto suele ser **`monitor/adn-monitor.yaml`** (sobrescribible con **`ADN_CONFIG_PATH`**).
 
-El **proxy hotspot** carga por defecto **otro** fichero — **`proxy/adn-proxy.yaml`** — ver [Proxy hotspot](hotspot-proxy.md). La sección **`SELF_SERVICE`** (MySQL / PBKDF2) debe ser **idéntica** en ambos YAML cuando se usan los dos.
+**Proxy hotspot integrado:** **`PROXY`** y **`SELF_SERVICE`** en **`adn-server.yaml`** (ver [Proxy hotspot (integrado)](../server/user-guide/hotspot-proxy.md)). **Independiente (legado):** **`proxy/adn-proxy.yaml`** — ver [Proxy hotspot](hotspot-proxy.md). **`SELF_SERVICE`** (MySQL / PBKDF2) debe ser **idéntica** entre **`adn-server.yaml`**, **`adn-monitor.yaml`** y **`adn-proxy.yaml`** legado si se usa.
 
 El ejemplo del repositorio **adn-monitor** (`monitor/adn-monitor.yaml.example`) es la plantilla del monitor; las claves siguientes coinciden con ese fichero y `monitor/src/adn_monitor/infrastructure/config_loader.py` (los nombres internos pueden diferir).
 
@@ -50,9 +50,9 @@ Si el backend PHP no puede conectar, las rutas de **auth** y **self-service** no
 
 ## `PROXY`
 
-**Proxy UDP hotspot** — guía completa: [Proxy hotspot](hotspot-proxy.md). En los despliegues actuales, estas claves están en **`proxy/adn-proxy.yaml`**, no en `adn-monitor.yaml`. **Legado:** un único fichero puede seguir incluyendo **PROXY** si el proxy se arranca con **`ADN_CONFIG_PATH`** apuntando a ese fichero (ver orden de resolución en [Proxy hotspot](hotspot-proxy.md#configuration-file)).
+**Proxy UDP hotspot** — guía completa: [Proxy hotspot](hotspot-proxy.md). Los despliegues **integrados** usan **`PROXY`** en **`adn-server.yaml`** (fan-in, sin rango de puertos). Los layouts **independientes** mantienen estas claves en **`proxy/adn-proxy.yaml`** (o fichero combinado legado vía **`ADN_CONFIG_PATH`**).
 
-Resumen: **`PORT`** + **`GENERATOR`** deben coincidir con **`SYSTEM.PORT`** + **`SYSTEM.GENERATOR`** en `adn-server`; cada cliente se reenvía a **`MASTER`** en un puerto UDP dentro de **`PORT`…`PORT+GENERATOR-1`** (ver también [Arquitectura](architecture.md)).
+**Resumen independiente:** **`PORT`** + **`GENERATOR`** deben coincidir con **`SYSTEM.PORT`** + **`SYSTEM.GENERATOR`** en `adn-server`; cada cliente se reenvía a **`MASTER`** en un puerto UDP dentro de **`PORT`…`PORT+GENERATOR-1`** (ver también [Arquitectura](architecture.md)).
 
 | Clave | Significado |
 |-------|-------------|
