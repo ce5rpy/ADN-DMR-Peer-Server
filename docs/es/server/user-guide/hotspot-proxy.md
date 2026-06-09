@@ -10,8 +10,7 @@ La configuración está en **`adn-server.yaml`**, bloques **`PROXY`** y opcional
 
 | Despliegue | Qué ejecutar |
 |------------|--------------|
-| **Stack ADN habitual** (monitor + panel + muchos hotspots Pi-Star) | **`adn-server.py`** con **`PROXY`** + **`SELF_SERVICE`** — desactiva la unidad **`adn-proxy`** independiente para evitar conflicto en **`PROXY.LISTEN_PORT`**. |
-| **Legado / config separada** | **`proxy/proxy.py`** en el repo **adn-monitor** — ver [Proxy hotspot (independiente)](../../monitor/hotspot-proxy.md). |
+| **Stack ADN habitual** (monitor + panel + muchos hotspots Pi-Star) | **`adn-server.py`** con **`PROXY`** + **`SELF_SERVICE`**. |
 
 El proxy integrado usa **fan-in**: los hotspots solo necesitan **`PROXY.LISTEN_PORT`** (p. ej. **62031**). El **MASTER** destino es **solo inyección** — **no** abre su propio puerto UDP para ese system (sin rango de puertos por hotspot en el host del servidor).
 
@@ -68,13 +67,13 @@ Define **`MAX_PEERS`** en el MASTER destino como máximo de hotspots simultáneo
 
 ## Claves `SELF_SERVICE`
 
-Misma semántica que **`adn-monitor.yaml`** / **`adn-proxy.yaml`** legado — tabla **`Clients`** compartida, flag **`modified`**, **RPTO** hacia el MASTER.
+Misma semántica que **`adn-monitor.yaml`** — tabla **`Clients`** compartida, flag **`modified`**, **RPTO** hacia el MASTER.
 
 | Clave | Rol |
 |-------|-----|
 | **USE_SELFSERVICE** | Activa sincronización de opciones con MySQL (`true` / `false`). |
 | **DB_SERVER**, **DB_USERNAME**, **DB_PASSWORD**, **DB_NAME**, **DB_PORT** | Conexión MySQL. |
-| **PBKDF2_SALT**, **PBKDF2_ITERATIONS** | Deben **coincidir** con monitor/backend para el hash de contraseñas. |
+| **PBKDF2_SALT**, **PBKDF2_ITERATIONS** | Deben **coincidir** con **`adn-monitor.yaml`** para el hash de contraseñas. |
 
 Al arrancar el servidor registra **`(SELF_SERVICE) Database connection test: OK`** y **`(SELF_SERVICE) Enabled`** si el pool conecta. El self-service es **asíncrono**; el reenvío de voz no se bloquea por latencia de BD.
 
@@ -106,15 +105,8 @@ Ver [Configuración — recarga en caliente](configuration.md#recarga-en-calient
 
 ---
 
-## Proxy independiente (legado)
-
-El repo **adn-monitor** sigue incluyendo **`proxy/proxy.py`** para despliegues con relay UDP **separado** y **`adn-proxy.yaml`**. **No** ejecutes el proxy integrado y **`adn-proxy`** independiente en el mismo **`LISTEN_PORT`**.
-
----
-
 ## Ver también
 
 - [Configuración](configuration.md) — referencia completa de **`adn-server.yaml`**.
 - [Monitorización e informes](monitoring.md) — informes TCP, panel, rotación de logs.
 - [Self-service](../../monitor/self-service.md) — **`Clients`**, temporización **RPTO**.
-- [Proxy hotspot (independiente)](../../monitor/hotspot-proxy.md) — layout legado **`adn-proxy`**.

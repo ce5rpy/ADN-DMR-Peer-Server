@@ -10,8 +10,7 @@ Configuration lives in **`adn-server.yaml`** under **`PROXY`** and optional **`S
 
 | Deployment | What to run |
 |------------|-------------|
-| **Typical ADN stack** (monitor + dashboard + many Pi-Star hotspots) | **`adn-server.py`** with **`PROXY`** + **`SELF_SERVICE`** — disable the standalone **`adn-proxy`** unit to avoid port clashes on **`PROXY.LISTEN_PORT`**. |
-| **Legacy / split config** | Standalone **`proxy/proxy.py`** in the **adn-monitor** repo — see [Hotspot proxy (standalone)](../../monitor/hotspot-proxy.md). |
+| **Typical ADN stack** (monitor + dashboard + many Pi-Star hotspots) | **`adn-server.py`** with **`PROXY`** + **`SELF_SERVICE`**. |
 
 The integrated proxy uses **fan-in**: hotspots only need **`PROXY.LISTEN_PORT`** (e.g. **62031**). The target **MASTER** is **inject-only** — it does **not** bind its own UDP port for that system (no per-hotspot port range on the server host).
 
@@ -68,7 +67,7 @@ Set **`MAX_PEERS`** on the target MASTER to the maximum concurrent proxied hotsp
 
 ## `SELF_SERVICE` keys
 
-Same semantics as **`adn-monitor.yaml`** / legacy **`adn-proxy.yaml`** — shared **`Clients`** table, **`modified`** flag, **RPTO** toward the MASTER.
+Same semantics as **`adn-monitor.yaml`** — shared **`Clients`** table, **`modified`** flag, **RPTO** toward the MASTER.
 
 | Key | Role |
 |-----|------|
@@ -106,15 +105,8 @@ See [Configuration — hot reload](configuration.md#hot-reload-adn-serveryaml).
 
 ---
 
-## Standalone proxy (legacy)
-
-The **adn-monitor** repository still ships **`proxy/proxy.py`** for deployments that keep a **separate** UDP relay and **`adn-proxy.yaml`**. Do **not** run both the integrated proxy and standalone **`adn-proxy`** on the same **`LISTEN_PORT`**.
-
----
-
 ## See also
 
 - [Configuration](configuration.md) — full **`adn-server.yaml`** reference.
 - [Monitoring and reports](monitoring.md) — TCP reports, dashboard, log rotation.
 - [Self-service](../../monitor/self-service.md) — **`Clients`**, **RPTO** timing.
-- [Hotspot proxy (standalone)](../../monitor/hotspot-proxy.md) — legacy **`adn-proxy`** layout.

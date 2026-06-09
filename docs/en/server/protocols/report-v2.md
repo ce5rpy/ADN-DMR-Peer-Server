@@ -6,7 +6,7 @@
 
 Replace monitor snapshots that today use **pickle** (`CONFIG_SND`, `BRIDGE_SND`) and **CSV strings** (`BRDG_EVENT`) with **typed JSON** that any client can decode.
 
-**Release policy:** **adn-server 1.0.x** + **adn-monitor 1.0.x** = report v1 (frozen tag pair). **2.x** server emits **report v2 only** (no pickle shim, no `dual`); **adn-monitor 2.x** is required on the same release line.
+**Release policy:** **adn-server 1.0.x** + **adn-monitor 1.0.x** = report v1 (frozen tag pair). **2.x** server sends **HELLO** with `report_protocol: 2` and **v2 JSON only** (`TOPOLOGY_SND`, `ROUTING_TABLE_SND`, `VOICE_EVENT_SND`, `DELTA_SND`) — no duplicate pickle/CSV frames. **adn-monitor 2.x** is the polyglot consumer: it decodes v1 wire from legacy peers and v2 JSON from **adn-server 2.x**, mapping both into the same dashboard state for the UI. **adn-monitor 1.0.0** cannot decode v2 opcodes — upgrade the monitor line for **adn-server 2.x**.
 
 ## Transport (unchanged)
 

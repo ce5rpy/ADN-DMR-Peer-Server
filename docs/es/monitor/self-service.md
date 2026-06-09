@@ -2,14 +2,14 @@
 
 **Self-service** permite al dueño de un hotspot **iniciar sesión** en el panel, **editar las opciones de su dispositivo** (listas estáticas de TG, reflector por defecto, temporizador, idioma, etc.) y que esas opciones se **envíen al ADN DMR Peer Server** sin editar YAML a mano en el servidor.
 
-Intervienen **cuatro** piezas: **MySQL** (tabla `Clients`), **API PHP** (sesión + REST), **React** (página `/self-service`) y el **proxy hotspot** (**RPTO** periódico al master). El **peer server** es quien aplica al final **RPTO** / **OPTIONS** al bridge en ejecución y al comportamiento del hotspot.
+Intervienen **cuatro** piezas: **MySQL** (tabla `Clients`), **API del monitor** (FastAPI, sesión + REST), **React** (página `/self-service`) y el **proxy hotspot integrado** en **adn-server** (**RPTO** periódico al master). El **peer server** es quien aplica al final **RPTO** / **OPTIONS** al bridge en ejecución y al comportamiento del hotspot.
 
 ---
 
 ## Requisitos previos
 
 1. Bloque **`SELF_SERVICE`** en **`adn-monitor.yaml`** con credenciales **MySQL** válidas y parámetros **PBKDF2** alineados con tu herramienta de contraseñas (misma sal/iteraciones que **`hotspot_proxy_self_service.py`** cuando se use).
-2. **`DASHBOARD.SELF_SERVICE: true`** para que la UI muestre la entrada **Self-service** (y el backend exponga `/api/self-service/*` cuando la BD conecta).
+2. **`DASHBOARD.SELF_SERVICE: true`** para que la UI muestre la entrada **Self-service** (y `monitor.py` exponga `/api/self-service/*` cuando la BD conecta).
 3. Tabla **`Clients`** con filas: **`callsign`**, **`int_id`** (ID DMR), **`psswd`** (hex PBKDF2-SHA256), **`options`** (línea `KEY=value` separada por `;`), **`logged_in`**, **`host`**, **`modified`**, etc. (ver esquema / migraciones en el repo adn-monitor).
 4. El tráfico del hotspot debe pasar por el **proxy** si dependes de **`modified`** y del envío **RPTO** (ver flujo abajo).
 
@@ -19,7 +19,7 @@ Intervienen **cuatro** piezas: **MySQL** (tabla `Clients`), **API PHP** (sesión
 
 | Endpoint | Uso |
 |----------|-----|
-| **`POST /api/auth/login`** | Cuerpo: `callsign`, `password`. Verifica hash **PBKDF2** contra **`Clients.psswd`** en filas con **`logged_in = 1`**. Éxito: sesión PHP con **`user_id`**, **`int_ids`** (todos los DMR ID de ese indicativo). |
+| **`POST /api/auth/login`** | Cuerpo: `callsign`, `password`. Verifica hash **PBKDF2** contra **`Clients.psswd`** en filas con **`logged_in = 1`**. Éxito: cookie de sesión con **`user_id`**, **`int_ids`** (todos los DMR ID de ese indicativo). |
 | **`GET /api/auth/login-by-ip`** | Opcional: una coincidencia de usuario por **`Clients.host`** = IP del cliente (misma forma de sesión). |
 | **`POST /api/auth/logout`** | Cierra sesión. |
 | **`GET /api/auth/me`** | Devuelve `{ callsign, int_ids, selected_int_id }` para React. |
@@ -41,7 +41,7 @@ La sesión se prolonga con actividad (**SelfServiceController** usa un timeout l
 
 ## Flujo extremo a extremo (cómo llegan las opciones al hotspot)
 
-1. El usuario guarda opciones en la web → **PHP** escribe **`Clients.options`** y **`modified = 1`**.
+1. El usuario guarda opciones en la web → la **API del monitor** escribe **`Clients.options`** y **`modified = 1`**.
 2. El **proxy hotspot** ejecuta **`send_opts`** en bucle (~cada **10 s**). Para filas con **`modified = 1`**, lee opciones de la BD, envía **RPTO** **al peer server** en **`(MASTER, puerto_destino_asignado)`**, luego limpia **`modified`** en la BD.
 3. El **ADN DMR Peer Server** recibe **RPTO** en la pata MASTER y actualiza su estado **OPTIONS** / bridge (mismo camino que un refresco normal de registro del hotspot).
 4. El servidor envía la señalización adecuada al **hotspot** para que TG estáticos / reflector / temporizador surtan efecto **sin** reinicio completo del hotspot (el comportamiento coincide con el flujo HBP **OPTIONS** del servidor).

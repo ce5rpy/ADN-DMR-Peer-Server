@@ -27,7 +27,7 @@ Enrutado, temporizadores, control de bucle OpenBridge y manejo de protocolo est�
 ## Programas relacionados
 
 - **Parrot / reproducción** — punto de entrada aparte (`adn-parrot.py`) para grabar y reproducir; ver [Parrot](parrot.md).
-- **Proxy hotspot independiente** — **`adn-proxy`** legado en el repo **adn-monitor** si no usas el proxy integrado; ver [Proxy hotspot (independiente)](../../monitor/hotspot-proxy.md).
+- **Proxy hotspot integrado** — `PROXY` en **`adn-server.yaml`**; ver [Proxy hotspot](hotspot-proxy.md).
 
 ## Siguientes pasos
 

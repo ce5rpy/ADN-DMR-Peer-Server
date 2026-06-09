@@ -16,7 +16,7 @@ Las pilas antiguas (**legado** estilo `adn-dmr-server`) pueden **omitir** HELLO.
 
 El **monitor** decodifica estos mensajes, actualiza **CTABLE** / **BTABLE** y (con MySQL configurado) persiste Last Heard / estadísticas.
 
-**Pila completa:** [Descripción general del ADN Monitor](../../monitor/index.md) (monitor Python, WebSocket, API PHP, proxy y self-service opcionales).
+**Pila completa:** [Descripción general del ADN Monitor](../../monitor/index.md) (monitor FastAPI, WebSocket, self-service).
 
 ### Líneas de log del canal de informes (logger `adn-monitor`)
 
@@ -51,7 +51,6 @@ Estos procesos tratan **`SIGUSR2`** solo para **reabrir** los ficheros de log (`
 | Proceso | Claves típicas de configuración |
 |---------|-----------------------------------|
 | **`adn-server`** / **`adn-parrot`** | **`LOGGER.LOG_FILE`** (los logs del proxy integrado van al mismo fichero) |
-| **`adn-proxy`** (independiente, legado) | **`LOG.PATH`** + **`LOG.LOG_FILE`** en `adn-proxy.yaml` — omitir si usas **`PROXY`** integrado en `adn-server.yaml` |
 | **`adn-monitor`** | **`LOG.PATH`** + **`LOG.LOG_FILE`** en `adn-monitor.yaml` |
 
 Ejemplo de fragmento en **`/etc/logrotate.d/adn`** (adaptar rutas y nombres de unidad):
@@ -71,7 +70,7 @@ Ejemplo de fragmento en **`/etc/logrotate.d/adn`** (adaptar rutas y nombres de u
 }
 ```
 
-Repite **`postrotate`** con **`kill -USR2`** para **`adn-parrot`** y **`adn-monitor`** si rotas sus logs en el mismo host. Añade **`adn-proxy`** solo si sigues usando el proxy **independiente** (no hace falta con proxy integrado en **`adn-server`**). Usa el **PID** correcto (**`MainPID`** de systemd, pidfile, o el proceso que gestiones).
+Repite **`postrotate`** con **`kill -USR2`** para **`adn-parrot`** y **`adn-monitor`** si rotas sus logs en el mismo host. Usa el **PID** correcto (**`MainPID`** de systemd, pidfile, o el proceso que gestiones).
 
 ## Requisitos
 
@@ -82,4 +81,4 @@ Repite **`postrotate`** con **`kill -USR2`** para **`adn-parrot`** y **`adn-moni
 
 Los operadores que editan **opciones de dispositivo** desde el panel usan el flujo **self-service** (MySQL **`Clients`**, **RPTO** hacia el MASTER de conferencia). En despliegues actuales de **ADN DMR Peer Server** esto corre **dentro de `adn-server.py`**: configura **`SELF_SERVICE`** y **`PROXY`** en **`adn-server.yaml`** (ver [Proxy hotspot](hotspot-proxy.md)). Semántica del panel: [Self-service](../../monitor/self-service.md).
 
-Los stacks legados pueden seguir usando **`adn-proxy`** independiente y **`adn-proxy.yaml`** — ver [Proxy hotspot (independiente)](../../monitor/hotspot-proxy.md). No ejecutes ambos en el mismo **`LISTEN_PORT`**.
+Los logs del proxy hotspot forman parte de **`adn-server`** cuando **`PROXY`** está activo — ver [Proxy hotspot integrado](hotspot-proxy.md).

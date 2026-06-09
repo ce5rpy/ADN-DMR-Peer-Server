@@ -1,8 +1,8 @@
 # Configuración (`adn-monitor.yaml`)
 
-Este documento describe **`adn-monitor.yaml`**, usado por el **monitor Python** (`monitor/monitor.py`) y el **backend PHP** (`backend/public/index.php`). La ruta por defecto suele ser **`monitor/adn-monitor.yaml`** (sobrescribible con **`ADN_CONFIG_PATH`**).
+Este documento describe **`adn-monitor.yaml`**, usado por **`monitor.py`**. La ruta por defecto suele ser **`monitor/adn-monitor.yaml`** (sobrescribible con **`ADN_CONFIG_PATH`**).
 
-**Proxy hotspot integrado:** **`PROXY`** y **`SELF_SERVICE`** en **`adn-server.yaml`** (ver [Proxy hotspot (integrado)](../server/user-guide/hotspot-proxy.md)). **Independiente (legado):** **`proxy/adn-proxy.yaml`** — ver [Proxy hotspot](hotspot-proxy.md). **`SELF_SERVICE`** (MySQL / PBKDF2) debe ser **idéntica** entre **`adn-server.yaml`**, **`adn-monitor.yaml`** y **`adn-proxy.yaml`** legado si se usa.
+**Proxy hotspot** se configura en **`adn-server.yaml`** (`PROXY` + `SELF_SERVICE`) — ver [Proxy hotspot integrado](../server/user-guide/hotspot-proxy.md). **`SELF_SERVICE`** (MySQL / PBKDF2) debe ser **idéntica** entre **`adn-server.yaml`** y **`adn-monitor.yaml`**.
 
 El ejemplo del repositorio **adn-monitor** (`monitor/adn-monitor.yaml.example`) es la plantilla del monitor; las claves siguientes coinciden con ese fichero y `monitor/src/adn_monitor/infrastructure/config_loader.py` (los nombres internos pueden diferir).
 
@@ -19,7 +19,7 @@ El ejemplo del repositorio **adn-monitor** (`monitor/adn-monitor.yaml.example`) 
 | **EMPTY_MASTERS** | Mostrar masters sin peers. |
 | **TGCOUNT_INC** | Activar página / estadísticas de conteo de TG. |
 | **TGCOUNT_ROWS** | Filas para el conteo de TG. |
-| **TIMEZONE** | Zona horaria IANA (p. ej. `America/Santiago`) para mostrar; vacío usa la hora local del servidor. |
+| **TIMEZONE** | Zona horaria IANA (p. ej. `America/Santiago`): fechas Last Heard en pantalla; **TG Count** usa el **día calendario en esa zona** (medianoche local = nuevo día de estadísticas). Vacío → día UTC. |
 
 ---
 
@@ -37,31 +37,13 @@ Debe coincidir con la configuración de informes del **ADN DMR Peer Server**.
 
 ## `SELF_SERVICE`
 
-Credenciales MySQL y parámetros PBKDF2 para **login** y acceso a la tabla **`Clients`**. **PBKDF2_SALT** y **PBKDF2_ITERATIONS** deben coincidir con **`hotspot_proxy_self_service.py`** (o tu herramienta de registro de contraseñas) para que los hashes verifiquen en PHP y Python.
+Credenciales MySQL y parámetros PBKDF2 para **login**, **self-service** y acceso a la tabla **`Clients`**. **PBKDF2_SALT** y **PBKDF2_ITERATIONS** deben coincidir con **`hotspot_proxy_self_service.py`** (o tu herramienta de registro de contraseñas) para que los hashes verifiquen en la API del monitor y en el proxy integrado de **adn-server**.
 
 | Clave | Significado |
 |-------|-------------|
-| **USE_SELFSERVICE** | Lo usa el cargador de config del **proxy** para rutas con BD / self-service (ver README del proxy). |
 | **DB_SERVER**, **DB_USERNAME**, **DB_PASSWORD**, **DB_NAME**, **DB_PORT** | Conexión MySQL para **`Clients`** (y tablas relacionadas). |
 
-Si el backend PHP no puede conectar, las rutas de **auth** y **self-service** no se registran (ver `backend/public/index.php`).
-
----
-
-## `PROXY`
-
-**Proxy UDP hotspot** — guía completa: [Proxy hotspot](hotspot-proxy.md). Los despliegues **integrados** usan **`PROXY`** en **`adn-server.yaml`** (fan-in, sin rango de puertos). Los layouts **independientes** mantienen estas claves en **`proxy/adn-proxy.yaml`** (o fichero combinado legado vía **`ADN_CONFIG_PATH`**).
-
-**Resumen independiente:** **`PORT`** + **`GENERATOR`** deben coincidir con **`SYSTEM.PORT`** + **`SYSTEM.GENERATOR`** en `adn-server`; cada cliente se reenvía a **`MASTER`** en un puerto UDP dentro de **`PORT`…`PORT+GENERATOR-1`** (ver también [Arquitectura](architecture.md)).
-
-| Clave | Significado |
-|-------|-------------|
-| **MASTER** | Host del peer server (IP o DNS; resuelto al arrancar el proxy). |
-| **LISTEN_PORT** / **LISTEN_IP** | Dónde el proxy acepta UDP del hotspot (IP vacía suele significar todas las interfaces). |
-| **PORT** / **DESTPORT_START** | Puerto UDP base en **`MASTER`** (el mismo que **PORT** del SYSTEM en el servidor). |
-| **GENERATOR** | Cantidad de puertos UDP consecutivos en **`MASTER`** (el mismo entero que **GENERATOR** del SYSTEM en el servidor). |
-| **TIMEOUT**, **STATS**, **DEBUG**, **CLIENT_INFO** | Comportamiento y registro. |
-| **BLACK_LIST** / **IP_BLACK_LIST** | Listas de bloqueo opcionales. |
+Si MySQL no está disponible, las rutas de **auth** y **self-service** no se registran.
 
 ---
 
@@ -85,18 +67,25 @@ Misma idea que en el peer server: descargar JSON de **peer / subscriber / TGID**
 | **LOG_FILE** | Nombre del log del monitor (p. ej. `adn-monitor.log`). |
 | **LOG_LEVEL** | p. ej. `INFO`, `DEBUG`. |
 
-El nombre del fichero de log del **proxy hotspot** se define en **`proxy/adn-proxy.yaml`** dentro de **LOGGER** como **`PROXY_LOG_FILE`** (ver [Proxy hotspot](hotspot-proxy.md)).
-
 ---
 
-## `WEBSOCKET_SERVER`
+## `MONITOR_APP`
+
+Proceso unificado **`monitor.py`**: REST y WebSocket en el **mismo** host/puerto.
 
 | Clave | Significado |
 |-------|-------------|
-| **WEBSOCKET_PORT** | Puerto del WebSocket Twisted que envía estado JSON a los navegadores. |
-| **FREQUENCY** | Intervalo de envío (segundos). |
+| **LISTEN_HOST** | Interfaz de escucha (`""` = todas las IPv4). |
+| **LISTEN_PORT** | Puerto HTTP (p. ej. `8080`): `/api/*` y `/ws`. |
+| **INGEST** | `tcp` (cliente a `ADN_CONNECTION`) o `mqtt` (tópicos del broker). |
+| **MQTT** | Obligatorio si `INGEST: mqtt` (`URL`, `TOPIC_PREFIX`, `QOS`). |
+| **FREQUENCY** | Resync periódico en segundo plano (segundos); las actualizaciones en vivo son por eventos. |
 | **CLIENT_TIMEOUT** | Cerrar clientes WS inactivos tras N segundos (`0` = desactivado). |
-| **USE_SSL**, **SSL_PATH**, **SSL_CERTIFICATE**, **SSL_PRIVATEKEY** | WSS opcional. |
+| **CORS_ORIGINS** | Orígenes permitidos para desarrollo (opcional). |
+
+Nginx en producción proxifica `/api` y `/ws` a **LISTEN_PORT**. No hace falta un puerto WebSocket aparte.
+
+La sección obsoleta **`WEBSOCKET_SERVER`** en YAML (Twisted en puerto distinto) se ignora; usa **`MONITOR_APP`**.
 
 ---
 
@@ -107,18 +96,38 @@ El nombre del fichero de log del **proxy hotspot** se define en **`proxy/adn-pro
 | **DASHTITLE** | Título de cabecera. |
 | **BACKGROUND** | Usar fondo `bk.jpg` si es `true`. |
 | **LANGUAGE** | Idioma por defecto de la UI (`en`, `es`, …). |
-| **SELF_SERVICE** | Si es `true`, la UI puede mostrar la entrada **Self-service** (el backend debe exponer API + BD). |
+| **SELF_SERVICE** | Si es `true`, la UI puede mostrar la entrada **Self-service** (API del monitor + MySQL). |
 | **SHOW_CONSOLE** | Mostrar página consola (mensajes inicio/fin de llamada). |
 | **MIN_DURATION** | Duración mínima de llamada (segundos) para la tabla Last Heard del **panel** (la página Last Heard puede seguir mostrando más cortas). |
 | **nav_links**, **footer**, **news** | Enlaces estructurados / marquee opcionales. |
 
 ---
 
+## Esquema MySQL y migraciones
+
+No hay Alembic: el monitor usa **`schema_migrations`** y comprobaciones en **`information_schema`**.
+
+| Comando | Cuándo |
+|---------|--------|
+| `python db_bootstrap.py --config adn-monitor.yaml --create` | BD nueva |
+| `python db_bootstrap.py --config adn-monitor.yaml --update` | BD existente (mismas operaciones, idempotente) |
+
+**`monitor.py`** ejecuta **`ensure_schema`** al arrancar si hay **`SELF_SERVICE`**: `CREATE TABLE IF NOT EXISTS`, migraciones pendientes y limpieza de tablas staging huérfanas (`*_import`, `*_old`). **No borra datos** de `subscriber_ids` ni de `Clients`.
+
+**Import masivo de alias (sin bloquear lecturas):**
+
+- Tablas con **PK en `id`** únicamente (lookups puntuales).
+- **Replace:** carga en `{tabla}_import` con **commit cada 10 000 filas** (la tabla live sigue legible); swap atómico `RENAME TABLE` (bloqueo metadata breve).
+- **Merge** (ficheros locales): `INSERT IGNORE` con **commit cada 2 000 filas**.
+
+Migraciones: `001_clients_callsign`, `002_clients_options_width`, `003_alias_pk_only`.
+
+---
+
 ## Entorno
 
-- **`ADN_CONFIG_PATH`**: ruta absoluta a **`adn-monitor.yaml`** para el **monitor** y el **backend PHP**.
-- **`ADN_PROXY_CONFIG_PATH`** (opcional): ruta absoluta a **`adn-proxy.yaml`** para el proxy hotspot. Si no está definida, el proxy usa **`ADN_CONFIG_PATH`** (fichero combinado legado), luego **`proxy/adn-proxy.yaml`** por defecto — detalles en [Proxy hotspot](hotspot-proxy.md#configuration-file).
-- El backend puede usar **`API_BASE_PATH`** si la API va bajo un prefijo.
+- **`ADN_CONFIG_PATH`**: ruta absoluta a **`adn-monitor.yaml`** para **`monitor.py`**.
+- **`.env`** en la raíz del repo: `VITE_API_BASE`, `VITE_DEFAULT_LANGUAGE` (build del frontend); se carga automáticamente en `monitor.py` y `db_bootstrap.py`.
 
 ---
 

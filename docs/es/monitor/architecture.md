@@ -4,59 +4,50 @@
 
 Bajo `monitor/src/adn_monitor/`:
 
-- **Dominio** — objetos de valor, errores, tipos de opcode.
-- **Aplicación** — `MonitorState`, `process_message` en `monitor_controller.py`, servicio de alias, casos de uso Last Heard / conteo TG, formato de hora.
-- **Infraestructura** — `load_config` YAML, cliente Twisted **TCP** (`ReportClientFactory`) al peer server, fábrica **WebSocket** para el panel, repositorios MySQL, decodificadores pickle/json para `CONFIG_SND` / `BRIDGE_SND`.
+- **Dominio** — entidades, errores, `Result`, opcodes, `UserSession`.
+- **Aplicación** — `MonitorState`, casos de uso (auth, self-service, informes, dashboard), puertos (`AuthRepository`, `HttpFetcherPort`, …).
+- **Infraestructura** — YAML, FastAPI (REST + `/ws`), ingest TCP (Twisted en hilo) o MQTT, MySQL, decodificadores de informes.
 
-El monitor **sale hacia** **`ADN_CONNECTION.ADN_IP:ADN_PORT`** y recibe mensajes con prefijo de longitud (estilo netstring). Actualiza **CTABLE** (masters/peers/OpenBridge) y **BTABLE** (bridges) en memoria, y persiste resultados de **BRDG_EVENT** cuando MySQL está configurado.
+El **composition root** está en `infrastructure/fastapi/composition.py` (`build_monitor_api`).
+
+## Proceso unificado (`monitor.py`)
+
+Un solo proceso uvicorn/FastAPI:
+
+| Ruta / rol | Contenido |
+|------------|-----------|
+| `/api/*` | Config dashboard, auth, self-service, proxy alias/status |
+| `/ws` | Protocolo `conf,<grupo>` — CTABLE, Last Heard, voz |
+| Ingest (fondo) | `MONITOR_APP.INGEST`: `tcp` (cliente a `ADN_CONNECTION`) **o** `mqtt` (tópicos `state` + `voice_event`) |
+| Alias (fondo) | Descarga → `FILES.PATH`; import con **staging + RENAME** (commits cada 10k en staging; swap breve); merge con commits cada 2k; **PK en `id`** |
 
 ## Protocolo de informes (desde el peer server)
 
-Los mismos opcodes que en la documentación del servidor: **CONFIG_SND**, **BRIDGE_SND**, **BRDG_EVENT**, etc. El monitor los decodifica y aplica en `process_message` — ver [Monitor e informes](../server/user-guide/monitoring.md).
-
-## WebSocket
-
-`monitor.py` ejecuta un **WebSocket** Twisted en **`WEBSOCKET_SERVER.WEBSOCKET_PORT`**, enviando instantáneas JSON a **`FREQUENCY`** para que la app React actualice sin polling del estado principal.
-
-## Backend PHP
-
-- **Slim 4** front controller: `backend/public/index.php`.
-- Carga **`adn-monitor.yaml`** vía **`ADN_CONFIG_PATH`** (igual que el monitor).
-- **`/api/config/dashboard`** — título, idioma, flags (`selfService`, `showConsole`, …) desde **`DASHBOARD`**.
-- **`/api/auth/*`** — sesión por cookie cuando hay BD **SELF_SERVICE**.
-- **`/api/self-service/*`** — opciones de dispositivo (ver [Self-service](self-service.md)).
-- **`/api/aliases/*`** — proxy opcional a URLs de listas TG/bridge desde **ALIASES**.
+Modos de ingest según el peer: legacy (pickle), v1 HELLO, v2 slim (`dashboard_state` + `voice_event`). Ver [Monitor e informes](../server/user-guide/monitoring.md).
 
 ## Frontend
 
-- **Vite + React** bajo `frontend/`; el build genera estáticos servidos por nginx/Apache o similar.
-- Usa **`API_BASE`** (build) para la API PHP y **URL del WebSocket** para datos en vivo.
+- **Vite + React** en `frontend/`; build → `frontend/dist/`.
+- Desarrollo: Vite hace proxy de `/api` y `/ws` a `MONITOR_APP.LISTEN_PORT` (p. ej. 8080).
+- Producción: Nginx sirve estáticos y proxifica `/api` + `/ws` al mismo puerto FastAPI.
 
 ## Proxy hotspot
 
-**Integrado (predeterminado):** **`adn-server.py`** ejecuta fan-in UDP desde **`PROXY.LISTEN_PORT`** hacia **`PROXY.TARGET_SYSTEM`**; **`SELF_SERVICE`** en **`adn-server.yaml`** impulsa **RPTO** desde MySQL **`Clients`**. Ver [Proxy hotspot (integrado)](../server/user-guide/hotspot-proxy.md).
+**Integrado (predeterminado):** `adn-server.py` con `PROXY` + `SELF_SERVICE` en `adn-server.yaml`. Ver [Proxy hotspot integrado](../server/user-guide/hotspot-proxy.md).
 
-**Independiente (legado, repo adn-monitor):**
+El proceso **`adn-proxy`** independiente se eliminó del repositorio **adn-monitor**; usa solo **`PROXY`** integrado.
 
-- Entrada: `proxy/proxy.py`; paquete `src/adn_proxy/` (dominio / aplicación / infraestructura).
-- Lee **`PROXY`** y **`SELF_SERVICE`** desde **`adn-proxy.yaml`** por defecto (o YAML combinado del monitor vía **`ADN_CONFIG_PATH`** — ver [Proxy hotspot](hotspot-proxy.md#configuration-file)).
-- Por cada cliente hotspot, asigna un puerto UDP en **`PORT`…`PORT+GENERATOR-1`** y reenvía a **`MASTER`**.
-- Cuando **self-service** actualiza **`Clients.options`** y pone **`modified=1`**, el proxy envía **RPTO** al **master** en un temporizador (~10 s).
-
-**Detalle:** [Proxy hotspot](hotspot-proxy.md) (integrado vs independiente, claves, arranque).
-
-## Topología típica de despliegue
+## Topología típica
 
 ```text
-[Hotspots] --UDP--> [Proxy :LISTEN_PORT] --UDP--> [Peer server :PORT..PORT+GENERATOR-1]
+[Hotspots] --UDP--> [adn-server PROXY] --UDP--> [peer MASTER]
                            |
                            v
                     MySQL (Clients)
 
-[Peer server :REPORT_PORT] <--- TCP --- [monitor.py : cliente que conecta]
+[Peer :REPORT_PORT] <--- TCP o MQTT --- [monitor.py ingest]
 
-[Navegador] --HTTPS--> [API PHP + frontend estático]
-[Navegador] --WS----> [WebSocket del monitor :9000]
+[Navegador] --HTTPS--> [Nginx: frontend/dist + proxy /api,/ws --> :8080]
 ```
 
 ---

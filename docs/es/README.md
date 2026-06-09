@@ -42,12 +42,13 @@ Más: [Introducción](server/user-guide/introduction.md).
 
 ## ADN Monitor
 
-Panel, **WebSocket** en vivo, **API PHP** opcional, **MySQL** self-service y **proxy hotspot** — ver [Descripción general del monitor](monitor/index.md).
+Panel, **WebSocket** en vivo, API FastAPI, **MySQL** self-service — ver [Descripción general del monitor](monitor/index.md). El **proxy hotspot** está integrado en **adn-server**.
 
 | Quiero… | Empieza aquí |
 |---------|----------------|
 | `adn-server.yaml` — `PROXY` / `SELF_SERVICE` integrados | [Proxy hotspot (integrado)](server/user-guide/hotspot-proxy.md) |
-| `adn-monitor.yaml`, `adn-proxy.yaml` legado, despliegue | [Configuración del monitor](monitor/configuration.md), [Proxy hotspot](monitor/hotspot-proxy.md) |
+| `adn-monitor.yaml`, despliegue | [Configuración del monitor](monitor/configuration.md) |
+| Proxy hotspot integrado | [Proxy hotspot](server/user-guide/hotspot-proxy.md) |
 | Proxy hotspot (UDP, `PROXY`, rango de puertos) | [Proxy hotspot](monitor/hotspot-proxy.md) |
 | Self-service | [Self-service](monitor/self-service.md) |
 | Cómo encaja con el servidor | [Monitor e informes](server/user-guide/monitoring.md) |
