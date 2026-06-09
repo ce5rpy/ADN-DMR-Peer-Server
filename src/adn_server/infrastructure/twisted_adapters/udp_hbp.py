@@ -161,6 +161,8 @@ class HBPProtocol(DatagramProtocol):
         on_deactivate_dynamic_bridges: Callable[[str], None] | None = None,
         on_obp_bcsq_received: Callable[[str, bytes, bytes], None] | None = None,
         on_talker_alias_local_repeat: Callable[[str, bytes, bytes, bytes], None] | None = None,
+        on_talker_alias_repeat_prepare: Callable[[str, bytes, bytes, bytes, int, bytes], None] | None = None,
+        on_talker_alias_repeat_burst: Callable[[str, int, bytes, int, bytes], bytes] | None = None,
         on_talker_alias_stream_end: Callable[[str, bytes], None] | None = None,
         on_dmra_fragment_stored: Callable[[str, bytes, bytes, bytes], None] | None = None,
     ) -> None:
@@ -177,6 +179,8 @@ class HBPProtocol(DatagramProtocol):
         self._on_deactivate_dynamic_bridges = on_deactivate_dynamic_bridges
         self._on_obp_bcsq_received = on_obp_bcsq_received
         self._on_talker_alias_local_repeat = on_talker_alias_local_repeat
+        self._on_talker_alias_repeat_prepare = on_talker_alias_repeat_prepare
+        self._on_talker_alias_repeat_burst = on_talker_alias_repeat_burst
         self._on_talker_alias_stream_end = on_talker_alias_stream_end
         self._on_dmra_fragment_stored = on_dmra_fragment_stored
         self._config = config.get("SYSTEMS", {}).get(system_name, {})
@@ -193,12 +197,14 @@ class HBPProtocol(DatagramProtocol):
             self.STATUS = {1: _make_slot_status(), 2: _make_slot_status()}
         if self._config.get("MODE") == "MASTER":
             self._peers = self._config.setdefault("PEERS", {})
+        else:
+            self._peers = {}
+        if self._config.get("MODE") in ("MASTER", "OPENBRIDGE"):
             self._dmra_by_stream: dict[bytes, dict[str, Any]] = {}
             self._dmra_rf_stream: dict[tuple[bytes, bytes], bytes] = {}
             self._ta_voice_acc: dict[bytes, dict[int, Any]] = {}
             self._ta_decoded_logged: set[bytes] = set()
         else:
-            self._peers = {}
             self._dmra_by_stream = {}
             self._dmra_rf_stream = {}
             self._ta_voice_acc = {}
@@ -260,9 +266,12 @@ class HBPProtocol(DatagramProtocol):
             _packet = b"".join([_packet[:11], _peer, _packet[15:]])
         self.transport.write(_packet, self._peers[_peer]["SOCKADDR"])
 
+    def _ta_buffer_enabled(self) -> bool:
+        return self._config.get("MODE") in ("MASTER", "OPENBRIDGE")
+
     def note_dmrd_stream(self, peer_id: bytes, rf_src: bytes, stream_id: bytes) -> None:
         """Associate active stream with source for DMRA pass-through buffering."""
-        if self._config.get("MODE") != "MASTER" or not stream_id:
+        if not self._ta_buffer_enabled() or not stream_id:
             return
         self._dmra_rf_stream[(peer_id, rf_src)] = stream_id
 
@@ -296,7 +305,7 @@ class HBPProtocol(DatagramProtocol):
         dmrpkt: bytes,
     ) -> None:
         """Buffer TA from embedded LC in voice bursts B–E (MMDVM DMRSlot path)."""
-        if self._config.get("MODE") != "MASTER" or not stream_id:
+        if not self._ta_buffer_enabled() or not stream_id:
             return
         if not self._CONFIG.get("GLOBAL", {}).get("TALKER_ALIAS", False):
             return
@@ -347,7 +356,7 @@ class HBPProtocol(DatagramProtocol):
 
     def trim_dmra_streams(self, max_age: float = 180.0) -> None:
         """Drop stale DMRA buffers (same order of magnitude as stream trimmer)."""
-        if self._config.get("MODE") != "MASTER":
+        if not self._ta_buffer_enabled():
             return
         now = time.time()
         cutoff = now - max_age
@@ -667,22 +676,37 @@ class HBPProtocol(DatagramProtocol):
                     self.store_ta_from_voice_burst(
                         _peer_id, _rf_src, _stream_id, _dtype_vseq, _data[20:53],
                     )
-                if self._config.get("REPEAT", True):
-                    pkt = [_data[:11], b"", _data[15:]]
-                    for _peer in self._peers:
-                        if _peer != _peer_id:
-                            pkt[1] = _peer
-                            self.transport.write(b"".join(pkt), self._peers[_peer]["SOCKADDR"])
                 if (
                     self._config.get("REPEAT", True)
                     and _call_type in ("group", "vcsbk")
                     and _frame_type == HBPF_DATA_SYNC
                     and _dtype_vseq == HBPF_SLT_VHEAD
-                    and self._on_talker_alias_local_repeat
                 ):
-                    self._on_talker_alias_local_repeat(
-                        self._system, _peer_id, _rf_src, _stream_id,
-                    )
+                    if self._on_talker_alias_repeat_prepare:
+                        self._on_talker_alias_repeat_prepare(
+                            self._system, _peer_id, _rf_src, _dst_id, _slot, _stream_id,
+                        )
+                    elif self._on_talker_alias_local_repeat:
+                        self._on_talker_alias_local_repeat(
+                            self._system, _peer_id, _rf_src, _stream_id,
+                        )
+                if self._config.get("REPEAT", True):
+                    _repeat_tail = _data[15:]
+                    if (
+                        _call_type in ("group", "vcsbk")
+                        and _dtype_vseq in (1, 2, 3, 4)
+                        and len(_data) >= 53
+                        and self._on_talker_alias_repeat_burst
+                    ):
+                        _dmrpkt_out = self._on_talker_alias_repeat_burst(
+                            self._system, _slot, _stream_id, _dtype_vseq, _data[20:53],
+                        )
+                        _repeat_tail = b"".join([_data[15:20], _dmrpkt_out, _data[53:]])
+                    pkt = [_data[:11], b"", _repeat_tail]
+                    for _peer in self._peers:
+                        if _peer != _peer_id:
+                            pkt[1] = _peer
+                            self.transport.write(b"".join(pkt), self._peers[_peer]["SOCKADDR"])
                 # TG 4000: deactivate after REPEAT so peers see the packet (legacy order)
                 if _int_dst_id == 4000 and self._on_deactivate_dynamic_bridges:
                     _kind = "Private call to ID" if _call_type == "unit" else "Group call to TG"
@@ -1369,6 +1393,16 @@ class HBPProtocol(DatagramProtocol):
                         "(%s) CALL RX (OBP) src %s -> TG %s slot %s",
                         self._system, int_id(_rf_src), int_id(_dst_id), _slot,
                     )
+                self.note_dmrd_stream(_peer_id, _rf_src, _stream_id)
+                if (
+                    _call_type in ("group", "vcsbk")
+                    and _frame_type != HBPF_DATA_SYNC
+                    and _dtype_vseq in (1, 2, 3, 4)
+                    and len(_data) >= 53
+                ):
+                    self.store_ta_from_voice_burst(
+                        _peer_id, _rf_src, _stream_id, _dtype_vseq, _data[20:53],
+                    )
                 # Group/vcsbk stream state, LC, duplicates: bridge_use_cases._obp_group_voice_router_obp (legacy routerOBP.dmrd_received)
                 if self._dmrd_received:
                     # Legacy hblink DMRD v1: SERVER_ID + default rptr/hops/ber/rssi (`hblink.py` ~338–345, ~416)
@@ -1550,6 +1584,16 @@ class HBPProtocol(DatagramProtocol):
                     return
             if _call_type == "group" and _frame_type == HBPF_DATA_SYNC and _dtype_vseq == HBPF_SLT_VHEAD:
                 logger.info("(%s) CALL RX (OBP DMRE) src %s -> TG %s slot %s", self._system, int_id(_rf_src), int_id(_dst_id), _slot)
+            self.note_dmrd_stream(_peer_id, _rf_src, _stream_id)
+            if (
+                _call_type in ("group", "vcsbk")
+                and _frame_type != HBPF_DATA_SYNC
+                and _dtype_vseq in (1, 2, 3, 4)
+                and len(_data) >= 53
+            ):
+                self.store_ta_from_voice_burst(
+                    _peer_id, _rf_src, _stream_id, _dtype_vseq, _data[20:53],
+                )
             _data_dmrd = DMRD + _data[4:]
             _hops_out = _inthops.to_bytes(1, "big")
             if self._dmrd_received:
@@ -1662,6 +1706,8 @@ def HBPProtocolFactory(
     on_deactivate_dynamic_bridges: Callable[[str], None] | None = None,
     on_obp_bcsq_received: Callable[[str, bytes, bytes], None] | None = None,
     on_talker_alias_local_repeat: Callable[[str, bytes, bytes, bytes], None] | None = None,
+    on_talker_alias_repeat_prepare: Callable[[str, bytes, bytes, bytes, int, bytes], None] | None = None,
+    on_talker_alias_repeat_burst: Callable[[str, int, bytes, int, bytes], bytes] | None = None,
     on_talker_alias_stream_end: Callable[[str, bytes], None] | None = None,
     on_dmra_fragment_stored: Callable[[str, bytes, bytes, bytes], None] | None = None,
 ) -> HBPProtocol:
@@ -1680,6 +1726,8 @@ def HBPProtocolFactory(
         on_deactivate_dynamic_bridges=on_deactivate_dynamic_bridges,
         on_obp_bcsq_received=on_obp_bcsq_received,
         on_talker_alias_local_repeat=on_talker_alias_local_repeat,
+        on_talker_alias_repeat_prepare=on_talker_alias_repeat_prepare,
+        on_talker_alias_repeat_burst=on_talker_alias_repeat_burst,
         on_talker_alias_stream_end=on_talker_alias_stream_end,
         on_dmra_fragment_stored=on_dmra_fragment_stored,
     )

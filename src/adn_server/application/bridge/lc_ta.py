@@ -10,6 +10,7 @@ from typing import Any
 
 from bitarray import bitarray
 
+from ...domain.dmr.const import LC_OPT
 from ...domain.talker_alias import DMRA_BLOCK_COUNT
 from ...domain import int_id
 from ..talker_alias_use_cases import passthrough_complete, talker_alias_settings
@@ -29,13 +30,12 @@ class BridgeLcTaMixin:
     def _both_ta_key(self, source_system: str, stream_id: bytes) -> tuple[str, bytes]:
         return (source_system, stream_id)
 
-    def _source_cannot_carry_ta(self, source_system: str) -> bool:
-        """OpenBridge carries no Talker Alias (no DMRA UDP nor embedded LC TA).
-
-        In `both` mode there is nothing to wait for, so inject the template right away
-        instead of deferring (OBP streams are often short and would expire first).
-        """
-        return self._config.get("SYSTEMS", {}).get(source_system, {}).get("MODE") == "OPENBRIDGE"
+    def _ta_capable_source(self, source_system: str) -> bool:
+        """True when the source leg can buffer TA (MASTER DMRA/voice or OBP voice)."""
+        return self._config.get("SYSTEMS", {}).get(source_system, {}).get("MODE") in (
+            "MASTER",
+            "OPENBRIDGE",
+        )
 
     def _cancel_both_ta_wait(self, source_system: str, stream_id: bytes) -> None:
         wait = self._both_ta_wait.pop(self._both_ta_key(source_system, stream_id), None)
@@ -107,14 +107,17 @@ class BridgeLcTaMixin:
             for st in status.values():
                 if not isinstance(st, dict):
                     continue
-                if st.get("TX_STREAM_ID") != stream_id or st.get("TX_RFS") != rf_src:
-                    continue
                 if st.get("TX_TA_ON"):
                     continue
-                target = st.get("_ta_target_system", source_system)
-                self._init_talker_alias_embed(
-                    st, source_system, target, rf_src, stream_id, force_inject=force_inject,
-                )
+                if st.get("TX_STREAM_ID") == stream_id and st.get("TX_RFS") == rf_src:
+                    target = st.get("_ta_target_system", source_system)
+                    self._init_talker_alias_embed(
+                        st, source_system, target, rf_src, stream_id, force_inject=force_inject,
+                    )
+                elif st.get("REP_STREAM_ID") == stream_id:
+                    self._init_talker_alias_embed(
+                        st, source_system, source_system, rf_src, stream_id, force_inject=force_inject,
+                    )
 
     def on_dmra_fragment_stored(
         self,
@@ -136,17 +139,48 @@ class BridgeLcTaMixin:
             return
         key = self._both_ta_key(source_system, stream_id)
         wait = self._both_ta_wait.get(key)
-        if not wait:
-            self._apply_both_ta_embed(source_system, rf_src, stream_id)
-            return
-        wait["peer"] = peer_id
-        self._cancel_both_ta_wait(source_system, stream_id)
-        for target_system in wait["targets"]:
-            if self._talker_alias.should_send_on_vhead(target_system, stream_id):
+        if wait:
+            wait["peer"] = peer_id
+            self._cancel_both_ta_wait(source_system, stream_id)
+            for target_system in wait["targets"]:
                 self._send_talker_alias_to_target(
                     source_system, target_system, rf_src, stream_id, peer_id, force=True,
                 )
         self._apply_both_ta_embed(source_system, rf_src, stream_id)
+        self._relay_passthrough_dmra(source_system, peer_id, rf_src, stream_id)
+
+    def _relay_passthrough_dmra(
+        self,
+        source_system: str,
+        peer_id: bytes,
+        rf_src: bytes,
+        stream_id: bytes,
+    ) -> None:
+        """After the source TA buffer is complete, relay DMRA to bridge/repeat targets."""
+        blocks = self._get_stream_dmra_blocks(source_system, stream_id)
+        if not blocks or not passthrough_complete(blocks):
+            return
+        if self._get_protocols:
+            for proto in self._get_protocols().values():
+                status = getattr(proto, "STATUS", None)
+                if not isinstance(status, dict):
+                    continue
+                for st in status.values():
+                    if not isinstance(st, dict):
+                        continue
+                    if st.get("TX_STREAM_ID") != stream_id or st.get("TX_RFS") != rf_src:
+                        continue
+                    target = st.get("_ta_target_system")
+                    if not isinstance(target, str) or not target:
+                        continue
+                    tx_peer = st.get("TX_PEER", peer_id)
+                    self._send_talker_alias_to_target(
+                        source_system, target, rf_src, stream_id, tx_peer, force=True,
+                    )
+        src_cfg = self._config.get("SYSTEMS", {}).get(source_system, {})
+        if src_cfg.get("MODE") == "MASTER" and src_cfg.get("REPEAT", True):
+            self._talker_alias.clear_stream(source_system, stream_id)
+            self.send_talker_alias_local_repeat(source_system, peer_id, rf_src, stream_id)
 
     def _send_talker_alias_to_target(
         self,
@@ -165,23 +199,15 @@ class BridgeLcTaMixin:
         tgt_mode = self._config.get("SYSTEMS", {}).get(target_system, {}).get("MODE")
         if tgt_mode not in ("MASTER", "PEER"):
             return
-        if not self._talker_alias.should_send_on_vhead(target_system, stream_id):
+        blocks = self._get_stream_dmra_blocks(source_system, stream_id)
+        have_passthrough = bool(blocks and passthrough_complete(blocks))
+        if have_passthrough and force:
+            self._talker_alias.clear_stream(target_system, stream_id)
+        elif not self._talker_alias.should_send_on_vhead(target_system, stream_id):
             return
-        if (
-            not force
-            and talker_alias_settings(self._config, source_system)["mode"] == "both"
-            and not (self._get_stream_dmra_blocks(source_system, stream_id) and passthrough_complete(
-                self._get_stream_dmra_blocks(source_system, stream_id) or {}
-            ))
-        ):
-            if self._source_cannot_carry_ta(source_system):
-                # OBP source can never supply TA: inject the template immediately.
-                fallback_inject = True
-            else:
-                self._register_both_ta_wait(
-                    source_system, target_system, rf_src, stream_id, source_peer,
-                )
-                return
+        if not have_passthrough:
+            # Legacy resolve_ta (both): inject at VHEAD when the buffer is still empty.
+            fallback_inject = True
         packets = self._talker_alias.packets_for_stream(
             source_system,
             rf_src,
@@ -223,6 +249,65 @@ class BridgeLcTaMixin:
             system_name, system_name, rf_src, stream_id, source_peer,
         )
 
+    def prepare_talker_alias_local_repeat(
+        self,
+        system_name: str,
+        source_peer: bytes,
+        rf_src: bytes,
+        dst_id: bytes,
+        slot: int,
+        stream_id: bytes,
+    ) -> None:
+        """REPEAT on VHEAD: standalone DMRA plus embedded TA state for downlink DMRD.
+
+        WPSD/MMDVMHost ignores standalone DMRA UDP; it only displays Talker Alias decoded
+        from embedded LC inside repeated voice bursts (B–E).
+        """
+        settings = talker_alias_settings(self._config, system_name)
+        if settings["enabled"] and self._get_protocols:
+            proto = self._get_protocols().get(system_name)
+            status = getattr(proto, "STATUS", None) if proto else None
+            if isinstance(status, dict) and slot in status:
+                st = status[slot]
+                if not isinstance(st, dict):
+                    st = {}
+                    status[slot] = st
+                if st.get("REP_STREAM_ID") != stream_id:
+                    dst_lc = LC_OPT + dst_id + rf_src
+                    st["REP_STREAM_ID"] = stream_id
+                    st["REP_EMB_LC"] = self._encode_emblc(dst_lc)
+                    self._init_talker_alias_embed(
+                        st, system_name, system_name, rf_src, stream_id,
+                    )
+        self.send_talker_alias_local_repeat(system_name, source_peer, rf_src, stream_id)
+
+    def rewrite_repeat_voice_burst(
+        self,
+        system_name: str,
+        slot: int,
+        stream_id: bytes,
+        dtype_vseq: int,
+        dmrpkt: bytes,
+    ) -> bytes:
+        """Overlay Talker Alias on embedded LC for REPEAT copies (voice bursts B–E)."""
+        if dtype_vseq not in (1, 2, 3, 4) or len(dmrpkt) < 33:
+            return dmrpkt
+        if not self._get_protocols:
+            return dmrpkt
+        proto = self._get_protocols().get(system_name)
+        status = getattr(proto, "STATUS", None) if proto else None
+        if not isinstance(status, dict):
+            return dmrpkt
+        st = status.get(slot)
+        if not isinstance(st, dict) or st.get("REP_STREAM_ID") != stream_id:
+            return dmrpkt
+        if "REP_EMB_LC" not in st or st.get("TX_TA_EMB") is None:
+            return dmrpkt
+        dmrbits = bitarray(endian="big")
+        dmrbits.frombytes(dmrpkt)
+        self._rewrite_embed_lc(dmrbits, st, dtype_vseq, "REP_EMB_LC")
+        return dmrbits.tobytes()
+
     def clear_talker_alias_stream(self, system_name: str, stream_id: bytes) -> None:
         """Release per-stream TA dedupe state after VTERM."""
         self._cancel_both_ta_wait(system_name, stream_id)
@@ -239,7 +324,13 @@ class BridgeLcTaMixin:
             return
         for slot in (1, 2):
             st = status.get(slot)
-            if isinstance(st, dict) and st.get("TX_STREAM_ID") == stream_id:
+            if not isinstance(st, dict):
+                continue
+            if st.get("TX_STREAM_ID") == stream_id:
+                self._clear_talker_alias_embed(st)
+            if st.get("REP_STREAM_ID") == stream_id:
+                st.pop("REP_STREAM_ID", None)
+                st.pop("REP_EMB_LC", None)
                 self._clear_talker_alias_embed(st)
 
     def _init_talker_alias_embed(
@@ -267,12 +358,7 @@ class BridgeLcTaMixin:
         if not settings["enabled"]:
             return
         target_mode = self._config.get("SYSTEMS", {}).get(target_system, {}).get("MODE")
-        if (
-            settings["mode"] == "both"
-            and self._source_cannot_carry_ta(source_system)
-            and target_mode in ("MASTER", "PEER")
-        ):
-            # OBP source can never supply TA: inject the template immediately.
+        if settings["mode"] == "both" and not self._ta_capable_source(source_system):
             force_inject = True
         st.pop("TX_TA_EMB", None)
         st.pop("TX_TA_PHASE", None)

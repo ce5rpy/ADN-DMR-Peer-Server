@@ -76,12 +76,12 @@ def test_embedded_emblc_both_source_ta_then_fallback() -> None:
         "MASTER-A", bytes_3(9999999), bytes_4(0xD4D4D4D4), lambda _s, _st: blocks,
     )
     assert source is not None
-    # No source TA yet, no fallback -> None (group LC only).
+    # No source TA yet -> legacy both injects the template embedded LC at VHEAD.
     assert (
         ta.embedded_emblc_for_stream(
             "MASTER-A", bytes_3(9999999), bytes_4(0xD4D4D4D5), lambda _s, _st: None,
         )
-        is None
+        is not None
     )
     # No source TA, fallback -> inject the template embedded LC.
     fallback = ta.embedded_emblc_for_stream(

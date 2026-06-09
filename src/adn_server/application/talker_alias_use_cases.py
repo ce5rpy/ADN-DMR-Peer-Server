@@ -190,18 +190,14 @@ class TalkerAliasUseCases:
                 source_system, text, via, target, int_id(stream_id),
             )
             return passthrough_packets_from_blocks(rf_src, blocks)
-        if fallback_inject:
-            text = format_talker_alias_text(self._config, rf_src)
-            logger.debug(
-                "(%s) *TALKER ALIAS* inject '%s' (no source TA) via %s -> %s stream %s",
-                source_system, text, via, target, int_id(stream_id),
-            )
-            return build_dmra_packets(rf_src, text, settings["text_formats"][0])
+        # Legacy resolve_ta (both): inject template when no DMRA buffer yet (VHEAD).
+        text = format_talker_alias_text(self._config, rf_src)
+        suffix = " (no source TA yet)" if fallback_inject else ""
         logger.debug(
-            "(%s) *TALKER ALIAS* passthrough (source embedded TA) via %s -> %s stream %s",
-            source_system, via, target, int_id(stream_id),
+            "(%s) *TALKER ALIAS* inject '%s'%s via %s -> %s stream %s",
+            source_system, text, suffix, via, target, int_id(stream_id),
         )
-        return None
+        return build_dmra_packets(rf_src, text, settings["text_formats"][0])
 
     def embedded_emblc_for_stream(
         self,
@@ -244,8 +240,8 @@ class TalkerAliasUseCases:
         if mode in ("passthrough", "both") and blocks and passthrough_complete(blocks):
             _log(decode_ta_from_blocks(blocks), " (source TA)")
             return self._ta_emblc.encode_blocks(blocks)
-        if mode == "inject" or fallback_inject:
-            suffix = "" if mode == "inject" else " (no source TA)"
+        if mode in ("inject", "both") or fallback_inject:
+            suffix = "" if mode == "inject" else " (no source TA yet)"
             text = format_talker_alias_text(self._config, rf_src)
             _log(text, suffix)
             return self._ta_emblc.encode_text(text, text_formats=settings["text_formats"])
