@@ -560,9 +560,10 @@ def main() -> None:
         logger.info("(GLOBAL) UDP %s listening on %s:%s", _name, bind.ip or "*", bind.port)
         return port
 
-    def _stop_udp_port(port: Any) -> None:
+    def _stop_udp_port(port: Any) -> Any:
         if port is not None:
-            port.stopListening()
+            return port.stopListening()
+        return None
 
     # UDP / proxy listeners (proxy_state declared before reload handler uses nonlocal)
     proxy_state = None
@@ -575,48 +576,55 @@ def main() -> None:
         reporting_use_cases.send_bridge(bridge_router.get_bridges())
         user_passwords_loader.load(config)
 
+    def _apply_reload_success(result: Any, *, new_config: dict[str, Any], mqtt_before: Any) -> None:
+        nonlocal report_mqtt, proxy_state
+        swap_runtime_config(runtime_holder, new_config, config_path=config_path)
+        normalize_proxy_target(config)
+        report_factory.set_config(config)
+        mqtt_after = mqtt_settings_from_config(config)
+        report_mqtt = reconcile_mqtt_publisher(
+            report_factory,
+            report_mqtt,
+            mqtt_before,
+            mqtt_after,
+            report_enabled=config.get("REPORTS", {}).get("REPORT", True),
+        )
+        if proxy_state is not None:
+            apply_proxy_config_reload(proxy_state, config, logger=logger)
+            _wire_proxy_report_slots(report_factory, proxy_state)
+        elif proxy_target_system(config):
+            proxy_state = start_proxy_service(config, protocols, logger=logger)
+            _wire_proxy_report_slots(report_factory, proxy_state)
+        else:
+            _wire_proxy_report_slots(report_factory, None)
+        if result.added or result.removed or result.updated or result.rebound:
+            _on_config_systems_changed()
+
     def _do_config_reload() -> None:
         nonlocal report_mqtt, proxy_state
         mqtt_before = mqtt_settings_from_config(config)
         new_config = prepare_reload_config(runtime_holder)
-        try:
-            result = reload_server_config(
-                new_config,
-                config_path,
-                loader,
-                protocols,
-                udp_ports,
-                create_protocol=_create_hbp_protocol,
-                listen_udp=lambda n, b, p: _listen_system(n, b, p),
-                stop_listener=_stop_udp_port,
-                on_systems_changed=None,
-                on_system_removed=bridge_use_cases.flush_monitor_events_for_system,
-                should_bind_udp=_should_bind_udp,
-                log=logger,
-            )
-            swap_runtime_config(runtime_holder, new_config, config_path=config_path)
-            normalize_proxy_target(config)
-            report_factory.set_config(config)
-            mqtt_after = mqtt_settings_from_config(config)
-            report_mqtt = reconcile_mqtt_publisher(
-                report_factory,
-                report_mqtt,
-                mqtt_before,
-                mqtt_after,
-                report_enabled=config.get("REPORTS", {}).get("REPORT", True),
-            )
-            if proxy_state is not None:
-                apply_proxy_config_reload(proxy_state, config, logger=logger)
-                _wire_proxy_report_slots(report_factory, proxy_state)
-            elif proxy_target_system(config):
-                proxy_state = start_proxy_service(config, protocols, logger=logger)
-                _wire_proxy_report_slots(report_factory, proxy_state)
-            else:
-                _wire_proxy_report_slots(report_factory, None)
-            if result.added or result.removed or result.updated or result.rebound:
-                _on_config_systems_changed()
-        except Exception as e:
-            logger.error("(CONFIG-RELOAD) aborted: %s", e)
+
+        def _on_reload_done(result: Any) -> None:
+            _apply_reload_success(result, new_config=new_config, mqtt_before=mqtt_before)
+
+        def _on_reload_failed(failure: Any) -> None:
+            logger.error("(CONFIG-RELOAD) aborted: %s", failure.value)
+
+        reload_server_config(
+            new_config,
+            config_path,
+            loader,
+            protocols,
+            udp_ports,
+            create_protocol=_create_hbp_protocol,
+            listen_udp=lambda n, b, p: _listen_system(n, b, p),
+            stop_listener=_stop_udp_port,
+            on_systems_changed=None,
+            on_system_removed=bridge_use_cases.flush_monitor_events_for_system,
+            should_bind_udp=_should_bind_udp,
+            log=logger,
+        ).addCallbacks(_on_reload_done, _on_reload_failed)
 
     def sighup_reload_config(_sig, _frame):
         """Reload adn-server.yaml (SYSTEMS, GLOBAL); keeps active streams on unchanged listeners."""
