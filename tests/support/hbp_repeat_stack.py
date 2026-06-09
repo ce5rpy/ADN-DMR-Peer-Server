@@ -51,8 +51,14 @@ class HbpRepeatStack:
     transport: RecordingTransport
     dmra_capture: list[tuple[list[bytes], bytes | None]] = field(default_factory=list)
 
-    def register_peer(self, peer_id: bytes, sockaddr: tuple[str, int]) -> None:
-        self.hbp._peers[peer_id] = {
+    def register_peer(
+        self,
+        peer_id: bytes,
+        sockaddr: tuple[str, int],
+        *,
+        options: str | bytes | None = None,
+    ) -> None:
+        peer: dict[str, Any] = {
             "CONNECTION": "YES",
             "CONNECTED": 1_700_000_000.0,
             "LAST_PING": 1_700_000_000.0,
@@ -60,6 +66,9 @@ class HbpRepeatStack:
             "CALLSIGN": b"CE5RPY  ",
             "RADIO_ID": str(int.from_bytes(peer_id, "big")),
         }
+        if options is not None:
+            peer["OPTIONS"] = options.encode("utf-8") if isinstance(options, str) else options
+        self.hbp._peers[peer_id] = peer
         self.config["SYSTEMS"][self.system_name].setdefault("PEERS", {})[peer_id] = (
             self.hbp._peers[peer_id]
         )

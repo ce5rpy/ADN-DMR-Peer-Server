@@ -107,3 +107,35 @@ def is_special_tg(bridge_key: str) -> bool:
         return 9990 <= int(bridge_key) <= 9999
     except ValueError:
         return False
+
+
+def parse_dmrd_route_fields(packet: bytes) -> tuple[int, int, str] | None:
+    """Parse HBP DMRD slot, destination TG, and call type for downlink OPTIONS filter."""
+    if len(packet) < 17 or packet[:4] != b"DMRD":
+        return None
+    bits = packet[15]
+    slot = 2 if (bits & 0x80) else 1
+    if bits & 0x40:
+        call_type = "unit"
+    elif (bits & 0x23) == 0x23:
+        call_type = "vcsbk"
+    else:
+        call_type = "group"
+    return slot, int_id(packet[8:11]), call_type
+
+
+def peer_receives_group_tgid(peer: dict[str, Any], slot: int, tgid: int) -> bool:
+    """True when peer RPTO OPTIONS list the group TG on that voice timeslot."""
+    from adn_server.application.report.payloads import parse_peer_options_static
+
+    ts1, ts2 = parse_peer_options_static(peer.get("OPTIONS"))
+    static = ts1 if slot == 1 else ts2
+    if not static:
+        return False
+    return str(tgid) in static
+
+
+def peer_matches_rf_source(peer_id: bytes, rf_src: bytes, peers: dict[Any, Any]) -> bool:
+    """True when a hotspot radio id matches the voice RF source (parrot / echo downlink)."""
+    peer_b = _peer_key_from_int(peer_id)
+    return peer_b in _fuzzy_peer_matches(int_id(rf_src), peers)

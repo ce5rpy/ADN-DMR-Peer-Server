@@ -40,6 +40,13 @@ from ...domain.dmr.const import LC_OPT
 from twisted.internet import reactor, task
 from twisted.internet.protocol import DatagramProtocol
 
+from ...application.bridge.helpers import (
+    is_special_tg,
+    parse_dmrd_route_fields,
+    peer_matches_rf_source,
+    peer_receives_group_tgid,
+)
+from ...application.proxy.deployment import is_proxy_inject_only
 from ...domain import bytes_4, int_id
 from ...domain.talker_alias import (
     DMRA_PACKET_LEN,
@@ -261,8 +268,45 @@ class HBPProtocol(DatagramProtocol):
                 _packet = b"".join([_packet, _ber, _rssi])
             self.send_peer(_peer, _packet)
 
+    def _inject_multi_peer_options_filter(self) -> bool:
+        """Inject-only proxy: several hotspots share one MASTER — filter by per-peer OPTIONS."""
+        if not is_proxy_inject_only(self._CONFIG, self._system):
+            return False
+        connected = sum(
+            1 for peer in self._peers.values() if peer.get("CONNECTION") == "YES"
+        )
+        return connected > 1
+
+    def _peer_should_receive_dmrd(self, peer_id: bytes, packet: bytes) -> bool:
+        if not self._inject_multi_peer_options_filter():
+            return True
+        if peer_id not in self._peers:
+            return False
+        parsed = parse_dmrd_route_fields(packet)
+        if parsed is None:
+            return True
+        slot, tgid, call_type = parsed
+        if call_type not in ("group", "vcsbk"):
+            return True
+        # Parrot / echo (9990–9999): not in per-hotspot OPTIONS; deliver to last RX peer on slot.
+        if is_special_tg(str(tgid)):
+            slot_st = self.STATUS.get(slot, {})
+            if int_id(slot_st.get("RX_TGID", b"\x00\x00\x00")) == tgid:
+                rx_peer = slot_st.get("RX_PEER", b"")
+                if rx_peer and rx_peer != b"\x00\x00\x00\x00":
+                    return bytes_4(int_id(peer_id)) == bytes_4(int_id(rx_peer))
+            if len(packet) >= 8 and peer_matches_rf_source(peer_id, packet[5:8], self._peers):
+                return True
+            connected = sum(
+                1 for peer in self._peers.values() if peer.get("CONNECTION") == "YES"
+            )
+            return connected == 1
+        return peer_receives_group_tgid(self._peers[peer_id], slot, tgid)
+
     def send_peer(self, _peer: bytes, _packet: bytes) -> None:
         if _packet[:4] == DMRD:
+            if not self._peer_should_receive_dmrd(_peer, _packet):
+                return
             _packet = b"".join([_packet[:11], _peer, _packet[15:]])
         self.transport.write(_packet, self._peers[_peer]["SOCKADDR"])
 
@@ -702,11 +746,10 @@ class HBPProtocol(DatagramProtocol):
                             self._system, _slot, _stream_id, _dtype_vseq, _data[20:53],
                         )
                         _repeat_tail = b"".join([_data[15:20], _dmrpkt_out, _data[53:]])
-                    pkt = [_data[:11], b"", _repeat_tail]
+                    _repeat_pkt = b"".join([_data[:11], _peer_id, _repeat_tail])
                     for _peer in self._peers:
                         if _peer != _peer_id:
-                            pkt[1] = _peer
-                            self.transport.write(b"".join(pkt), self._peers[_peer]["SOCKADDR"])
+                            self.send_peer(_peer, _repeat_pkt)
                 # TG 4000: deactivate after REPEAT so peers see the packet (legacy order)
                 if _int_dst_id == 4000 and self._on_deactivate_dynamic_bridges:
                     _kind = "Private call to ID" if _call_type == "unit" else "Group call to TG"
@@ -934,7 +977,12 @@ class HBPProtocol(DatagramProtocol):
                 _this_peer["OPTIONS"] = _data[8:]
                 self.send_peer(_peer_id, b"".join([RPTACK, _peer_id]))
                 logger.info("(%s) Peer %s has sent options %s", self._system, _this_peer["CALLSIGN"], _this_peer["OPTIONS"])
-                self._CONFIG.setdefault("SYSTEMS", {}).setdefault(self._system, {})["OPTIONS"] = _this_peer["OPTIONS"].decode("utf8", errors="replace")
+                # Inject-only multi-hotspot: OPTIONS live on each peer; do not let last RPTO
+                # overwrite the shared SYSTEM row (legacy had one peer per virtual master).
+                if not is_proxy_inject_only(self._CONFIG, self._system):
+                    self._CONFIG.setdefault("SYSTEMS", {}).setdefault(self._system, {})[
+                        "OPTIONS"
+                    ] = _this_peer["OPTIONS"].decode("utf8", errors="replace")
                 if self._on_options_received:
                     try:
                         self._on_options_received(self._system)
