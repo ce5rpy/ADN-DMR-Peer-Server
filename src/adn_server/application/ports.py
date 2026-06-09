@@ -341,6 +341,51 @@ class PendingRptoQueue(ABC):
         ...
 
 
+class ProxySelfServiceStore(ABC):
+    """Self-service ``Clients`` table (legacy adn-proxy / hotspot_proxy_self_service)."""
+
+    @abstractmethod
+    def test_db(self) -> Any:
+        """Verify DB connectivity. Returns Twisted Deferred."""
+
+    @abstractmethod
+    def ins_conf(
+        self,
+        int_id: int,
+        peer_id_bytes: bytes,
+        callsign: str,
+        host: str,
+        mode: str,
+    ) -> None:
+        ...
+
+    @abstractmethod
+    def updt_tbl(
+        self,
+        action: str,
+        peer_id_bytes: bytes,
+        *,
+        psswd: str | None = None,
+    ) -> None:
+        ...
+
+    @abstractmethod
+    def slct_opt(self, peer_id_bytes: bytes) -> Any:
+        """Returns Deferred firing with row list, e.g. ``((options_str,),)``."""
+
+    @abstractmethod
+    def slct_db(self) -> Any:
+        """Returns Deferred firing with ``(dmr_id, options)`` rows for ``modified=1``."""
+
+    @abstractmethod
+    def updt_lstseen(self, dmrid_list: list[tuple[bytes, ...]]) -> None:
+        ...
+
+    @abstractmethod
+    def clean_tbl(self) -> Any:
+        """Returns Deferred."""
+
+
 class ProxyIpBlacklist(ABC):
     """Temporary IP blocks (legacy proxy ``ip_black_list`` / PRBL)."""
 

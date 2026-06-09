@@ -22,6 +22,8 @@ from adn_server.infrastructure.proxy.ip_blacklist import InMemoryProxyIpBlacklis
 from adn_server.infrastructure.proxy.rpto_queue import InMemoryPendingRptoQueue
 from adn_server.infrastructure.proxy.session_executor import apply_session_teardown
 from adn_server.infrastructure.proxy.slot_store import InMemoryProxySlotStore
+from adn_server.infrastructure.proxy.self_service_bridge import ProxySelfServiceBridge
+from adn_server.infrastructure.proxy.self_service_config import self_service_settings
 from adn_server.infrastructure.proxy.udp_fanin import ProxyFanInProtocol, listen_proxy_fanin
 from adn_server.infrastructure.proxy.reply_transport import ProxyReplyTransport
 
@@ -47,9 +49,13 @@ class ProxyServiceState:
     listen_ip: str = ""
     _timers: dict[bytes, IDelayedCall] = field(default_factory=dict)
     _runtime: dict[str, Any] = field(default_factory=dict)
+    self_service: ProxySelfServiceBridge | None = None
 
     def stop(self) -> Any:
         """Stop timers and UDP listener. Returns Twisted Deferred when a port was bound."""
+        if self.self_service is not None:
+            self.self_service.stop_loops()
+            self.self_service = None
         for call in self._timers.values():
             if call.active():
                 call.cancel()
@@ -105,6 +111,47 @@ def apply_proxy_config_reload(
     )
 
 
+def _build_self_service(
+    config: dict[str, Any],
+    use_cases: ProxyUseCases,
+    master_sink: InProcessHbpSink,
+    client_sender: FanInClientSender,
+    *,
+    logger: logging.Logger,
+) -> ProxySelfServiceBridge | None:
+    ss = self_service_settings(config)
+    if not ss["enabled"]:
+        return None
+    try:
+        from adn_server.infrastructure.proxy.persistence import (
+            ProxySelfServiceRepository,
+            create_pool,
+        )
+    except ImportError as err:
+        raise RuntimeError(
+            "(SELF_SERVICE) USE_SELFSERVICE requires mysqlclient "
+            "(pip install mysqlclient)"
+        ) from err
+    pool = create_pool(
+        ss["db_server"],
+        ss["db_username"],
+        ss["db_password"],
+        ss["db_name"],
+        ss["db_port"],
+    )
+    store = ProxySelfServiceRepository(pool)
+    bridge = ProxySelfServiceBridge(
+        store,
+        use_cases,
+        master_sink,
+        client_sender,
+        pbkdf2_salt=ss["pbkdf2_salt"],
+        pbkdf2_iterations=ss["pbkdf2_iterations"],
+        logger=logger,
+    )
+    return bridge
+
+
 def start_proxy_service(
     config: dict[str, Any],
     protocols: dict[str, Any],
@@ -134,6 +181,7 @@ def start_proxy_service(
         debug=runtime["debug"],
         logger=logger,
     )
+    self_service_bridge: ProxySelfServiceBridge | None = None
     state = ProxyServiceState(
         target_system=target,
         use_cases=use_cases,
@@ -187,6 +235,8 @@ def start_proxy_service(
                 teardown.client.host.rjust(15),
                 teardown.client.port,
             )
+        if state.self_service is not None:
+            state.self_service.on_session_expired(peer_id)
         apply_session_teardown(
             teardown,
             master_sink=master_sink,
@@ -214,6 +264,18 @@ def start_proxy_service(
     state.client_sender = FanInClientSender(fanin_proto.transport)
     target_proto.transport = ProxyReplyTransport(fanin_proto.transport, prbl_handler=_handle_prbl)
 
+    ss_settings = self_service_settings(config)
+    if ss_settings["enabled"]:
+        self_service_bridge = _build_self_service(
+            config,
+            use_cases,
+            master_sink,
+            state.client_sender,
+            logger=logger,
+        )
+        if self_service_bridge is not None:
+            fanin._self_service = self_service_bridge  # noqa: SLF001
+
     logger.info(
         "(PROXY) Hotspot fan-in on %s:%s → inject %s (MAX_PEERS=%s, TIMEOUT=%ss)",
         runtime["listen_ip"] or "*",
@@ -222,4 +284,16 @@ def start_proxy_service(
         runtime["max_peers"],
         runtime["timeout"],
     )
+    if self_service_bridge is not None:
+        store = self_service_bridge._store  # noqa: SLF001
+
+        def _on_db_ok(ok: bool) -> None:
+            if not ok:
+                logger.error("(SELF_SERVICE) Database connection failed — self-service disabled")
+                return
+            self_service_bridge.start_loops()
+            state.self_service = self_service_bridge
+            logger.info("(SELF_SERVICE) Enabled (shared Clients table with adn-monitor)")
+
+        store.test_db().addCallback(_on_db_ok)
     return state

@@ -107,6 +107,7 @@ class YamlConfigLoader:
             "ALIASES": data.get("ALIASES", {}),
             "SYSTEMS": data.get("SYSTEMS", {}),
             "PROXY": data.get("PROXY", {}),
+            "SELF_SERVICE": data.get("SELF_SERVICE", {}),
         }
         apply_proxy_env_overrides(config)
         # Ensure REPORT_CLIENTS is list

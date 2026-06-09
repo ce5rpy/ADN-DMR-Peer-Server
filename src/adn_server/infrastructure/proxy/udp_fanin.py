@@ -4,13 +4,16 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Callable
-from typing import Any, Protocol
+from typing import TYPE_CHECKING, Any, Protocol
 
 from twisted.internet.protocol import DatagramProtocol
 
 from adn_server.application.ports import ProxyMasterSink
 from adn_server.application.proxy import ProxyUseCases, peer_id_from_packet
 from adn_server.domain.result import is_fail
+
+if TYPE_CHECKING:
+    from .self_service_bridge import ProxySelfServiceBridge
 
 _logger = logging.getLogger(__name__)
 
@@ -31,12 +34,14 @@ class ProxyFanInProtocol(DatagramProtocol):
         debug: bool = False,
         logger: logging.Logger | None = None,
         on_attached: Callable[[bytes, str, int, bool], None] | None = None,
+        self_service: ProxySelfServiceBridge | None = None,
     ) -> None:
         self._proxy = proxy
         self._master_sink = master_sink
         self.debug = debug
         self._log = logger or _logger
         self._on_attached = on_attached
+        self._self_service = self_service
 
     def datagramReceived(self, data: bytes, addr: tuple[str, int]) -> None:
         host, port = addr
@@ -72,6 +77,10 @@ class ProxyFanInProtocol(DatagramProtocol):
             return
         if self._on_attached is not None:
             self._on_attached(peer_id, host, port, new_session)
+        if self._self_service is not None and self._self_service.before_inject(
+            data, addr, peer_id
+        ):
+            return
         self._master_sink.inject(data, addr)
 
 

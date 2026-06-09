@@ -78,6 +78,17 @@ PROXY:
   BLACK_LIST: []
   IP_BLACK_LIST: {}
 
+# Self-service: same MySQL + PBKDF2 as monitor/adn-monitor.yaml (Clients table).
+SELF_SERVICE:
+  USE_SELFSERVICE: true
+  DB_SERVER: localhost
+  DB_USERNAME: hbmon
+  DB_PASSWORD: "<set-in-adn-server.yaml>"
+  DB_NAME: hbmon
+  DB_PORT: 3306
+  PBKDF2_SALT: "ADN"
+  PBKDF2_ITERATIONS: 2000
+
 # SYSTEM is inject-only (no PORT / GENERATOR on proxy target — use MAX_PEERS).
 SYSTEMS:
   SYSTEM:
