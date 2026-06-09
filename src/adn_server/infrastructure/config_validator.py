@@ -199,6 +199,69 @@ def _validate_logger(logger_cfg: dict[str, Any], errors: list[str]) -> None:
     _section_string_keys("LOGGER", logger_cfg, LOGGER_STRING_KEYS, errors)
 
 
+def _validate_proxy(proxy_cfg: dict[str, Any] | None, systems: dict[str, Any], errors: list[str]) -> None:
+    from adn_server.application.proxy.deployment import config_has_enabled_master
+
+    if not isinstance(systems, dict) or not config_has_enabled_master({"SYSTEMS": systems}):
+        return
+    if not proxy_cfg or not isinstance(proxy_cfg, dict):
+        errors.append("PROXY: required when config has enabled MASTER systems (adn-server).")
+        return
+    for key in ("DEBUG", "CLIENT_INFO", "STATS"):
+        if key in proxy_cfg:
+            _expect_bool(f"PROXY.{key}", proxy_cfg[key], errors)
+    if "LISTEN_PORT" in proxy_cfg:
+        _expect_int("PROXY.LISTEN_PORT", proxy_cfg["LISTEN_PORT"], errors)
+    if "TIMEOUT" in proxy_cfg:
+        _expect_number("PROXY.TIMEOUT", proxy_cfg["TIMEOUT"], errors)
+    if "TARGET_SYSTEM" in proxy_cfg and not _is_empty(proxy_cfg["TARGET_SYSTEM"]):
+        _expect_str("PROXY.TARGET_SYSTEM", proxy_cfg["TARGET_SYSTEM"], errors)
+    if "LISTEN_IP" in proxy_cfg:
+        _expect_str("PROXY.LISTEN_IP", proxy_cfg["LISTEN_IP"], errors)
+    if "BLACK_LIST" in proxy_cfg and not isinstance(proxy_cfg["BLACK_LIST"], list):
+        errors.append(
+            f"PROXY.BLACK_LIST: expected list, got {type(proxy_cfg['BLACK_LIST']).__name__}."
+        )
+    if "IP_BLACK_LIST" in proxy_cfg and not isinstance(proxy_cfg["IP_BLACK_LIST"], dict):
+        errors.append(
+            f"PROXY.IP_BLACK_LIST: expected mapping, got {type(proxy_cfg['IP_BLACK_LIST']).__name__}."
+        )
+    for key in ("DISPATCH", "ENABLED", "PORT", "GENERATOR", "MASTER", "MAX_PROXY_SESSIONS", "udp_pool"):
+        if key in proxy_cfg:
+            errors.append(f"PROXY.{key}: removed in v2; integrated proxy is always enabled.")
+
+    listen_port = proxy_cfg.get("LISTEN_PORT", 62031)
+    if isinstance(listen_port, bool) or not isinstance(listen_port, int) or listen_port < 1:
+        errors.append("PROXY.LISTEN_PORT: required >= 1.")
+
+    target = proxy_cfg.get("TARGET_SYSTEM")
+    if _is_empty(target):
+        errors.append("PROXY.TARGET_SYSTEM: required.")
+        return
+    if not isinstance(systems, dict) or target not in systems:
+        errors.append(f"PROXY.TARGET_SYSTEM: unknown system {target!r}.")
+        return
+    target_cfg = systems[target]
+    if not isinstance(target_cfg, dict):
+        errors.append(f"SYSTEMS.{target}: expected mapping.")
+        return
+    if not target_cfg.get("ENABLED", True):
+        errors.append(f"PROXY.TARGET_SYSTEM: SYSTEMS.{target} must be ENABLED.")
+    if target_cfg.get("MODE") != "MASTER":
+        errors.append(f"PROXY.TARGET_SYSTEM: SYSTEMS.{target} must be MODE MASTER.")
+
+    port = target_cfg.get("PORT", 0)
+    if not _is_empty(port) and int(port) > 0:
+        errors.append(
+            f"SYSTEMS.{target}.PORT: must be omitted or 0 for inject-only proxy target (D-23)."
+        )
+    generator = int(target_cfg.get("GENERATOR", 1) or 1)
+    if generator > 1:
+        errors.append(
+            f"SYSTEMS.{target}.GENERATOR: must be 0 or 1 on proxy target (use MAX_PEERS, not GENERATOR)."
+        )
+
+
 def _validate_system(name: str, sys_cfg: dict[str, Any], errors: list[str]) -> None:
     prefix = f"SYSTEMS.{name}"
     _section_string_keys(prefix, sys_cfg, SYSTEM_STRING_KEYS, errors)
@@ -253,6 +316,9 @@ def validate_config(config: dict[str, Any], *, config_path: str | None = None) -
                 errors.append(f"SYSTEMS.{name}: expected mapping, got {type(sys_cfg).__name__}.")
                 continue
             _validate_system(name, sys_cfg, errors)
+
+    proxy_cfg = config.get("PROXY")
+    _validate_proxy(proxy_cfg if isinstance(proxy_cfg, dict) else None, systems if isinstance(systems, dict) else {}, errors)
 
     if errors:
         header = f"Configuration error in {config_path}:" if config_path else "Configuration error:"

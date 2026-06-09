@@ -19,6 +19,7 @@ from .config_normalizer import (
     normalize_obp_config,
     normalize_peer_config,
 )
+from adn_server.application.proxy.deployment import normalize_proxy_target
 from .logging_config import reapply_log_level
 
 logger = logging.getLogger(__name__)
@@ -63,6 +64,7 @@ def prepare_incoming_config(
     incoming = loader.load(config_path)
     apply_talker_alias_defaults(incoming)
     expand_generator(incoming, log)
+    normalize_proxy_target(incoming)
     ensure_system_runtime_config(incoming)
     normalize_peer_config(incoming)
     normalize_obp_config(incoming)
@@ -95,7 +97,7 @@ def merge_system_config(old_cfg: dict[str, Any], new_cfg: dict[str, Any]) -> dic
 def merge_top_level_config(config: dict[str, Any], incoming: dict[str, Any]) -> None:
     """Update GLOBAL / REPORTS / ALIASES / LOGGER in the live config dict."""
     kill_flag = config.get("GLOBAL", {}).get("_KILL_SERVER")
-    for key in ("GLOBAL", "REPORTS", "ALIASES", "LOGGER"):
+    for key in ("GLOBAL", "REPORTS", "ALIASES", "LOGGER", "PROXY"):
         if key not in incoming:
             continue
         config[key] = copy.deepcopy(incoming[key])
@@ -128,6 +130,7 @@ def reload_server_config(
     stop_listener: Callable[[Any], None],
     on_systems_changed: Callable[[], None] | None = None,
     on_system_removed: Callable[[str, Any], None] | None = None,
+    should_bind_udp: Callable[[str, dict[str, Any]], bool] | None = None,
     log: logging.Logger | None = None,
 ) -> ReloadResult:
     """
@@ -177,15 +180,27 @@ def reload_server_config(
         removed.append(name)
         log.info("(CONFIG-RELOAD) removed system %s", name)
 
+    def _start_listener(name: str, sys_cfg: dict[str, Any], proto: Any) -> None:
+        if should_bind_udp is not None and not should_bind_udp(name, sys_cfg):
+            protocols[name] = proto
+            transports.pop(name, None)
+            log.info("(CONFIG-RELOAD) %s inject-only (no UDP bind)", name)
+            return
+        bind = bind_spec(sys_cfg)
+        transports[name] = listen_udp(name, bind, proto)
+        protocols[name] = proto
+
     for name in sorted(new_enabled - old_enabled):
         sys_cfg = copy.deepcopy(new_systems[name])
         config.setdefault("SYSTEMS", {})[name] = sys_cfg
         proto = create_protocol(name)
-        bind = bind_spec(sys_cfg)
-        transports[name] = listen_udp(name, bind, proto)
-        protocols[name] = proto
+        _start_listener(name, sys_cfg, proto)
         added.append(name)
-        log.info("(CONFIG-RELOAD) added system %s on %s:%s", name, bind.ip, bind.port)
+        if should_bind_udp is None or should_bind_udp(name, sys_cfg):
+            bind = bind_spec(sys_cfg)
+            log.info("(CONFIG-RELOAD) added system %s on %s:%s", name, bind.ip, bind.port)
+        else:
+            log.info("(CONFIG-RELOAD) added inject-only system %s", name)
 
     for name in sorted(old_enabled & new_enabled):
         old_cfg = old_systems[name]
@@ -195,15 +210,32 @@ def reload_server_config(
         merged = merge_system_config(old_cfg, new_cfg)
         config["SYSTEMS"][name] = merged
         proto = protocols.get(name)
+        inject_only = should_bind_udp is not None and not should_bind_udp(name, merged)
+        was_inject_only = should_bind_udp is not None and not should_bind_udp(name, old_cfg)
         if proto is None:
             proto = create_protocol(name)
-            transports[name] = listen_udp(name, new_bind, proto)
-            protocols[name] = proto
+            _start_listener(name, merged, proto)
             added.append(name)
-            log.info("(CONFIG-RELOAD) started missing listener %s on %s:%s", name, new_bind.ip, new_bind.port)
+            if inject_only:
+                log.info("(CONFIG-RELOAD) started missing inject-only listener %s", name)
+            else:
+                log.info("(CONFIG-RELOAD) started missing listener %s on %s:%s", name, new_bind.ip, new_bind.port)
             continue
         if hasattr(proto, "apply_system_config"):
             proto.apply_system_config(config)
+        if inject_only:
+            port = transports.pop(name, None)
+            if port is not None:
+                stop_listener(port)
+            protocols[name] = proto
+            updated.append(name)
+            log.debug("(CONFIG-RELOAD) %s inject-only (bind skipped)", name)
+            continue
+        if was_inject_only and not inject_only:
+            _start_listener(name, merged, proto)
+            rebound.append(name)
+            log.info("(CONFIG-RELOAD) started UDP bind for %s on %s:%s", name, new_bind.ip, new_bind.port)
+            continue
         if old_bind != new_bind:
             port = transports.get(name)
             if port is not None:

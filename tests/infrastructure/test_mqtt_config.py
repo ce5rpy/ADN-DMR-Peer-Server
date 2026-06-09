@@ -8,6 +8,8 @@ from adn_server.infrastructure.twisted_adapters.report.mqtt_config import (
     parse_mqtt_broker,
 )
 
+from tests.conftest import minimal_valid_config
+
 
 def test_mqtt_disabled_by_default():
     config = {"REPORTS": {"REPORT": True}, "GLOBAL": {"SERVER_ID": 73010}}
@@ -52,11 +54,9 @@ def test_mqtt_default_topic_prefix_from_server_id():
 
 
 def test_validate_mqtt_enabled_requires_url():
-    config = {
-        "GLOBAL": {"SERVER_ID": 1},
-        "REPORTS": {"MQTT": {"ENABLED": True}},
-        "SYSTEMS": {},
-    }
+    config = minimal_valid_config(
+        REPORTS={"MQTT": {"ENABLED": True}},
+    )
     try:
         validate_config(config)
         raised = False

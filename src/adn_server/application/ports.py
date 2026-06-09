@@ -306,7 +306,7 @@ class SubscriptionStore(ABC):
 
 
 class ProxySlotStore(ABC):
-    """Hotspot session registry: peer_id ↔ upstream port (Phase 3)."""
+    """Hotspot session registry keyed by peer_id (Phase 3)."""
 
     @abstractmethod
     def bind(self, slot: "ClientSlot") -> None:
@@ -322,14 +322,6 @@ class ProxySlotStore(ABC):
 
     @abstractmethod
     def get_by_peer(self, peer_id: bytes) -> "ClientSlot | None":
-        ...
-
-    @abstractmethod
-    def get_by_upstream(self, upstream_port: int) -> "ClientSlot | None":
-        ...
-
-    @abstractmethod
-    def free_upstream_ports(self) -> tuple[int, ...]:
         ...
 
     @abstractmethod
@@ -349,6 +341,39 @@ class PendingRptoQueue(ABC):
         ...
 
 
+class ProxyIpBlacklist(ABC):
+    """Temporary IP blocks (legacy proxy ``ip_black_list`` / PRBL)."""
+
+    @abstractmethod
+    def block_until(self, host: str, expire_at: float) -> None:
+        ...
+
+    @abstractmethod
+    def is_blocked(self, host: str, now: float) -> bool:
+        ...
+
+
+class ProxyMasterSink(Protocol):
+    """Inject hotspot datagrams into the target MASTER (in-process)."""
+
+    def inject(self, data: bytes, client_addr: tuple[str, int]) -> None:
+        ...
+
+
+class ProxyClientSender(Protocol):
+    """Send datagrams to hotspot clients via LISTEN_PORT."""
+
+    def send_to_client(self, data: bytes, client: "ClientEndpoint") -> None:
+        ...
+
+
+class MasterPeerRegistry(Protocol):
+    """Drop MASTER peer state when proxy session ends."""
+
+    def remove_peer(self, peer_id: bytes) -> None:
+        ...
+
+
 class PeerTransport(Protocol):
     """Built-in mesh codec (dmre_v5, obp_v1) — decode datagrams to ``MeshIngress``, encode ``MeshEgress``."""
 
@@ -365,4 +390,4 @@ class PeerTransport(Protocol):
 
 if TYPE_CHECKING:
     from adn_server.domain.mesh_routing import MeshEgress, MeshIngress, PeerMeshConfig
-    from adn_server.domain.proxy import ClientSlot
+    from adn_server.domain.proxy import ClientEndpoint, ClientSlot

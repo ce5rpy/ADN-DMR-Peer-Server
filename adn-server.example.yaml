@@ -67,20 +67,25 @@ ALIASES:
   CHECKSUM_FILE: file_checksums.json
   KEYS_FILE: keys.json
 
-# Systems: MASTER, PEER, OPENBRIDGE. Names match legacy [SYSTEM], [D-APRS], [ECHO], [OBP-*].
-#
-# SYSTEM + GENERATOR>1 expands to SYSTEM-0..SYSTEM-(GENERATOR-1), each with UDP PORT+n
-# (e.g. PORT 56400 + GENERATOR 102 → listeners 56400–56501). Hotspot proxy must use the same
-# PROXY.PORT and PROXY.GENERATOR in adn-monitor/proxy/adn-proxy.example.yaml.
+# Integrated hotspot proxy (always enabled). Hotspots use PROXY.LISTEN_PORT only.
+PROXY:
+  LISTEN_PORT: 62031
+  LISTEN_IP: ""
+  TARGET_SYSTEM: SYSTEM
+  TIMEOUT: 30
+  DEBUG: false
+  CLIENT_INFO: true
+  BLACK_LIST: []
+  IP_BLACK_LIST: {}
+
+# SYSTEM is inject-only (no PORT / GENERATOR on proxy target — use MAX_PEERS).
 SYSTEMS:
   SYSTEM:
     MODE: MASTER
     ENABLED: true
     REPEAT: true
-    MAX_PEERS: 2
+    MAX_PEERS: 102
     EXPORT_AMBE: false
-    IP: 127.0.0.1
-    PORT: 56400
     PASSPHRASE: "<set-in-adn-server.yaml>"
     GROUP_HANGTIME: 5
     USE_ACL: true
@@ -95,7 +100,6 @@ SYSTEMS:
     TS2_STATIC: ""
     DEFAULT_REFLECTOR: 0
     ANNOUNCEMENT_LANGUAGE: es_ES
-    GENERATOR: 102
     ALLOW_UNREG_ID: false
     PROXY_CONTROL: false
     OVERRIDE_IDENT_TG: ""

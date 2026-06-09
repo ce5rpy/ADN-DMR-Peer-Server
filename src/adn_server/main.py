@@ -81,6 +81,8 @@ from .infrastructure.config_normalizer import (
     normalize_peer_config as _normalize_peer_config,
 )
 from .infrastructure.config_reload import BindSpec, reload_server_config
+from .application.proxy.deployment import is_proxy_inject_only, normalize_proxy_target, proxy_target_system
+from .infrastructure.proxy import apply_proxy_config_reload, start_proxy_service
 from .domain.dmr.bptc import encode_emblc
 from .infrastructure.persistence import PickleSubMapStore
 from .infrastructure.persistence.alias_loader import DefaultAliasLoader
@@ -123,6 +125,28 @@ class ReportSenderAdapter(ReportSender):
 
     def send_bridge_event(self, event: str) -> None:
         self._factory.send_bridge_event(event)
+
+    def set_peer_slot_map(self, provider) -> None:
+        self._factory.set_peer_slot_map(provider)
+
+
+def _wire_proxy_report_slots(
+    report_factory: ReportServerFactory,
+    proxy_state: Any,
+) -> None:
+    """Bind proxy upstream slot indices into monitor topology expansion."""
+    if proxy_state is None:
+        report_factory.set_peer_slot_map(None)
+        return
+
+    def _slot_map() -> dict[bytes, int]:
+        return {
+            slot.peer_id: slot.report_slot
+            for slot in proxy_state.use_cases.list_slots()
+            if slot.report_slot is not None
+        }
+
+    report_factory.set_peer_slot_map(_slot_map)
 
 
 def _make_echo_bridges(config: dict) -> dict:
@@ -243,6 +267,7 @@ def main() -> None:
 
     # Generator: expand MASTER systems with GENERATOR > 1 into SYSTEM-0, SYSTEM-1, ... (legacy)
     _expand_generator(config, logger)
+    normalize_proxy_target(config)
     _ensure_system_runtime_config(config)
     _normalize_peer_config(config)
     _normalize_obp_config(config)
@@ -524,7 +549,8 @@ def main() -> None:
             on_options_received=bridge_use_cases.options_config_for_system,
             on_deactivate_dynamic_bridges=bridge_use_cases.deactivate_all_dynamic_bridges,
             on_obp_bcsq_received=bridge_use_cases.on_obp_bcsq_received,
-            on_talker_alias_local_repeat=bridge_use_cases.send_talker_alias_local_repeat,
+            on_talker_alias_repeat_prepare=bridge_use_cases.prepare_talker_alias_local_repeat,
+            on_talker_alias_repeat_burst=bridge_use_cases.rewrite_repeat_voice_burst,
             on_talker_alias_stream_end=bridge_use_cases.clear_talker_alias_stream,
             on_dmra_fragment_stored=bridge_use_cases.on_dmra_fragment_stored,
         )
@@ -538,13 +564,19 @@ def main() -> None:
         if port is not None:
             port.stopListening()
 
+    # UDP / proxy listeners (proxy_state declared before reload handler uses nonlocal)
+    proxy_state = None
+
+    def _should_bind_udp(system_name: str, sys_cfg: dict[str, Any]) -> bool:
+        return not is_proxy_inject_only(config, system_name)
+
     def _on_config_systems_changed() -> None:
         reporting_use_cases.send_config(config.get("SYSTEMS", {}))
         reporting_use_cases.send_bridge(bridge_router.get_bridges())
         user_passwords_loader.load(config)
 
     def _do_config_reload() -> None:
-        nonlocal report_mqtt
+        nonlocal report_mqtt, proxy_state
         mqtt_before = mqtt_settings_from_config(config)
         new_config = prepare_reload_config(runtime_holder)
         try:
@@ -559,9 +591,11 @@ def main() -> None:
                 stop_listener=_stop_udp_port,
                 on_systems_changed=None,
                 on_system_removed=bridge_use_cases.flush_monitor_events_for_system,
+                should_bind_udp=_should_bind_udp,
                 log=logger,
             )
             swap_runtime_config(runtime_holder, new_config, config_path=config_path)
+            normalize_proxy_target(config)
             report_factory.set_config(config)
             mqtt_after = mqtt_settings_from_config(config)
             report_mqtt = reconcile_mqtt_publisher(
@@ -571,6 +605,14 @@ def main() -> None:
                 mqtt_after,
                 report_enabled=config.get("REPORTS", {}).get("REPORT", True),
             )
+            if proxy_state is not None:
+                apply_proxy_config_reload(proxy_state, config, logger=logger)
+                _wire_proxy_report_slots(report_factory, proxy_state)
+            elif proxy_target_system(config):
+                proxy_state = start_proxy_service(config, protocols, logger=logger)
+                _wire_proxy_report_slots(report_factory, proxy_state)
+            else:
+                _wire_proxy_report_slots(report_factory, None)
             if result.added or result.removed or result.updated or result.rebound:
                 _on_config_systems_changed()
         except Exception as e:
@@ -621,16 +663,33 @@ def main() -> None:
     for system_name, sys_cfg in systems_cfg.items():
         if not sys_cfg.get("ENABLED", True):
             continue
-        bind = BindSpec(ip=str(sys_cfg.get("IP") or "0.0.0.0"), port=int(sys_cfg.get("PORT", 56400)))
         protocol = _create_hbp_protocol(system_name)
-        udp_ports[system_name] = _listen_system(system_name, bind, protocol)
         protocols[system_name] = protocol
+        if not _should_bind_udp(system_name, sys_cfg):
+            logger.info("(PROXY) %s inject-only (no UDP bind)", system_name)
+            continue
+        bind = BindSpec(ip=str(sys_cfg.get("IP") or "0.0.0.0"), port=int(sys_cfg.get("PORT", 56400)))
+        udp_ports[system_name] = _listen_system(system_name, bind, protocol)
         logger.debug(
             "(GLOBAL) %s instance created: %s, %s",
             sys_cfg.get("MODE", "?"),
             system_name,
             protocol,
         )
+
+    if proxy_target_system(config):
+        try:
+            proxy_state = start_proxy_service(config, protocols, logger=logger)
+        except Exception as exc:
+            logger.error("(PROXY) failed to start integrated proxy: %s", exc)
+            raise
+
+        def _stop_proxy(_: Any = None) -> None:
+            if proxy_state is not None:
+                proxy_state.stop()
+
+        reactor.addSystemEventTrigger("before", "shutdown", _stop_proxy)
+        _wire_proxy_report_slots(report_factory, proxy_state)
 
     logger.info("(GLOBAL) ADN DMR Peer Server started. Use adn-dmr-server as reference.")
     reactor.suggestThreadPoolSize(100)
