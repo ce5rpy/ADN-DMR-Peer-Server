@@ -35,7 +35,7 @@ from twisted.protocols.basic import NetstringReceiver
 from adn_server.application.ports import ReportMqttPublisher, ReportWireEncoder
 from adn_server.application.report.monitor_topology import (
     expand_inject_proxy_systems,
-    remap_inject_proxy_voice_event,
+    remap_inject_proxy_voice_events,
 )
 
 from .report import REPORT_OPCODES, create_report_wire
@@ -160,10 +160,11 @@ class ReportServerFactory(Factory):
 
     def send_bridge_event(self, event: str) -> None:
         peer_slots = self._peer_slot_map() if self._peer_slot_map is not None else None
-        event = remap_inject_proxy_voice_event(
+        events = remap_inject_proxy_voice_events(
             event, self._config, self._systems, peer_slots
         )
-        frames = self._wire.bridge_event_frames(event)
-        self._broadcast_frames(frames)
-        if self._mqtt is not None:
-            self._mqtt.publish_frames(frames)
+        for mapped in events:
+            frames = self._wire.bridge_event_frames(mapped)
+            self._broadcast_frames(frames)
+            if self._mqtt is not None:
+                self._mqtt.publish_frames(frames)

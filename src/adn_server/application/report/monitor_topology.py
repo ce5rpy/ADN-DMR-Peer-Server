@@ -11,6 +11,7 @@ from __future__ import annotations
 import copy
 from typing import Any
 
+from adn_server.application.bridge.helpers import peer_receives_group_tgid
 from adn_server.application.proxy.deployment import is_proxy_inject_only, proxy_target_system
 from adn_server.domain.value_objects import bytes_4, int_id
 
@@ -183,48 +184,183 @@ def _peer_key_from_voice_csv(parts: list[str], peers: dict[Any, Any]) -> bytes |
     return None
 
 
+def _voice_event_tgid_slot(parts: list[str]) -> tuple[int, int] | None:
+    if len(parts) < 9:
+        return None
+    try:
+        return int(parts[8].strip()), int(parts[7].strip())
+    except ValueError:
+        return None
+
+
+def _peers_receiving_tgid(
+    connected: list[tuple[Any, dict[str, Any]]],
+    *,
+    slot: int,
+    tgid: int,
+    exclude: bytes | None = None,
+) -> list[tuple[Any, dict[str, Any]]]:
+    out: list[tuple[Any, dict[str, Any]]] = []
+    for peer_key, peer in connected:
+        if exclude is not None and _peer_key_from_int(peer_key) == exclude:
+            continue
+        if peer_receives_group_tgid(peer, slot, tgid):
+            out.append((peer_key, peer))
+    return out
+
+
+def _echo_tx_target_peer(parts: list[str], peers: dict[Any, Any]) -> bytes | None:
+    """Echo/static downlink: field 5 is 9990 and field 6 resolves one hotspot."""
+    if len(parts) <= 5:
+        return None
+    try:
+        if int(parts[5].strip()) != 9990:
+            return None
+    except ValueError:
+        return None
+    return _peer_key_from_voice_csv(parts, peers)
+
+
+def _remap_voice_event_to_slot(
+    parts: list[str],
+    *,
+    target: str,
+    slot: int,
+    peer_key: bytes | None,
+) -> str:
+    out = list(parts)
+    out[3] = f"{target}-{slot}"
+    # RX legs: field 5 is the RF source peer — normalize to full hotspot radio id.
+    # TX legs: keep legacy field 5 (echo 9990, OBP server id) so the hotspot chip
+    # shows TX/green while receiving; rewriting to the hotspot id would mark RX/red.
+    if (
+        peer_key is not None
+        and len(out) > 5
+        and len(out) > 2
+        and out[2].strip() == "RX"
+    ):
+        resolved_peer = int_id(peer_key)
+        try:
+            reported_peer = int(out[5].strip())
+        except ValueError:
+            reported_peer = None
+        if reported_peer != resolved_peer:
+            out[5] = str(resolved_peer)
+    return ",".join(out)
+
+
+def remap_inject_proxy_voice_events(
+    event: str,
+    config: dict[str, Any],
+    systems: dict[str, Any],
+    peer_slots: dict[bytes, int] | None = None,
+) -> list[str]:
+    """Map inject-only ``SYSTEM`` voice events to one or more ``SYSTEM-N`` rows.
+
+    Inject-only multi-hotspot needs fan-out in two cases:
+
+    * **TX** (bridge downlink, OBP → SYSTEM): fan-out only to peers whose RPTO OPTIONS
+      include the event TG on that timeslot (not every connected hotspot).
+    * **RX** (local hotspot TX + HBP REPEAT): transmitter keeps RX; other peers with
+      that TG in OPTIONS get companion **TX** (field 5 = transmitter radio id).
+    Echo/static TX (field 5 == 9990) still targets a single resolved hotspot.
+    """
+    target = proxy_target_system(config)
+    if not target or not is_proxy_inject_only(config, target):
+        return [event]
+    parts = event.split(",")
+    if len(parts) < 6 or parts[3].strip() != target:
+        return [event]
+    sys_cfg = systems.get(target, {})
+    if not isinstance(sys_cfg, dict):
+        return [event]
+    peers = sys_cfg.get("PEERS", {})
+    if not isinstance(peers, dict):
+        return [event]
+    max_slots = int(sys_cfg.get("MAX_PEERS", 1))
+    connected = _connected_peers(peers)
+    slot_map = _resolve_slot_map(connected, peer_slots, max_slots=max_slots)
+    trx = parts[2].strip() if len(parts) > 2 else ""
+
+    if trx == "TX":
+        echo_peer = _echo_tx_target_peer(parts, peers)
+        if echo_peer is not None:
+            slot = slot_map.get(echo_peer)
+            if slot is not None:
+                return [
+                    _remap_voice_event_to_slot(
+                        parts, target=target, slot=slot, peer_key=echo_peer
+                    )
+                ]
+        try:
+            if int(parts[5].strip()) == 9990:
+                # Echo/static path with ambiguous hotspot — legacy leaves event unchanged.
+                return [event]
+        except ValueError:
+            pass
+        tgid_slot = _voice_event_tgid_slot(parts)
+        if tgid_slot is None:
+            return [event]
+        tgid, voice_slot = tgid_slot
+        receivers = _peers_receiving_tgid(
+            connected, slot=voice_slot, tgid=tgid,
+        )
+        if not receivers:
+            return [event]
+        remapped: list[str] = []
+        for peer_key, _peer in receivers:
+            mapped_slot = slot_map.get(peer_key)
+            if mapped_slot is None:
+                continue
+            remapped.append(
+                _remap_voice_event_to_slot(
+                    parts, target=target, slot=mapped_slot, peer_key=peer_key
+                )
+            )
+        return remapped if remapped else [event]
+
+    peer_key = _peer_key_from_voice_csv(parts, peers)
+    if peer_key is None:
+        return [event]
+    slot = slot_map.get(peer_key)
+    if slot is None:
+        return [event]
+    results = [
+        _remap_voice_event_to_slot(
+            parts, target=target, slot=slot, peer_key=peer_key
+        )
+    ]
+    action = parts[1].strip() if len(parts) > 1 else ""
+    tgid_slot = _voice_event_tgid_slot(parts)
+    if action in ("START", "END") and tgid_slot is not None:
+        tgid, voice_slot = tgid_slot
+        tx_parts = list(parts)
+        tx_parts[2] = "TX"
+        tx_parts[5] = str(int_id(peer_key))
+        for other_key, _peer in _peers_receiving_tgid(
+            connected, slot=voice_slot, tgid=tgid, exclude=peer_key,
+        ):
+            other_slot = slot_map.get(other_key)
+            if other_slot is None:
+                continue
+            results.append(
+                _remap_voice_event_to_slot(
+                    tx_parts,
+                    target=target,
+                    slot=other_slot,
+                    peer_key=other_key,
+                )
+            )
+    return results
+
+
 def remap_inject_proxy_voice_event(
     event: str,
     config: dict[str, Any],
     systems: dict[str, Any],
     peer_slots: dict[bytes, int] | None = None,
 ) -> str:
-    """Map inject-only ``SYSTEM`` voice events to ``SYSTEM-N`` for monitor ``rts_update``.
-
-    Topology expansion removes the runtime inject target from CONFIG/TOPOLOGY; voice
-    events must use the same virtual master name or dashboard hotspot chips stay idle.
-    """
-    target = proxy_target_system(config)
-    if not target or not is_proxy_inject_only(config, target):
-        return event
-    parts = event.split(",")
-    if len(parts) < 6 or parts[3].strip() != target:
-        return event
-    sys_cfg = systems.get(target, {})
-    if not isinstance(sys_cfg, dict):
-        return event
-    peers = sys_cfg.get("PEERS", {})
-    if not isinstance(peers, dict):
-        return event
-    peer_key = _peer_key_from_voice_csv(parts, peers)
-    if peer_key is None:
-        return event
-    max_slots = int(sys_cfg.get("MAX_PEERS", 1))
-    slot = _slot_for_voice_peer(
-        peer_key, peers=peers, peer_slots=peer_slots, max_slots=max_slots
-    )
-    if slot is None:
-        return event
-    parts[3] = f"{target}-{slot}"
-    # RX legs: field 5 is the RF source peer — normalize to full hotspot radio id.
-    # TX legs: keep legacy field 5 (echo 9990, OBP server id) so the hotspot chip
-    # shows TX/green while receiving; rewriting to the hotspot id would mark RX/red.
-    if len(parts) > 5 and len(parts) > 2 and parts[2].strip() == "RX":
-        resolved_peer = int_id(peer_key)
-        try:
-            reported_peer = int(parts[5].strip())
-        except ValueError:
-            reported_peer = None
-        if reported_peer != resolved_peer:
-            parts[5] = str(resolved_peer)
-    return ",".join(parts)
+    """Single-event view of :func:`remap_inject_proxy_voice_events` (first mapping)."""
+    return remap_inject_proxy_voice_events(
+        event, config, systems, peer_slots
+    )[0]

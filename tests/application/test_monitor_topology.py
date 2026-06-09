@@ -7,13 +7,14 @@ import pytest
 from adn_server.application.report.monitor_topology import (
     expand_inject_proxy_systems,
     remap_inject_proxy_voice_event,
+    remap_inject_proxy_voice_events,
 )
 from adn_server.application.report.payloads import build_topology
 from adn_server.domain.value_objects import bytes_4
 
 
-def _peer(*, connected: bool = True) -> dict:
-    return {
+def _peer(*, connected: bool = True, options: bytes | None = None) -> dict:
+    row = {
         "CONNECTION": "YES" if connected else "NO",
         "CONNECTED": 1_700_000_000 if connected else 0,
         "IP": "203.0.113.10",
@@ -22,6 +23,9 @@ def _peer(*, connected: bool = True) -> dict:
         "RX_FREQ": b"145625000",
         "TX_FREQ": b"145625000",
     }
+    if options is not None:
+        row["OPTIONS"] = options
+    return row
 
 
 def _proxy_config(
@@ -160,6 +164,50 @@ def test_remap_voice_event_inject_proxy(
     parts = remapped.split(",")
     for idx, value in expect.get("parts", {}).items():
         assert parts[idx] == value
+
+
+def test_local_hotspot_rx_fans_out_tx_only_to_peers_with_matching_tg() -> None:
+    """REPEAT companion TX only for hotspots that have the TG in OPTIONS."""
+    peers = {
+        bytes_4(7301795): _peer(options=b"TS2=730444;"),
+        bytes_4(7300444): _peer(options=b"TS2=730444;"),
+        bytes_4(730039101): _peer(options=b"TS2=91;"),
+    }
+    config = _proxy_config(peers)
+    peer_slots = {
+        bytes_4(7301795): 1,
+        bytes_4(7300444): 3,
+        bytes_4(730039101): 4,
+    }
+    raw = "GROUP VOICE,START,RX,SYSTEM,3262598598,7301795,7301795,2,730444"
+    events = remap_inject_proxy_voice_events(
+        raw, config, config["SYSTEMS"], peer_slots
+    )
+    assert len(events) == 2
+    by_system = {ev.split(",")[3]: ev for ev in events}
+    assert "SYSTEM-1" in by_system
+    assert by_system["SYSTEM-1"].startswith("GROUP VOICE,START,RX,SYSTEM-1,")
+    assert "SYSTEM-3" in by_system
+    assert by_system["SYSTEM-3"].startswith("GROUP VOICE,START,TX,SYSTEM-3,")
+    assert "SYSTEM-4" not in by_system
+
+
+def test_obp_bridge_tx_fans_out_only_to_peers_with_matching_static_tg() -> None:
+    """OBP downlink TX must not light hotspots without the TG in OPTIONS."""
+    peers = {
+        bytes_4(7300444): _peer(options=b"TS2=730444;"),
+        bytes_4(7301795): _peer(options=b"TS2=730444;"),
+        bytes_4(730039101): _peer(options=b"TS2=91;"),
+    }
+    config = _proxy_config(peers)
+    peer_slots = {bytes_4(7300444): 3, bytes_4(7301795): 1, bytes_4(730039101): 4}
+    raw = "GROUP VOICE,START,TX,SYSTEM,4100887026,73010,7000002,2,730444"
+    events = remap_inject_proxy_voice_events(
+        raw, config, config["SYSTEMS"], peer_slots
+    )
+    systems = {ev.split(",")[3] for ev in events}
+    assert systems == {"SYSTEM-1", "SYSTEM-3"}
+    assert all(ev.split(",")[5] == "73010" for ev in events)
 
 
 def test_remap_voice_event_passes_through_non_proxy_systems() -> None:
