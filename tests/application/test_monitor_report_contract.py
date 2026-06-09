@@ -8,7 +8,6 @@ These tests model that behaviour and assert the server report snapshot is safe.
 from __future__ import annotations
 
 import json
-import pickle
 from typing import Any
 
 import pytest
@@ -164,19 +163,51 @@ def test_truncated_monitor_ctable_cannot_show_system_n_peers() -> None:
     assert full["SYSTEM-6"]["PEERS"]
 
 
-def test_report_wire_emits_legacy_pickle_before_topology() -> None:
+def test_report_wire_emits_dashboard_state_only() -> None:
     peer_specs = [(730039101, 4)]
     snapshot = _production_snapshot(peer_specs)
-    frames = ReportWire().config_frames(snapshot, full_snapshot=True)
+    frames = ReportWire().state_frames(snapshot, force=True)
 
-    assert len(frames) == 2
-    assert frames[0][:1] == REPORT_OPCODES["CONFIG_SND"]
-    assert frames[1][:1] == REPORT_OPCODES["TOPOLOGY_SND"]
-    pickle_cfg = pickle.loads(frames[0][1:])
-    topo = json.loads(frames[1][1:].decode())
-    assert len(_system_n_names(pickle_cfg)) == MAX_PEERS
-    topo_names = {row["name"] for row in topo["systems"]}
-    assert topo_names == set(pickle_cfg)
+    assert len(frames) == 1
+    assert frames[0][:1] == REPORT_OPCODES["STATE_SND"]
+    doc = json.loads(frames[0][1:].decode())
+    assert doc["type"] == "dashboard_state"
+    assert "SYSTEM-4" in doc["ctable"]["MASTERS"]
+    assert len(_system_n_names(snapshot)) == MAX_PEERS
+
+
+def test_report_wire_skips_unchanged_dashboard_state() -> None:
+    peer_specs = [(730039101, 4)]
+    snapshot = _production_snapshot(peer_specs)
+    wire = ReportWire()
+    assert len(wire.state_frames(snapshot, force=True)) == 1
+    assert wire.state_frames(snapshot, force=False) == ()
+
+
+def test_report_wire_bridge_frames_empty() -> None:
+    bridges = {
+        "52090": [
+            {"SYSTEM": "SYSTEM-0", "ACTIVE": True, "TS": 2, "TGID": 52090},
+        ]
+    }
+    assert ReportWire().bridge_frames(bridges, full_snapshot=True) == ()
+
+
+def test_report_wire_emits_voice_event_only() -> None:
+    csv = "GROUP VOICE,START,RX,SYSTEM,3262598598,730039101,730039101,2,730444"
+    frames = ReportWire().bridge_event_frames(csv)
+
+    assert len(frames) == 1
+    assert frames[0][:1] == REPORT_OPCODES["VOICE_EVENT_SND"]
+    voice = json.loads(frames[0][1:].decode())
+    assert voice["type"] == "voice_event"
+
+
+def test_report_wire_skips_unmapped_voice_event() -> None:
+    csv = "GROUP VOICE,START,RX,SYSTEM-0,1001,3120001,2,52090"
+    frames = ReportWire().bridge_event_frames(csv)
+
+    assert frames == ()
 
 
 def test_report_factory_push_matches_monitor_contract() -> None:
@@ -187,12 +218,13 @@ def test_report_factory_push_matches_monitor_contract() -> None:
     factory.set_peer_slot_map(lambda: _peer_slots(peer_specs))
 
     snapshot = factory._systems_for_report()
-    frames = ReportWire().config_frames(snapshot, full_snapshot=True)
-    config = pickle.loads(frames[0][1:])
+    frames = ReportWire().state_frames(snapshot, force=True)
+    assert len(frames) == 1
+    assert frames[0][:1] == REPORT_OPCODES["STATE_SND"]
 
     ctable = ctable_with_virtual_masters(max_slots=MAX_PEERS)
     before = count_masters(ctable)
-    update_ctable_from_config(config, ctable)
+    update_ctable_from_config(snapshot, ctable)
 
     assert len(_system_n_names(snapshot)) == MAX_PEERS
     assert count_masters(ctable) == before

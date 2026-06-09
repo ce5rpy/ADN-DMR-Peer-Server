@@ -40,18 +40,14 @@ def test_connect_sends_hello_topology_and_routing() -> None:
     client = _CapturingClient()
     factory.clients.append(client)
     factory._send_hello_to(client)
-    factory._send_config_to(client, full_snapshot=True)
-    factory._send_bridge_to(client, full_snapshot=True)
+    factory._send_state_to(client, force=True)
 
-    assert len(client.messages) == 4
+    assert len(client.messages) == 2
     hello = json.loads(client.messages[0][1:].decode())
     assert hello["report_protocol"] == 2
     assert "REPORT_V2" in hello["features"]
-    assert client.messages[1][:1] == REPORT_OPCODES["CONFIG_SND"]
-    assert client.messages[2][:1] == REPORT_OPCODES["TOPOLOGY_SND"]
-    assert json.loads(client.messages[2][1:])["type"] == "topology"
-    assert client.messages[3][:1] == REPORT_OPCODES["ROUTING_TABLE_SND"]
-    assert json.loads(client.messages[3][1:])["type"] == "routing_table"
+    assert client.messages[1][:1] == REPORT_OPCODES["STATE_SND"]
+    assert json.loads(client.messages[1][1:])["type"] == "dashboard_state"
 
 
 def test_bridge_event_emits_voice_event_json() -> None:
@@ -78,7 +74,7 @@ def test_incremental_bridge_update_sends_delta() -> None:
     )
     client = _CapturingClient()
     factory.clients.append(client)
-    factory._send_bridge_to(client, full_snapshot=True)
+    factory._send_state_to(client, force=True)
     factory.set_bridges(
         {
             "52090": [
@@ -86,11 +82,8 @@ def test_incremental_bridge_update_sends_delta() -> None:
             ],
         }
     )
-    factory._send_bridge_to(client, full_snapshot=False)
-    assert client.messages[1][:1] == REPORT_OPCODES["DELTA_SND"]
-    delta = json.loads(client.messages[1][1:].decode())
-    assert delta["type"] == "delta"
-    assert delta["patch"]["type"] == "routing_table"
+    factory.send_bridge(incremental=True)
+    assert len(client.messages) == 1
 
 
 def test_inject_proxy_topology_expanded_for_monitor() -> None:
@@ -122,19 +115,17 @@ def test_inject_proxy_topology_expanded_for_monitor() -> None:
     factory.set_peer_slot_map(lambda: {peer: 2})
     client = _CapturingClient()
     factory.clients.append(client)
-    factory._send_config_to(client, full_snapshot=True)
-    assert client.messages[0][:1] == REPORT_OPCODES["CONFIG_SND"]
-    topology = json.loads(client.messages[1][1:].decode())
-    names = {system["name"] for system in topology["systems"]}
+    factory._send_state_to(client, force=True)
+    assert client.messages[0][:1] == REPORT_OPCODES["STATE_SND"]
+    state_doc = json.loads(client.messages[0][1:].decode())
+    names = set((state_doc.get("ctable") or {}).get("MASTERS", {}))
+    names |= set((state_doc.get("ctable") or {}).get("OPENBRIDGES", {}))
     assert "SYSTEM" not in names
     assert "SYSTEM-2" in names
-    assert "SYSTEM-0" in names
-    assert len([name for name in names if name.startswith("SYSTEM-")]) == 102
-    system = next(item for item in topology["systems"] if item["name"] == "SYSTEM-2")
+    system = state_doc["ctable"]["MASTERS"]["SYSTEM-2"]
     assert system["port"] == 56402
-    assert system["peers"][0]["id"] == 730039101
-    empty = next(item for item in topology["systems"] if item["name"] == "SYSTEM-0")
-    assert empty["peers"] == []
+    peer_keys = {int(k) for k in system["peers"]}
+    assert 730039101 in peer_keys
 
 
 def test_send_bridge_event_remaps_inject_proxy_system_name() -> None:
