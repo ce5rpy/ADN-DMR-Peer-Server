@@ -40,7 +40,8 @@ from bitarray import bitarray
 from ..domain.dmr import bptc
 
 from ..domain import HBPF_DATA_SYNC, HBPF_SLT_VHEAD, HBPF_SLT_VTERM, STREAM_TO, bytes_3, bytes_4, int_id
-from .ports import BridgeRouter, DmrEmbeddedLcEncoder, TalkerAliasEmblcEncoder
+from .ports import BridgeRouter, DmrEmbeddedLcEncoder, SubscriptionStore, TalkerAliasEmblcEncoder
+from .subscription.store_sync import replace_store_from_bridges
 from .talker_alias_use_cases import TalkerAliasUseCases
 from .bridge.helpers import obp_target_bcsq_quenches_stream, resolve_voice_peer_id
 from .bridge.timers import BridgeTimerMixin
@@ -69,9 +70,11 @@ class BridgeUseCases(BridgeTimerMixin, BridgeObpForwardMixin, BridgeHbpForwardMi
         call_later: Any = None,
         encode_emblc: DmrEmbeddedLcEncoder | None = None,
         ta_emblc_encoder: TalkerAliasEmblcEncoder | None = None,
+        subscription_store: SubscriptionStore | None = None,
     ) -> None:
         self._router = bridge_router
         self._config = config
+        self._subscription_store = subscription_store
         self._send_to_system = send_to_system  # (system_name, packet, **kwargs) -> None
         self._get_protocols = get_protocols  # () -> dict[str, protocol]
         self._reporting = reporting
@@ -100,6 +103,12 @@ class BridgeUseCases(BridgeTimerMixin, BridgeObpForwardMixin, BridgeHbpForwardMi
             return True
         except Exception:
             return False
+
+    def _sync_subscription_store(self) -> None:
+        """Mirror BRIDGES into the subscription store (OPTIONS/static paths only for now)."""
+        if self._subscription_store is None:
+            return
+        replace_store_from_bridges(self._subscription_store, self._router.get_bridges())
 
     def get_bridges(self) -> dict[str, list[dict[str, Any]]]:
         """Return current BRIDGES."""

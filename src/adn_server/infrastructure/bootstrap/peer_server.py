@@ -36,6 +36,7 @@ from adn_server.application.runtime_context import (
 from adn_server.domain import bytes_3
 from adn_server.domain.dmr.bptc import encode_emblc
 from adn_server.infrastructure.bridge_router_impl import InMemoryBridgeRouter
+from adn_server.infrastructure.subscription_store import InMemorySubscriptionStore
 from adn_server.infrastructure.config_normalizer import (
     ensure_system_runtime_config as _ensure_system_runtime_config,
 )
@@ -303,6 +304,7 @@ def run_peer_server(
         call_from_reactor=reactor.callFromThread,
     )
 
+    subscription_store = InMemorySubscriptionStore()
     bridge_use_cases = BridgeUseCases(
         bridge_router,
         config,
@@ -316,6 +318,7 @@ def run_peer_server(
         call_later=reactor.callLater,
         encode_emblc=encode_emblc,
         ta_emblc_encoder=default_ta_emblc_encoder,
+        subscription_store=subscription_store,
     )
     bridge_use_cases.apply_startup_bridges()
     report_factory.set_bridges(bridge_router.get_bridges())

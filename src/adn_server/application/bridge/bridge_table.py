@@ -314,6 +314,7 @@ class BridgeTableMixin:
                 if tg in prohibited_tgs:
                     continue
                 self.make_static_tg(tg, 2, tmout, system)
+        self._sync_subscription_store()
 
     def options_config_for_system(self, system_name: str) -> None:
         """Update static TG bridges for one system immediately (e.g. when RPTO received). So incoming OBP traffic reaches hotspots without waiting for the 26s options_config_loop."""
@@ -379,6 +380,7 @@ class BridgeTableMixin:
             _fp = f"{new_ts1}|{new_ts2}|{int(_tmout)}"
             if sys_cfg.get("_options_static_apply_fp") == _fp:
                 self._restore_prohibited_static_bridge_legs(system_name)
+                self._sync_subscription_store()
                 return
             # Legacy: reset TGs that were removed (bridge_master.py 1736-1767)
             old_ts1 = str(sys_cfg.get("TS1_STATIC") or "").strip()
@@ -444,6 +446,7 @@ class BridgeTableMixin:
             if new_ts1 or new_ts2:
                 logger.info("(OPTIONS) %s static TGs applied: TS1=%s TS2=%s", system_name, new_ts1 or "-", new_ts2 or "-")
             self._restore_prohibited_static_bridge_legs(system_name)
+            self._sync_subscription_store()
         except Exception as e:
             logger.debug("(OPTIONS) options_config_for_system %s: %s", system_name, e)
 
@@ -827,4 +830,5 @@ class BridgeTableMixin:
                 systems_cfg[_system]["DEFAULT_UA_TIMER"] = int(_options.get("DEFAULT_UA_TIMER", 10))
             except Exception as e:
                 logger.exception("(OPTIONS) caught exception: %s", e)
+        self._sync_subscription_store()
 

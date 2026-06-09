@@ -7,7 +7,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "adn-server"
-version = "1.0.0"
+version = "2.0.0-alpha1"
 description = "ADN DMR Peer Server"
 readme = "README.md"
 license = { text = "GPL-3.0-or-later" }

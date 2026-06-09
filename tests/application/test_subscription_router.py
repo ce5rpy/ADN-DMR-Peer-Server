@@ -4,59 +4,13 @@ from __future__ import annotations
 
 from typing import Any
 
+from adn_server.application.subscription.bridges_import import subscriptions_from_bridges
 from adn_server.application.subscription.router import SubscriptionRouter
 from adn_server.domain import bytes_3, int_id
-from adn_server.domain.subscription import (
-    ActivationPolicy,
-    AudioChannel,
-    Subscription,
-    SubscriptionPhase,
-    SubscriptionRole,
-    SubscriptionState,
-    SystemId,
-    TgId,
-)
+from adn_server.domain.subscription import TgId
 from adn_server.domain.voice_routing import ForwardLeg, VoiceIngress
 from adn_server.infrastructure.bridge_router_impl import InMemoryBridgeRouter
 from adn_server.infrastructure.subscription_store import InMemorySubscriptionStore
-
-
-def _role_from_to_type(to_type: str) -> SubscriptionRole:
-    if to_type == "NONE":
-        return SubscriptionRole.ECHO
-    if to_type == "STAT":
-        return SubscriptionRole.PASSIVE_STAT
-    return SubscriptionRole.SINK
-
-
-def subscriptions_from_bridges(bridges: dict[str, list[dict[str, Any]]]) -> list[Subscription]:
-    """Build subscriptions that round-trip ``export_bridges`` shape for parity tests."""
-    subs: list[Subscription] = []
-    for table_key, rows in bridges.items():
-        for row in rows:
-            if not isinstance(row, dict):
-                continue
-            ts = int(row.get("TS") or 1)
-            if table_key.startswith("#"):
-                channel_tgid = int_id(row.get("TGID") or b"\x00\x00\x00")
-            else:
-                channel_tgid = int(table_key)
-            to_type = str(row.get("TO_TYPE", "ON"))
-            subs.append(
-                Subscription(
-                    channel=AudioChannel(tgid=TgId(channel_tgid), slot=ts),  # type: ignore[arg-type]
-                    system=SystemId(str(row.get("SYSTEM", ""))),
-                    target_tgid=TgId(int_id(row.get("TGID") or b"\x00\x00\x00")),
-                    role=_role_from_to_type(to_type),
-                    policy=ActivationPolicy.INBAND,
-                    state=SubscriptionState(
-                        phase=SubscriptionPhase.ACTIVE if row.get("ACTIVE") else SubscriptionPhase.IDLE
-                    ),
-                    bridge_key=table_key if table_key.startswith("#") else None,
-                    timeout_seconds=row.get("TIMEOUT") if isinstance(row.get("TIMEOUT"), (int, float)) else None,
-                )
-            )
-    return subs
 
 
 def legacy_forward_targets(
