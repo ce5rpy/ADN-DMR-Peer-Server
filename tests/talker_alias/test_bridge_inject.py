@@ -10,7 +10,6 @@ from tests.harness.deterministic import (
 )
 from tests.harness.scenarios import talker_alias_config
 
-from adn_server.domain import bytes_3, bytes_4
 from adn_server.domain.talker_alias import DMRA_BLOCK_COUNT, DMRA_OPCODE
 
 
@@ -94,48 +93,3 @@ def test_both_mode_without_ta_still_rewrites_group_embedded_lc() -> None:
     assert emb.any()  # ...not the preserved all-zero source embedded LC
 
 
-def test_talker_alias_local_repeat_excludes_source_peer() -> None:
-    scenario = DeterministicScenario(
-        config=talker_alias_config(),
-        bridges=active_bridge(91, (("MASTER-A", 2),)),
-    )
-    stream_id = bytes_4(0x92929292)
-    peer = bytes_4(1001)
-    rf_src = bytes_3(3120001)
-
-    scenario.bridge.send_talker_alias_local_repeat("MASTER-A", peer, rf_src, stream_id)
-
-    assert len(scenario.dmra_capture) == 1
-    assert scenario.dmra_capture[0].exclude_peer == peer
-
-
-def test_repeat_embed_prepares_slot_state_for_mmdvm() -> None:
-    """REPEAT must set TX_TA_EMB on the source MASTER slot for embedded downlink DMRD."""
-    from bitarray import bitarray
-
-    scenario = DeterministicScenario(
-        config=talker_alias_config(),
-        bridges=active_bridge(7304, (("MASTER-A", 2),)),
-    )
-    stream_id = bytes_4(0xA1A2A3A4)
-    peer = bytes_4(1001)
-    rf_src = bytes_3(7300392)
-    dst_id = bytes_3(7304)
-
-    scenario.bridge.prepare_talker_alias_local_repeat(
-        "MASTER-A", peer, rf_src, dst_id, 2, stream_id,
-    )
-    slot_st = scenario.protocols["MASTER-A"].STATUS[2]
-    assert slot_st.get("REP_STREAM_ID") == stream_id
-    assert "REP_EMB_LC" in slot_st
-    assert slot_st.get("TX_TA_EMB") is not None
-
-    raw = b"\x00" * 33
-    out = scenario.bridge.rewrite_repeat_voice_burst("MASTER-A", 2, stream_id, 1, raw)
-    bits = bitarray(endian="big")
-    bits.frombytes(out)
-    assert bits[116:148] == slot_st["REP_EMB_LC"][1]
-
-    scenario.bridge.clear_talker_alias_stream("MASTER-A", stream_id)
-    assert "REP_STREAM_ID" not in slot_st
-    assert "TX_TA_EMB" not in slot_st

@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import logging
+from unittest.mock import MagicMock
 
 from adn_server.application.proxy import ProxyUseCases
+from adn_server.infrastructure.config_reload import merge_top_level_config
 from adn_server.domain.proxy import ClientEndpoint, ClientSlot
 from adn_server.infrastructure.proxy.ip_blacklist import InMemoryProxyIpBlacklist
 from adn_server.infrastructure.proxy.rpto_queue import InMemoryPendingRptoQueue
@@ -73,6 +75,32 @@ def test_apply_proxy_config_reload_keeps_sessions_and_updates_timeout() -> None:
     assert state._runtime["timeout"] == 45.0
     assert state.fanin.debug is True
     assert state.use_cases._max_peers == 20  # noqa: SLF001
+
+
+def test_hot_reload_never_closes_udp_listener() -> None:
+    """Regression: SIGHUP must not stopListening() on PROXY (EADDRINUSE / dropped sessions)."""
+    state = _minimal_proxy_state()
+    stop_mock = MagicMock(return_value=None)
+    state.udp_port = MagicMock()
+    state.udp_port.stopListening = stop_mock
+
+    apply_proxy_config_reload(
+        state,
+        {
+            "PROXY": {"LISTEN_PORT": 62031, "TARGET_SYSTEM": "SYSTEM", "TIMEOUT": 60},
+            "SYSTEMS": {"SYSTEM": {"MAX_PEERS": 20}},
+        },
+        logger=logging.getLogger("test.proxy.reload"),
+    )
+
+    stop_mock.assert_not_called()
+    assert len(state.use_cases.list_slots()) == 1
+
+
+def test_merge_top_level_config_updates_proxy_section() -> None:
+    live = {"GLOBAL": {}, "PROXY": {"TIMEOUT": 30, "LISTEN_PORT": 62031}}
+    merge_top_level_config(live, {"PROXY": {"TIMEOUT": 45, "LISTEN_PORT": 62031}})
+    assert live["PROXY"]["TIMEOUT"] == 45
 
 
 def test_proxy_use_cases_apply_runtime_settings() -> None:

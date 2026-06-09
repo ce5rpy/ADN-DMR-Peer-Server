@@ -357,7 +357,6 @@ class BridgeLcTaMixin:
         settings = talker_alias_settings(self._config, source_system)
         if not settings["enabled"]:
             return
-        target_mode = self._config.get("SYSTEMS", {}).get(target_system, {}).get("MODE")
         if settings["mode"] == "both" and not self._ta_capable_source(source_system):
             force_inject = True
         st.pop("TX_TA_EMB", None)

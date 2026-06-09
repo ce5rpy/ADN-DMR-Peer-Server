@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import pytest
+
 from adn_server.application.report.monitor_topology import (
     expand_inject_proxy_systems,
     remap_inject_proxy_voice_event,
@@ -22,25 +24,31 @@ def _peer(*, connected: bool = True) -> dict:
     }
 
 
-def test_expand_inject_proxy_fans_peers_into_system_n() -> None:
-    peer_a = bytes_4(730039101)
-    peer_b = bytes_4(7301896)
-    config = {
+def _proxy_config(
+    peers: dict[bytes, dict],
+    *,
+    max_peers: int = 102,
+    base_port: int = 56400,
+) -> dict:
+    return {
         "PROXY": {"TARGET_SYSTEM": "SYSTEM"},
         "SYSTEMS": {
             "SYSTEM": {
                 "MODE": "MASTER",
                 "ENABLED": True,
-                "MAX_PEERS": 102,
-                "_REPORT_BASE_PORT": 56400,
-                "PEERS": {
-                    peer_a: _peer(),
-                    peer_b: _peer(),
-                },
-            },
-            "ECHO": {"MODE": "MASTER", "ENABLED": True, "PEERS": {}},
+                "MAX_PEERS": max_peers,
+                "_REPORT_BASE_PORT": base_port,
+                "PEERS": peers,
+            }
         },
     }
+
+
+def test_expand_inject_proxy_fans_peers_into_system_n() -> None:
+    peer_a = bytes_4(730039101)
+    peer_b = bytes_4(7301896)
+    config = _proxy_config({peer_a: _peer(), peer_b: _peer()})
+    config["SYSTEMS"]["ECHO"] = {"MODE": "MASTER", "ENABLED": True, "PEERS": {}}
     expanded = expand_inject_proxy_systems(
         config,
         config["SYSTEMS"],
@@ -56,18 +64,7 @@ def test_expand_inject_proxy_fans_peers_into_system_n() -> None:
 
 def test_build_topology_after_expand_matches_monitor_shape() -> None:
     peer = bytes_4(730039101)
-    config = {
-        "PROXY": {"TARGET_SYSTEM": "SYSTEM"},
-        "SYSTEMS": {
-            "SYSTEM": {
-                "MODE": "MASTER",
-                "ENABLED": True,
-                "MAX_PEERS": 102,
-                "_REPORT_BASE_PORT": 56400,
-                "PEERS": {peer: _peer()},
-            }
-        },
-    }
+    config = _proxy_config({peer: _peer()})
     expanded = expand_inject_proxy_systems(config, config["SYSTEMS"], {peer: 2})
     doc = build_topology(expanded, seq=1)
     names = {system["name"] for system in doc["systems"]}
@@ -85,18 +82,7 @@ def test_build_topology_after_expand_matches_monitor_shape() -> None:
 
 def test_expand_inject_proxy_emits_all_virtual_masters() -> None:
     peer = bytes_4(730039101)
-    config = {
-        "PROXY": {"TARGET_SYSTEM": "SYSTEM"},
-        "SYSTEMS": {
-            "SYSTEM": {
-                "MODE": "MASTER",
-                "ENABLED": True,
-                "MAX_PEERS": 4,
-                "_REPORT_BASE_PORT": 56400,
-                "PEERS": {peer: _peer()},
-            }
-        },
-    }
+    config = _proxy_config({peer: _peer()}, max_peers=4)
     expanded = expand_inject_proxy_systems(config, config["SYSTEMS"], {peer: 2})
     for slot in range(4):
         assert f"SYSTEM-{slot}" in expanded
@@ -106,138 +92,74 @@ def test_expand_inject_proxy_emits_all_virtual_masters() -> None:
     assert expanded["SYSTEM-1"]["PEERS"] == {}
 
 
-def test_remap_voice_event_system_to_virtual_master() -> None:
-    peer = bytes_4(730039101)
-    config = {
-        "PROXY": {"TARGET_SYSTEM": "SYSTEM"},
-        "SYSTEMS": {
-            "SYSTEM": {
-                "MODE": "MASTER",
-                "ENABLED": True,
-                "MAX_PEERS": 102,
-                "PEERS": {peer: _peer()},
-            }
-        },
-    }
-    raw = "GROUP VOICE,START,RX,SYSTEM,3262598598,730039101,730039101,2,730444"
+@pytest.mark.parametrize(
+    "raw,peer_specs,slot_map,expect",
+    [
+        pytest.param(
+            "GROUP VOICE,START,RX,SYSTEM,3262598598,730039101,730039101,2,730444",
+            [(730039101,)],
+            {730039101: 4},
+            {"startswith": "GROUP VOICE,START,RX,SYSTEM-4,"},
+            id="rx_to_virtual_master",
+        ),
+        pytest.param(
+            "GROUP VOICE,START,TX,SYSTEM,4100887026,9990,730039101,2,730444",
+            [(730039101,)],
+            {730039101: 4},
+            {"parts": {3: "SYSTEM-4", 5: "9990"}},
+            id="tx_echo_keeps_9990_for_hotspot_rx",
+        ),
+        pytest.param(
+            "GROUP VOICE,START,RX,SYSTEM,4100887026,73003,7300392,2,9990",
+            [(730039101,)],
+            {730039101: 4},
+            {"parts": {3: "SYSTEM-4", 5: "730039101"}},
+            id="rx_normalizes_field5_to_hotspot_radio_id",
+        ),
+        pytest.param(
+            "GROUP VOICE,START,TX,SYSTEM,2693411696,9990,7300392,2,9990",
+            [(730039101,)],
+            {730039101: 4},
+            {"parts": {3: "SYSTEM-4", 5: "9990"}},
+            id="single_hotspot_user_prefix",
+        ),
+        pytest.param(
+            "GROUP VOICE,START,TX,SYSTEM,2693411696,9990,7300391,2,9990",
+            [(730039101,), (730039102,)],
+            {730039101: 4, 730039102: 5},
+            {"unchanged": True},
+            id="ambiguous_user_multiple_hotspots",
+        ),
+        pytest.param(
+            "GROUP VOICE,START,TX,SYSTEM,4100887026,9990,730039102,2,730444",
+            [(730039101,), (730039102,)],
+            {730039101: 4, 730039102: 5},
+            {"parts": {3: "SYSTEM-5", 5: "9990"}},
+            id="full_radio_id_with_sibling_hotspots",
+        ),
+    ],
+)
+def test_remap_voice_event_inject_proxy(
+    raw: str,
+    peer_specs: list[tuple[int, ...]],
+    slot_map: dict[int, int],
+    expect: dict,
+) -> None:
+    peers = {bytes_4(rid): _peer() for spec in peer_specs for rid in spec}
+    peer_slots = {bytes_4(rid): slot_map[rid] for spec in peer_specs for rid in spec}
+    config = _proxy_config(peers)
     remapped = remap_inject_proxy_voice_event(
-        raw, config, config["SYSTEMS"], {peer: 4}
+        raw, config, config["SYSTEMS"], peer_slots
     )
-    assert remapped.startswith("GROUP VOICE,START,RX,SYSTEM-4,")
-
-
-def test_remap_voice_event_tx_keeps_echo_peer_id_for_hotspot_rx_display() -> None:
-    """TX echo→hotspot: field 5 stays 9990 so hotspot chip is TX/green while receiving."""
-    peer = bytes_4(730039101)
-    config = {
-        "PROXY": {"TARGET_SYSTEM": "SYSTEM"},
-        "SYSTEMS": {
-            "SYSTEM": {
-                "MODE": "MASTER",
-                "ENABLED": True,
-                "MAX_PEERS": 102,
-                "PEERS": {peer: _peer()},
-            }
-        },
-    }
-    raw = "GROUP VOICE,START,TX,SYSTEM,4100887026,9990,730039101,2,730444"
-    remapped = remap_inject_proxy_voice_event(
-        raw, config, config["SYSTEMS"], {peer: 4}
-    )
+    if expect.get("unchanged"):
+        assert remapped == raw
+        return
+    if prefix := expect.get("startswith"):
+        assert remapped.startswith(prefix)
+        return
     parts = remapped.split(",")
-    assert parts[3] == "SYSTEM-4"
-    assert parts[5] == "9990"
-
-
-def test_remap_voice_event_rx_normalizes_field5_to_hotspot_radio_id() -> None:
-    peer = bytes_4(730039101)
-    config = {
-        "PROXY": {"TARGET_SYSTEM": "SYSTEM"},
-        "SYSTEMS": {
-            "SYSTEM": {
-                "MODE": "MASTER",
-                "ENABLED": True,
-                "MAX_PEERS": 102,
-                "PEERS": {peer: _peer()},
-            }
-        },
-    }
-    raw = "GROUP VOICE,START,RX,SYSTEM,4100887026,73003,7300392,2,9990"
-    remapped = remap_inject_proxy_voice_event(
-        raw, config, config["SYSTEMS"], {peer: 4}
-    )
-    parts = remapped.split(",")
-    assert parts[3] == "SYSTEM-4"
-    assert parts[5] == "730039101"
-
-
-def test_remap_voice_event_matches_user_prefix_when_single_hotspot_online() -> None:
-    """User 7300391 with only HS1 online: legacy short subscriber id can resolve."""
-    peer = bytes_4(730039101)
-    config = {
-        "PROXY": {"TARGET_SYSTEM": "SYSTEM"},
-        "SYSTEMS": {
-            "SYSTEM": {
-                "MODE": "MASTER",
-                "ENABLED": True,
-                "MAX_PEERS": 102,
-                "PEERS": {peer: _peer()},
-            }
-        },
-    }
-    raw = "GROUP VOICE,START,TX,SYSTEM,2693411696,9990,7300392,2,9990"
-    remapped = remap_inject_proxy_voice_event(
-        raw, config, config["SYSTEMS"], {peer: 4}
-    )
-    parts = remapped.split(",")
-    assert parts[3] == "SYSTEM-4"
-    assert parts[5] == "9990"
-
-
-def test_remap_voice_event_skips_ambiguous_user_with_multiple_hotspots() -> None:
-    """User 7300391 + HS1/HS2 online: do not pick the wrong radio from rf_src alone."""
-    hs1 = bytes_4(730039101)
-    hs2 = bytes_4(730039102)
-    config = {
-        "PROXY": {"TARGET_SYSTEM": "SYSTEM"},
-        "SYSTEMS": {
-            "SYSTEM": {
-                "MODE": "MASTER",
-                "ENABLED": True,
-                "MAX_PEERS": 102,
-                "PEERS": {hs1: _peer(), hs2: _peer()},
-            }
-        },
-    }
-    raw = "GROUP VOICE,START,TX,SYSTEM,2693411696,9990,7300391,2,9990"
-    remapped = remap_inject_proxy_voice_event(
-        raw, config, config["SYSTEMS"], {hs1: 4, hs2: 5}
-    )
-    assert remapped == raw
-
-
-def test_remap_voice_event_resolves_full_radio_id_with_sibling_hotspots_online() -> None:
-    """Full radio id in rf_src still maps correctly when sibling HS are connected."""
-    hs1 = bytes_4(730039101)
-    hs2 = bytes_4(730039102)
-    config = {
-        "PROXY": {"TARGET_SYSTEM": "SYSTEM"},
-        "SYSTEMS": {
-            "SYSTEM": {
-                "MODE": "MASTER",
-                "ENABLED": True,
-                "MAX_PEERS": 102,
-                "PEERS": {hs1: _peer(), hs2: _peer()},
-            }
-        },
-    }
-    raw = "GROUP VOICE,START,TX,SYSTEM,4100887026,9990,730039102,2,730444"
-    remapped = remap_inject_proxy_voice_event(
-        raw, config, config["SYSTEMS"], {hs1: 4, hs2: 5}
-    )
-    parts = remapped.split(",")
-    assert parts[3] == "SYSTEM-5"
-    assert parts[5] == "9990"
+    for idx, value in expect.get("parts", {}).items():
+        assert parts[idx] == value
 
 
 def test_remap_voice_event_passes_through_non_proxy_systems() -> None:

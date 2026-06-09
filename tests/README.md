@@ -8,7 +8,8 @@ python3 -m pip install --no-user -e ".[dev]"
 python3 -m pytest tests/<path>/test_<name>.py -q          # single file
 python3 -m pytest tests/<path>/test_<name>.py::test_foo -q # single test
 python3 -m pytest tests/bridge/ -q                         # whole domain
-python3 -m pytest tests/ -q                                # full suite (177 + 1 skip)
+python3 -m pytest tests/ -q                                # full suite
+python3 -m pytest tests/ -q -m "not mqtt"                 # skip MQTT-heavy tests
 ```
 
 Use the project interpreter, e.g. `/opt/.pyenv/versions/3.11.8/bin/python3`.
@@ -21,17 +22,29 @@ Use the project interpreter, e.g. `/opt/.pyenv/versions/3.11.8/bin/python3`.
 | `hbp/` | HBP ingress, loop control, rate limit, timeout/collision, master maintenance |
 | `obp/` | OpenBridge loop, rate limit, unit-data loop |
 | `voice/` | Announcements, TTS schedule, broadcast queue, disconnected voice, in-band signalling |
-| `talker_alias/` | Encode/decode, passthrough, MMDVM wire, bridge inject |
+| `talker_alias/` | Encode/decode, passthrough, MMDVM wire, bridge inject (DeterministicScenario) |
 | `parrot/` | Recording timers, playback loop, seq preservation, ingress path |
 | `replay/` | JSONL session replay (V2-P0-007) |
 | `schemas/` | Report v2 JSON Schema validation (`jsonschema` dev dep) |
-| `application/test_report_payloads.py` | Report payload builders + CSV parse |
-| `infrastructure/test_report_server_wire.py` | Report server wire opcodes |
-| `smoke/` | Quick routing smoke + packet builder |
-| `infrastructure/` | Logging reload, bridge router index |
-| `application/` | RuntimeContext holder / config proxy |
-| `scripts/` | Config conversion helpers |
+| `application/` | Report payloads, monitor topology, proxy use cases, runtime context |
+| `infrastructure/` | Logging reload, bridge router, **HBP REPEAT + proxy fan-in integration**, MQTT |
+| `smoke/` | Quick routing smoke |
+| `support/` | Shared stacks (`hbp_repeat_stack`, monitor sim) — not run as tests |
 | `harness/` | Shared fakes (`DeterministicScenario`, assertions) — not run as tests |
+
+## Integration vs harness
+
+Most bridge/voice tests inject packets via **`DeterministicScenario`** (`bridge.dmrd_received` on fakes). That is fast but **skips** `udp_hbp` REPEAT rewrite and proxy UDP fan-in.
+
+For regressions on those paths, use:
+
+| File | Topic |
+|------|-------|
+| `infrastructure/test_hbp_repeat_talker_alias.py` | Real `HBPProtocol` REPEAT + embedded TA |
+| `infrastructure/test_proxy_repeat_e2e.py` | Proxy fan-in → REPEAT downlink |
+| `infrastructure/test_proxy_reload.py` | Hot reload keeps UDP listener |
+
+Mark new stack tests with `@pytest.mark.integration`.
 
 ## Files by domain
 
@@ -74,7 +87,6 @@ Use the project interpreter, e.g. `/opt/.pyenv/versions/3.11.8/bin/python3`.
 | `test_announcement_anticollision.py` | 3 | Busy slot skip / abort |
 | `test_broadcast_queue.py` | 2 | Same-TG broadcast queue |
 | `test_disconnected_voice.py` | 3 | Not-linked / reflector prompts |
-| `test_embed_ta_forward.py` | 2 | Embed TA state on bridge |
 | `test_in_band_signalling.py` | 5 | Reflector / single-mode VTERM |
 | `test_play_file_on_request.py` | 3 | On-demand file playback |
 | `test_scheduled_announcement.py` | 4 | File announcements (AMBE) |
@@ -85,7 +97,7 @@ Use the project interpreter, e.g. `/opt/.pyenv/versions/3.11.8/bin/python3`.
 
 | File | Tests | Topic |
 |------|-------|-------|
-| `test_bridge_inject.py` | 5 | TA inject on bridge VHEAD |
+| `test_bridge_inject.py` | 3 | TA inject on bridge VHEAD (harness) |
 | `test_embed_ta.py` | 4 | Embedded LC modes |
 | `test_encode_decode.py` | 8 | Domain encode/decode |
 | `test_format.py` | 2 | Format from subscriber profile |
@@ -102,16 +114,25 @@ Use the project interpreter, e.g. `/opt/.pyenv/versions/3.11.8/bin/python3`.
 | `test_recording_timers.py` | 2 | Idle timeout, VTERM commit |
 | `test_rekey_playback.py` | 4 | Seq preservation past 255 / 30s |
 
-### smoke/ · infrastructure/ · scripts/
+### infrastructure (integration highlights)
 
-| File | Tests | Topic |
-|------|-------|-------|
-| `smoke/test_bridge_routing.py` | 1 | Static TG forward smoke |
-| `smoke/test_packet_builder.py` | 1 | PacketSpec builder |
-| `infrastructure/test_logging_reload.py` | 2 | Log level reload |
-| `infrastructure/test_bridge_router_index.py` | 5 | BRIDGES O(1) index vs legacy scan |
-| `application/test_runtime_context.py` | 5 | RuntimeContext holder, SIGHUP swap prep |
-| `scripts/test_freedmr_cfg_to_yaml.py` | 5 | Legacy cfg → YAML |
+| File | Topic |
+|------|-------|
+| `test_hbp_repeat_talker_alias.py` | REPEAT embed TA through real HBP |
+| `test_proxy_repeat_e2e.py` | Proxy → REPEAT E2E |
+| `test_proxy_reload.py` | Proxy hot reload |
+| `test_udp_fanin.py` | UDP fan-in routing |
+| `test_report_server_wire.py` | Report server wire opcodes |
+| `test_logging_reload.py` | Log level reload |
+| `test_bridge_router_index.py` | BRIDGES O(1) index vs legacy scan |
+
+### smoke/ · application/
+
+| File | Topic |
+|------|-------|
+| `smoke/test_bridge_routing.py` | Static TG forward smoke |
+| `application/test_monitor_topology.py` | Inject-only proxy monitor remap |
+| `application/test_runtime_context.py` | RuntimeContext holder, SIGHUP swap prep |
 
 ## Examples (copy-paste)
 
@@ -121,6 +142,9 @@ python3 -m pytest tests/bridge/test_unit_data_routing.py -q
 
 # After parrot seq fix
 python3 -m pytest tests/parrot/test_rekey_playback.py -q
+
+# Talker Alias REPEAT (real stack)
+python3 -m pytest tests/infrastructure/test_hbp_repeat_talker_alias.py -q
 
 # HBP loop + rate (common RF regressions)
 python3 -m pytest tests/hbp/test_hbp_loop_control.py tests/hbp/test_hbp_rate_limit.py -q
@@ -132,5 +156,6 @@ python3 -m pytest tests/bridge/test_startup_bridges.py::test_startup_bridge_rout
 ## Policy
 
 - **New tests:** add a new file (or extend the smallest existing file for the same topic). Avoid large multi-topic modules.
-- **Harness:** shared code lives in `harness/` only.
+- **Harness:** shared code lives in `harness/` and `support/` only.
+- **Stack regressions:** prefer `infrastructure/test_*_e2e.py` with real adapters over duplicating in `DeterministicScenario`.
 - Full audit: `docs-priv/en/test-audit.md` (maintainer checkout).
