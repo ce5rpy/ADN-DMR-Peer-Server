@@ -66,6 +66,8 @@ Options:
 ```bash
 python adn-server.py -c /path/to/adn-server.yaml
 python adn-server.py --logging DEBUG
+python adn-server.py --doctor          # config, ports, peers (exit 1 on errors)
+python adn-server.py --no-proxy        # disable integrated PROXY
 ```
 
 ## Parrot (playback)

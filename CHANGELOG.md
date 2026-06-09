@@ -4,9 +4,14 @@ All notable changes to **adn-server** are documented here. Versioning follows [S
 
 ## [Unreleased]
 
+### Added
+
+- `adn-server.py --doctor` — validate config, UDP/TCP bind ports, PEER upstream and `MESH_PROTOCOL`.
+
 ### Changed
 
 - Parrot: integrated in `adn-server.py --parrot`; minimal `adn-parrot.yaml` (PEER → ECHO MASTER).
+- Runtime wiring moved to `infrastructure/bootstrap/peer_server.py`; `main.py` is CLI-only (<200 lines).
 
 ### Removed
 

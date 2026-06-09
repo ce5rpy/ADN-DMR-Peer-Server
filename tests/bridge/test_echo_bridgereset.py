@@ -8,7 +8,7 @@ from tests.harness.deterministic import DeterministicScenario, PacketSpec, minim
 
 from adn_server.domain import ID_MAX, PEER_MAX
 from adn_server.infrastructure.config_loader import acl_build
-from adn_server.main import _make_echo_bridges
+from adn_server.infrastructure.bootstrap.peer_server import _make_echo_bridges
 
 
 def _echo_scenario_config() -> dict:

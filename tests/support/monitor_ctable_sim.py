@@ -58,7 +58,7 @@ def update_ctable_from_config(config: dict[str, Any], ctable: dict[str, Any]) ->
 
 
 def apply_config_to_ctable(config: dict[str, Any], ctable: dict[str, Any]) -> None:
-    """``_apply_config_to_state``: build when empty, else update."""
+    """Legacy ``_apply_config_to_state`` (v1 CONFIG_SND / topology): build when empty, else update."""
     if ctable["MASTERS"]:
         update_ctable_from_config(config, ctable)
     else:
@@ -66,6 +66,18 @@ def apply_config_to_ctable(config: dict[str, Any], ctable: dict[str, Any]) -> No
         ctable["MASTERS"] = built["MASTERS"]
         ctable["PEERS"] = built["PEERS"]
         ctable["OPENBRIDGES"] = built["OPENBRIDGES"]
+
+
+def apply_slim_dashboard_state(config: dict[str, Any], ctable: dict[str, Any]) -> None:
+    """D-25 ``dashboard_state``: full snapshot — prune absent rows, then rebuild."""
+    for key in ("MASTERS", "PEERS", "OPENBRIDGES"):
+        section = ctable.setdefault(key, {})
+        for name in list(section):
+            if name not in config:
+                del section[name]
+    built = build_ctable_from_config(config)
+    for key in ("MASTERS", "PEERS", "OPENBRIDGES"):
+        ctable[key] = built[key]
 
 
 def count_masters(ctable: dict[str, Any]) -> int:
@@ -134,6 +146,31 @@ def sparse_expand_buggy(
         }
         out[virtual_name] = virtual
     return out
+
+
+def config_from_systems(systems: dict[str, Any]) -> dict[str, Any]:
+    """CONFIG dict shape after monitor ``dashboard_state_to_config`` (masters with live peers)."""
+    config: dict[str, Any] = {}
+    for name, data in systems.items():
+        if not isinstance(data, dict) or not data.get("ENABLED", True):
+            continue
+        mode = data.get("MODE")
+        entry: dict[str, Any] = {"ENABLED": True, "MODE": mode}
+        if mode == "MASTER":
+            peers = {
+                peer_key: peer_conf
+                for peer_key, peer_conf in data.get("PEERS", {}).items()
+                if isinstance(peer_conf, dict) and peer_conf.get("CONNECTION") == "YES"
+            }
+            if not peers:
+                continue
+            entry["PEERS"] = peers
+        elif mode == "OPENBRIDGE":
+            entry["NETWORK_ID"] = data.get("NETWORK_ID", 0)
+        else:
+            continue
+        config[name] = entry
+    return config
 
 
 def deep_copy_ctable(ctable: dict[str, Any]) -> dict[str, Any]:

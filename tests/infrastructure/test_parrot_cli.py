@@ -25,7 +25,9 @@ def test_parrot_flag_routes_to_run_parrot() -> None:
 
 def test_no_proxy_skips_proxy_startup(monkeypatch: pytest.MonkeyPatch) -> None:
     """--no-proxy must not call start_proxy_service at bridge startup."""
+    import adn_server.infrastructure.bootstrap.peer_server as peer_mod
     import adn_server.main as main_mod
+    from twisted.internet import reactor
 
     calls: list[str] = []
 
@@ -33,21 +35,21 @@ def test_no_proxy_skips_proxy_startup(monkeypatch: pytest.MonkeyPatch) -> None:
         calls.append("proxy")
         raise AssertionError("proxy should not start")
 
-    monkeypatch.setattr(main_mod, "start_proxy_service", _track)
+    monkeypatch.setattr(peer_mod, "start_proxy_service", _track)
     monkeypatch.setattr(main_mod, "run_parrot", lambda *_a, **_k: None)
-    monkeypatch.setattr(main_mod.reactor, "run", lambda: None)
-    monkeypatch.setattr(main_mod, "ReportServerFactory", lambda *a, **k: _FakeReportFactory())
-    monkeypatch.setattr(main_mod, "create_report_mqtt_publisher", lambda *_: None)
-    monkeypatch.setattr(main_mod, "start_report_queue_worker", lambda *_a, **_k: None)
-    monkeypatch.setattr(main_mod, "DefaultAliasLoader", _FakeAliasLoader)
-    monkeypatch.setattr(main_mod, "PickleSubMapStore", _FakeSubMapStore)
-    monkeypatch.setattr(main_mod, "JsonKeysStore", lambda *_: None)
-    monkeypatch.setattr(main_mod, "DefaultSecurityDownloader", lambda *_: None)
-    monkeypatch.setattr(main_mod, "UserPasswordsLoader", lambda *_: _FakeUserPw())
-    monkeypatch.setattr(main_mod, "DefaultVoiceProvider", lambda *_: None)
-    monkeypatch.setattr(main_mod, "RecordingHandler", lambda *_: None)
-    monkeypatch.setattr(main_mod, "IdentUseCases", lambda *_: _FakeIdent())
-    monkeypatch.setattr(main_mod, "HBPProtocolFactory", lambda *a, **k: object())
+    monkeypatch.setattr(reactor, "run", lambda: None)
+    monkeypatch.setattr(peer_mod, "ReportServerFactory", lambda *a, **k: _FakeReportFactory())
+    monkeypatch.setattr(peer_mod, "create_report_mqtt_publisher", lambda *_: None)
+    monkeypatch.setattr(peer_mod, "start_report_queue_worker", lambda *_a, **_k: None)
+    monkeypatch.setattr(peer_mod, "DefaultAliasLoader", _FakeAliasLoader)
+    monkeypatch.setattr(peer_mod, "PickleSubMapStore", _FakeSubMapStore)
+    monkeypatch.setattr(peer_mod, "JsonKeysStore", lambda *_: None)
+    monkeypatch.setattr(peer_mod, "DefaultSecurityDownloader", lambda *_: None)
+    monkeypatch.setattr(peer_mod, "UserPasswordsLoader", lambda *_: _FakeUserPw())
+    monkeypatch.setattr(peer_mod, "DefaultVoiceProvider", lambda *_: None)
+    monkeypatch.setattr(peer_mod, "RecordingHandler", lambda *_: None)
+    monkeypatch.setattr(peer_mod, "IdentUseCases", lambda *_: _FakeIdent())
+    monkeypatch.setattr(peer_mod, "HBPProtocolFactory", lambda *a, **k: object())
 
     config = {
         "GLOBAL": {"SERVER_ID": 1},

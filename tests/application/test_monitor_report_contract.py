@@ -21,8 +21,11 @@ from adn_server.domain.value_objects import bytes_4
 from adn_server.infrastructure.twisted_adapters.report.opcodes import REPORT_OPCODES
 from adn_server.infrastructure.twisted_adapters.report.wire import ReportWire
 from adn_server.infrastructure.twisted_adapters.report_server import ReportServerFactory
+from adn_server.application.report.dashboard_state import build_dashboard_state
 from tests.support.monitor_ctable_sim import (
     apply_config_to_ctable,
+    apply_slim_dashboard_state,
+    config_from_systems,
     count_master_peers,
     count_masters,
     ctable_with_virtual_masters,
@@ -141,8 +144,139 @@ def test_full_expansion_surfaces_all_hotspot_peers_on_fresh_monitor() -> None:
     assert count_master_peers(ctable) == len(peer_specs)
 
 
+def test_legacy_boot_sequence_echo_then_full_loses_hotspot_peers() -> None:
+    """2026-06 prod outage: first snapshot ECHO only, then full Chile proxy — legacy update drops peers."""
+    peer_specs = [
+        (7300444, 1),
+        (7301795, 3),
+        (730197002, 0),
+        (730179501, 2),
+        (7303246, 4),
+        (730039101, 5),
+        (7301896, 6),
+    ]
+    full_systems = _production_snapshot(peer_specs)
+    full_systems["ECHO"] = {
+        "MODE": "MASTER",
+        "ENABLED": True,
+        "PEERS": {bytes_4(9990): _peer(9990)},
+    }
+    full_config = config_from_systems(full_systems)
+    echo_only = config_from_systems(
+        {
+            "ECHO": {
+                "MODE": "MASTER",
+                "ENABLED": True,
+                "PEERS": {bytes_4(9990): _peer(9990)},
+            }
+        }
+    )
+
+    ctable = empty_ctable()
+    apply_config_to_ctable(echo_only, ctable)
+    assert count_masters(ctable) == 1
+    apply_config_to_ctable(full_config, ctable)
+
+    assert count_masters(ctable) == 1
+    assert count_master_peers(ctable) == 1
+
+
+def test_slim_boot_sequence_echo_then_full_keeps_all_chile_hotspot_peers() -> None:
+    """D-25: each dashboard_state is a full snapshot — boot sequence must surface every SYSTEM-N peer."""
+    peer_specs = [
+        (7300444, 1),
+        (7301795, 3),
+        (730197002, 0),
+        (730179501, 2),
+        (7303246, 4),
+        (730039101, 5),
+        (7301896, 6),
+    ]
+    full_systems = _production_snapshot(peer_specs)
+    full_systems["ECHO"] = {
+        "MODE": "MASTER",
+        "ENABLED": True,
+        "PEERS": {bytes_4(9990): _peer(9990)},
+    }
+    full_config = config_from_systems(full_systems)
+    echo_only = config_from_systems(
+        {
+            "ECHO": {
+                "MODE": "MASTER",
+                "ENABLED": True,
+                "PEERS": {bytes_4(9990): _peer(9990)},
+            },
+            "OBP-CL": {
+                "MODE": "OPENBRIDGE",
+                "ENABLED": True,
+                "NETWORK_ID": bytes_4(73010),
+                "PEERS": {},
+            },
+        }
+    )
+
+    ctable = empty_ctable()
+    apply_slim_dashboard_state(echo_only, ctable)
+    apply_slim_dashboard_state(full_config, ctable)
+
+    assert count_masters(ctable) == len(peer_specs) + 1
+    assert count_master_peers(ctable) == len(peer_specs) + 1
+
+
+def test_wire_dashboard_state_boot_sequence_matches_slim_apply() -> None:
+    """End-to-end: server STATE_SND payload → CONFIG → slim CTABLE (prod reconnect path)."""
+    peer_specs = [(730039101, 5), (7301896, 6)]
+    systems = _production_snapshot(peer_specs)
+    systems["ECHO"] = {
+        "MODE": "MASTER",
+        "ENABLED": True,
+        "PEERS": {bytes_4(9990): _peer(9990)},
+    }
+    echo_doc = build_dashboard_state(
+        {
+            "ECHO": {
+                "MODE": "MASTER",
+                "ENABLED": True,
+                "PEERS": {bytes_4(9990): _peer(9990)},
+            },
+            "OBP-CL": {
+                "MODE": "OPENBRIDGE",
+                "ENABLED": True,
+                "NETWORK_ID": bytes_4(73010),
+                "PEERS": {},
+            },
+        },
+        ts=1.0,
+    )
+    full_doc = build_dashboard_state(systems, ts=2.0)
+
+    ctable = empty_ctable()
+    apply_slim_dashboard_state(config_from_systems(_doc_to_runtime(echo_doc)), ctable)
+    apply_slim_dashboard_state(config_from_systems(_doc_to_runtime(full_doc)), ctable)
+
+    assert count_master_peers(ctable) == len(peer_specs) + 1
+    assert 730039101 in ctable["MASTERS"]["SYSTEM-5"]["PEERS"]
+    assert 7301896 in ctable["MASTERS"]["SYSTEM-6"]["PEERS"]
+
+
+def _doc_to_runtime(doc: dict[str, Any]) -> dict[str, Any]:
+    """Minimal runtime SYSTEMS from dashboard_state.ctable (for build_dashboard_state round-trip)."""
+    out: dict[str, Any] = {}
+    for name, master in (doc.get("ctable", {}).get("MASTERS") or {}).items():
+        peers = {}
+        for pid, row in (master.get("peers") or {}).items():
+            peers[bytes_4(int(pid))] = {
+                "CONNECTION": "YES",
+                "CONNECTED": row.get("connected_at", 1),
+            }
+        out[name] = {"MODE": "MASTER", "ENABLED": True, "PEERS": peers}
+    for name in doc.get("ctable", {}).get("OPENBRIDGES") or {}:
+        out[name] = {"MODE": "OPENBRIDGE", "ENABLED": True, "PEERS": {}}
+    return out
+
+
 def test_truncated_monitor_ctable_cannot_show_system_n_peers() -> None:
-    """Documents post-outage state: update path never creates SYSTEM-N rows or their peers."""
+    """Characterization: legacy update path never creates SYSTEM-N rows (pre-D-25 monitor bug)."""
     peer_specs = [(730039101, 4), (7301896, 6)]
     full = _production_snapshot(peer_specs)
     damaged = empty_ctable()
