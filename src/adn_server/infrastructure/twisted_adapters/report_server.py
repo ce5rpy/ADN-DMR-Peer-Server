@@ -57,8 +57,7 @@ class ReportProtocol(NetstringReceiver):
         addr = f"{peer.host}:{peer.port}" if peer else "?"
         logger.info("(REPORT) Client connected from %s (%s client(s))", addr, len(self._factory.clients))
         self._factory._send_hello_to(self)
-        self._factory._send_config_to(self, full_snapshot=True)
-        self._factory._send_bridge_to(self, full_snapshot=True)
+        self._factory._send_state_to(self, force=True)
 
     def connectionLost(self, reason: Any = None) -> None:
         if self in self._factory.clients:
@@ -66,10 +65,12 @@ class ReportProtocol(NetstringReceiver):
         logger.info("(REPORT) Client disconnected (%s client(s))", len(self._factory.clients))
 
     def stringReceived(self, data: bytes) -> None:
-        if data[:1] == REPORT_OPCODES["CONFIG_REQ"]:
-            self._factory._send_config_to(self, full_snapshot=True)
-        elif data[:1] == REPORT_OPCODES["BRIDGE_REQ"]:
-            self._factory._send_bridge_to(self, full_snapshot=True)
+        if data[:1] in (
+            REPORT_OPCODES["STATE_REQ"],
+            REPORT_OPCODES["CONFIG_REQ"],
+            REPORT_OPCODES["BRIDGE_REQ"],
+        ):
+            self._factory._send_state_to(self, force=True)
 
 
 class ReportServerFactory(Factory):
@@ -138,25 +139,22 @@ class ReportServerFactory(Factory):
         except Exception as e:
             logger.warning("(REPORT) Failed to send HELLO: %s", e)
 
-    def _send_config_to(self, client: ReportProtocol, *, full_snapshot: bool) -> None:
+    def _send_state_to(self, client: ReportProtocol, *, force: bool) -> None:
         self._send_frames(
             client,
-            self._wire.config_frames(self._systems_for_report(), full_snapshot=full_snapshot),
+            self._wire.state_frames(self._systems_for_report(), force=force),
         )
-
-    def _send_bridge_to(self, client: ReportProtocol, *, full_snapshot: bool) -> None:
-        self._send_frames(client, self._wire.bridge_frames(self._bridges, full_snapshot=full_snapshot))
 
     def send_config(self, *, incremental: bool = False) -> None:
         systems = self._systems_for_report()
-        frames = self._wire.config_frames(systems, full_snapshot=not incremental)
+        frames = self._wire.state_frames(systems, force=not incremental)
         self._broadcast_frames(frames)
         if self._mqtt is not None:
             self._mqtt.publish_dashboard(systems)
 
     def send_bridge(self, *, incremental: bool = False) -> None:
-        frames = self._wire.bridge_frames(self._bridges, full_snapshot=not incremental)
-        self._broadcast_frames(frames)
+        if self._mqtt is not None:
+            self._mqtt.publish_dashboard(self._systems_for_report())
 
     def send_bridge_event(self, event: str) -> None:
         peer_slots = self._peer_slot_map() if self._peer_slot_map is not None else None
