@@ -26,7 +26,8 @@
 ADN DMR Peer Server entrypoint.
 
 Run: python -m adn_server.main [-c adn-server.yaml] [--logging LEVEL]
-Config default: adn-server.yaml at project root.
+       python -m adn_server.main --parrot [-c adn-parrot.yaml]
+Config default: adn-server.yaml (or adn-parrot.yaml with --parrot).
 """
 
 from __future__ import annotations
@@ -82,6 +83,7 @@ from .infrastructure.config_normalizer import (
 )
 from .infrastructure.config_reload import BindSpec, reload_server_config
 from .application.proxy.deployment import is_proxy_inject_only, normalize_proxy_target, proxy_target_system
+from .infrastructure.parrot import run_parrot
 from .infrastructure.proxy import apply_proxy_config_reload, start_proxy_service
 from .domain.dmr.bptc import encode_emblc
 from .infrastructure.persistence import PickleSubMapStore
@@ -206,15 +208,26 @@ def main() -> None:
     from . import __version__
 
     parser = argparse.ArgumentParser(description="ADN DMR Peer Server")
-    parser.add_argument("-c", "--config", dest="CONFIG_FILE", default=None, help="Path to adn-server.yaml")
+    parser.add_argument("-c", "--config", dest="CONFIG_FILE", default=None, help="Path to YAML config")
     parser.add_argument("--logging", dest="LOG_LEVEL", default=None, help="Override log level")
+    parser.add_argument(
+        "--parrot",
+        action="store_true",
+        help="Playback mode: run parrot PEER(s) from adn-parrot.yaml (default config)",
+    )
+    parser.add_argument(
+        "--no-proxy",
+        action="store_true",
+        help="Disable integrated hotspot PROXY even when PROXY is set in config",
+    )
     parser.add_argument("--version", action="version", version=f"adn-server {__version__}")
     args = parser.parse_args()
 
     project_root = os.path.dirname(os.path.abspath(__file__))
     if project_root.endswith("/adn_server"):
         project_root = str(Path(project_root).parent.parent)
-    config_path = args.CONFIG_FILE or os.path.join(project_root, "adn-server.yaml")
+    default_config = "adn-parrot.yaml" if args.parrot else "adn-server.yaml"
+    config_path = args.CONFIG_FILE or os.path.join(project_root, default_config)
 
     loader = YamlConfigLoader(project_root)
     try:
@@ -222,11 +235,13 @@ def main() -> None:
     except ConfigError as exc:
         print(f"(CONFIG) {exc}", file=sys.stderr)
         sys.exit(1)
-    _apply_talker_alias_defaults(config)
+
+    if not args.parrot:
+        _apply_talker_alias_defaults(config)
 
     # Voice config lives in a separate file for hot-reload without restart
     voice_config_path = os.path.join(os.path.dirname(os.path.abspath(config_path)), "adn-voice.yaml")
-    voice_data = loader.load_voice_config(voice_config_path)
+    voice_data = loader.load_voice_config(voice_config_path) if not args.parrot else None
     if voice_data:
         config.setdefault("VOICE", {}).update(voice_data)
 
@@ -240,6 +255,10 @@ def main() -> None:
     logger.info("\nCopyright (c) 2016-2019 Cortney T. Buffington, N0MJS n0mjs@me.com")
     logger.info("\nCopyright (c) 2013, 2014, 2015, 2016, 2018, 2019\n\tThe Regents of the K0USY Group. All rights reserved.")
     logger.debug("\n\n(GLOBAL) Logging system started, anything from here on gets logged")
+
+    if args.parrot:
+        run_parrot(config, logger=logger)
+        return
 
     # Aliases
     alias_loader = DefaultAliasLoader()
@@ -567,6 +586,7 @@ def main() -> None:
 
     # UDP / proxy listeners (proxy_state declared before reload handler uses nonlocal)
     proxy_state = None
+    proxy_enabled = not args.no_proxy and proxy_target_system(config) is not None
 
     def _should_bind_udp(system_name: str, sys_cfg: dict[str, Any]) -> bool:
         return not is_proxy_inject_only(config, system_name)
@@ -592,7 +612,7 @@ def main() -> None:
         if proxy_state is not None:
             apply_proxy_config_reload(proxy_state, config, logger=logger)
             _wire_proxy_report_slots(report_factory, proxy_state)
-        elif proxy_target_system(config):
+        elif proxy_enabled and proxy_target_system(config):
             proxy_state = start_proxy_service(config, protocols, logger=logger)
             _wire_proxy_report_slots(report_factory, proxy_state)
         else:
@@ -685,7 +705,7 @@ def main() -> None:
             protocol,
         )
 
-    if proxy_target_system(config):
+    if proxy_enabled:
         try:
             proxy_state = start_proxy_service(config, protocols, logger=logger)
         except Exception as exc:

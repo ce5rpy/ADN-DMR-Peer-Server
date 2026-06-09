@@ -2,6 +2,16 @@
 
 All notable changes to **adn-server** are documented here. Versioning follows [SemVer](https://semver.org/).
 
+## [Unreleased]
+
+### Changed
+
+- Parrot: integrated in `adn-server.py --parrot`; minimal `adn-parrot.yaml` (PEER → ECHO MASTER).
+
+### Removed
+
+- **`adn-parrot.py`** and **`parrot_main.py`** — use `adn-server.py --parrot` instead.
+
 ## [1.0.0] - 2026-06-06
 
 First stable public release. 

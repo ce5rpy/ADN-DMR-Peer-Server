@@ -28,8 +28,9 @@ Run the ADN DMR Peer Server from the project root.
   python adn-server.py
   python adn-server.py -c adn-server.yaml
   python adn-server.py --logging DEBUG
+  python adn-server.py --parrot -c adn-parrot.yaml
 
-Config default: adn-server.yaml in this directory.
+Config default: adn-server.yaml (or adn-parrot.yaml with --parrot).
 """
 
 from __future__ import annotations

@@ -2,15 +2,35 @@
 
 ## Qué es
 
-**Parrot** es un **punto de entrada separado** (`adn-parrot.py` / `parrot_main`) que graba voz de **grupo** entrante y la reproduce (eco / parrot), independiente del proceso principal del bridge.
+**Parrot** graba voz de **grupo** entrante y la reproduce (eco / parrot). Corre como **PEER** conectado al master **ECHO** del peer server principal (bridge TG 9990).
+
+El runtime de playback forma parte de **`adn-server`**; ejecuta **`adn-server.py --parrot`** con un **`adn-parrot.yaml`** mínimo.
 
 ## Configuración
+
+Usa un **YAML aparte y mínimo** — solo lo que el PEER necesita para unirse a **ECHO** en `adn-server.yaml`:
+
+| Campo | Rol |
+|-------|-----|
+| `GLOBAL.SERVER_ID` | Identidad de red del parrot (suele ser `9990`) |
+| `LOGGER` | Fichero de log (opcional pero recomendado) |
+| `SYSTEMS.PARROT` | `MODE: PEER`, `IP`/`PORT` local, `MASTER_IP`/`MASTER_PORT`, `PASSPHRASE`, `RADIO_ID`, `CALLSIGN`, `OPTIONS` |
+
+No hace falta `PROXY`, `ALIASES` ni `REPORTS`. **`MASTER_PORT`** y **`PASSPHRASE`** deben coincidir con **`ECHO`** en el servidor principal.
 
 - Copiar **`adn-parrot.example.yaml`** → **`adn-parrot.yaml`** (no versionada).
 - Ejecutar:
 
 ```bash
-python adn-parrot.py -c adn-parrot.yaml
+python adn-server.py --parrot -c adn-parrot.yaml
+```
+
+En producción: unidad **systemd** aparte (plantilla `examples/systemd/adn-parrot.service`):
+
+```bash
+sudo cp examples/systemd/adn-parrot.service /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now adn-parrot
 ```
 
 ## Relación con TG 9990 / ECHO

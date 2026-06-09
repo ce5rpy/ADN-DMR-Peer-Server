@@ -27,11 +27,7 @@ Tras editar la config principal puedes recargar **sin reiniciar** el proceso (se
 kill -HUP $(pidof adn-server.py)    # o: systemctl reload adn-server
 ```
 
-Con **systemd**, en la unidad:
-
-```ini
-ExecReload=/bin/kill -HUP $MAINPID
-```
+Unidad de ejemplo: **`examples/systemd/adn-server.service`** (copiar a `/etc/systemd/system/`; incluye `ExecReload` para `systemctl reload`).
 
 **Se recarga:** `GLOBAL`, `REPORTS`, `ALIASES`, **`LOGGER.LOG_LEVEL`** (sin reiniciar el proceso), **`PROXY`** (timeouts, debug, listas de bloqueo — no bind ni destino), **`SELF_SERVICE`** (fusionado; activar/desactivar bucles BD requiere reinicio), parámetros por system, **systems nuevos/eliminados** (incluida expansión/colapso `GENERATOR` y OBP nuevos), y cambios de IP/puerto (solo reinicia el listener de ese system).
 

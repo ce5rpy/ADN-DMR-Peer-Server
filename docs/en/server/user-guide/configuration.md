@@ -27,11 +27,7 @@ After editing the main config you can reload **without restarting** the process 
 kill -HUP $(pidof adn-server.py)    # or: systemctl reload adn-server
 ```
 
-With **systemd**, add to your unit file:
-
-```ini
-ExecReload=/bin/kill -HUP $MAINPID
-```
+Example unit: **`examples/systemd/adn-server.service`** (copy to `/etc/systemd/system/`; includes `ExecReload` for `systemctl reload`).
 
 **Reload applies:** `GLOBAL`, `REPORTS`, `ALIASES`, **`LOGGER.LOG_LEVEL`** (without process restart), **`PROXY`** (timeouts, debug, block lists — not bind or target), **`SELF_SERVICE`** (merged; enabling/disabling DB loops needs restart), per-system settings, **new/removed SYSTEMS** (including `GENERATOR` expansion/collapse and new OpenBridge legs), and updated bind addresses (listener restart for that system only).
 

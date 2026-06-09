@@ -68,13 +68,15 @@ python adn-server.py -c /path/to/adn-server.yaml
 python adn-server.py --logging DEBUG
 ```
 
-## Parrot (Playback)
+## Parrot (playback)
 
-A separate entrypoint records incoming group voice and plays it back (echo/parrot).
+Separate process (same binary) records group voice and plays it back on TG 9990.
 
 ```bash
 cp adn-parrot.example.yaml adn-parrot.yaml
-python adn-parrot.py
+python adn-server.py --parrot -c adn-parrot.yaml
 ```
 
-See [Parrot (playback)](docs/en/server/user-guide/parrot.md) in the docs site for an overview; extended notes may exist in private `docs-priv/` checkouts.
+See [Parrot (playback)](docs/en/server/user-guide/parrot.md) in the docs site for an overview.
+
+**systemd:** example units in `examples/systemd/` (`adn-server.service`, `adn-parrot.service`).

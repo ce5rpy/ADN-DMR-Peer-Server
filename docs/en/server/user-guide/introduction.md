@@ -26,7 +26,7 @@ Routing, timers, OpenBridge loop control, and protocol handling are implemented 
 
 ## Related programs
 
-- **Parrot / playback** — separate entrypoint (`adn-parrot.py`) for record-and-playback; see [Parrot](parrot.md).
+- **Parrot / playback** — `adn-server.py --parrot` with minimal `adn-parrot.yaml`; see [Parrot](parrot.md).
 - **Integrated hotspot proxy** — `PROXY` in **`adn-server.yaml`**; see [Hotspot proxy](hotspot-proxy.md).
 
 ## Next steps

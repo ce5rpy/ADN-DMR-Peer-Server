@@ -1,0 +1,32 @@
+# ADN DMR Parrot (playback) – systemd unit (PEER → ECHO on adn-server)
+#
+# Copy:
+#   sudo cp /opt/adn-server/examples/systemd/adn-parrot.service /etc/systemd/system/
+# Edit User / paths if needed, then:
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now adn-parrot
+#
+# Minimal adn-parrot.yaml — MASTER_PORT / PASSPHRASE must match ECHO in adn-server.yaml.
+# Logrotate: SIGUSR2 reopens log files (not SIGHUP). postrotate example:
+#   kill -USR2 $(systemctl show adn-parrot -p MainPID --value)
+# Or: systemctl reload adn-parrot  (ExecReload below sends USR2)
+
+[Unit]
+Description=ADN DMR Parrot (playback)
+After=network-online.target adn-server.service
+Wants=network-online.target
+
+[Service]
+User=adn
+Type=simple
+Restart=always
+RestartSec=3
+SyslogIdentifier=adn-parrot
+WorkingDirectory=/opt/adn-server
+ExecStart=/opt/.pyenv/versions/3.11.8/bin/python3 /opt/adn-server/adn-server.py --parrot -c /opt/adn-server/adn-parrot.yaml
+ExecReload=/bin/kill -USR2 $MAINPID
+KillSignal=SIGTERM
+TimeoutStopSec=30
+
+[Install]
+WantedBy=multi-user.target

@@ -42,7 +42,6 @@ markers = [
 [tool.ruff.lint.per-file-ignores]
 # Entrypoints adjust sys.path before importing the package (intentional E402).
 "src/adn_server/main.py" = ["E402"]
-"src/adn_server/parrot_main.py" = ["E402"]
 
 [project.scripts]
 adn-server = "adn_server.main:main"
