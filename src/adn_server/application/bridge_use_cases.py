@@ -42,7 +42,7 @@ from ..domain.dmr import bptc
 from ..domain import HBPF_DATA_SYNC, HBPF_SLT_VHEAD, HBPF_SLT_VTERM, STREAM_TO, bytes_3, bytes_4, int_id
 from .ports import BridgeRouter, DmrEmbeddedLcEncoder, TalkerAliasEmblcEncoder
 from .talker_alias_use_cases import TalkerAliasUseCases
-from .bridge.helpers import obp_target_bcsq_quenches_stream
+from .bridge.helpers import obp_target_bcsq_quenches_stream, resolve_voice_peer_id
 from .bridge.timers import BridgeTimerMixin
 from .bridge.obp_forward import BridgeObpForwardMixin
 from .bridge.hbp_forward import BridgeHbpForwardMixin
@@ -247,9 +247,22 @@ class BridgeUseCases(BridgeTimerMixin, BridgeObpForwardMixin, BridgeHbpForwardMi
         _obp_grp = source_is_obp and call_type in ("group", "vcsbk")
         if frame_type == HBPF_DATA_SYNC and dtype_vseq == HBPF_SLT_VHEAD:
             if not _obp_grp:
+                _rx_report_peer = peer_id
+                if not source_is_obp:
+                    _rx_report_peer = resolve_voice_peer_id(
+                        peer_id,
+                        rf_src,
+                        system_name,
+                        systems_cfg,
+                    )
                 self._send_bridge_event(
                     "GROUP VOICE,START,RX,{},{},{},{},{},{}".format(
-                        system_name, int_id(stream_id), int_id(peer_id), int_id(rf_src), slot, int_id(dst_id)
+                        system_name,
+                        int_id(stream_id),
+                        int_id(_rx_report_peer),
+                        int_id(rf_src),
+                        slot,
+                        int_id(dst_id),
                     )
                 )
         elif frame_type == HBPF_DATA_SYNC and dtype_vseq == HBPF_SLT_VTERM:
@@ -265,9 +278,23 @@ class BridgeUseCases(BridgeTimerMixin, BridgeObpForwardMixin, BridgeHbpForwardMi
                         start = st.get(slot, {}).get("RX_START")
                     if start is not None:
                         duration = pkt_time - start
+                _rx_report_peer = peer_id
+                if not source_is_obp:
+                    _rx_report_peer = resolve_voice_peer_id(
+                        peer_id,
+                        rf_src,
+                        system_name,
+                        systems_cfg,
+                    )
                 self._send_bridge_event(
                     "GROUP VOICE,END,RX,{},{},{},{},{},{},{:.2f}".format(
-                        system_name, int_id(stream_id), int_id(peer_id), int_id(rf_src), slot, int_id(dst_id), duration
+                        system_name,
+                        int_id(stream_id),
+                        int_id(_rx_report_peer),
+                        int_id(rf_src),
+                        slot,
+                        int_id(dst_id),
+                        duration,
                     )
                 )
         # ── Exact port of legacy bridge.py routerOBP/routerHBP forwarding to targets ──
@@ -539,7 +566,12 @@ class BridgeUseCases(BridgeTimerMixin, BridgeObpForwardMixin, BridgeHbpForwardMi
                         )
                         self._send_bridge_event(
                             "GROUP VOICE,START,TX,{},{},{},{},{},{}".format(
-                                entry["SYSTEM"], int_id(stream_id), int_id(peer_id), int_id(rf_src), entry_ts, int_id(entry_tgid_b)
+                                entry["SYSTEM"],
+                                int_id(stream_id),
+                                int_id(peer_id),
+                                int_id(rf_src),
+                                entry_ts,
+                                int_id(entry_tgid_b),
                             )
                         )
                         # First successful forward to HBP (may not be VHEAD if earlier frames were hangtime-blocked).
@@ -563,9 +595,16 @@ class BridgeUseCases(BridgeTimerMixin, BridgeObpForwardMixin, BridgeHbpForwardMi
                     elif frame_type == HBPF_DATA_SYNC and dtype_vseq == HBPF_SLT_VTERM:
                         dmrbits = _ts_st["TX_T_LC"][0:98] + dmrbits[98:166] + _ts_st["TX_T_LC"][98:197]
                         call_duration = pkt_time - _ts_st.get("TX_START", pkt_time)
+                        _end_peer = _ts_st.get("TX_PEER", peer_id)
                         self._send_bridge_event(
                             "GROUP VOICE,END,TX,{},{},{},{},{},{},{:.2f}".format(
-                                entry["SYSTEM"], int_id(stream_id), int_id(peer_id), int_id(rf_src), entry_ts, int_id(entry_tgid_b), call_duration
+                                entry["SYSTEM"],
+                                int_id(stream_id),
+                                int_id(_end_peer),
+                                int_id(rf_src),
+                                entry_ts,
+                                int_id(entry_tgid_b),
+                                call_duration,
                             )
                         )
                     elif dtype_vseq in (1, 2, 3, 4):

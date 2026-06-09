@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 
+from adn_server.domain.value_objects import bytes_4
 from adn_server.infrastructure.twisted_adapters.report_server import (
     REPORT_OPCODES,
     ReportServerFactory,
@@ -42,14 +43,15 @@ def test_connect_sends_hello_topology_and_routing() -> None:
     factory._send_config_to(client, full_snapshot=True)
     factory._send_bridge_to(client, full_snapshot=True)
 
-    assert len(client.messages) == 3
+    assert len(client.messages) == 4
     hello = json.loads(client.messages[0][1:].decode())
     assert hello["report_protocol"] == 2
     assert "REPORT_V2" in hello["features"]
-    assert client.messages[1][:1] == REPORT_OPCODES["TOPOLOGY_SND"]
-    assert json.loads(client.messages[1][1:])["type"] == "topology"
-    assert client.messages[2][:1] == REPORT_OPCODES["ROUTING_TABLE_SND"]
-    assert json.loads(client.messages[2][1:])["type"] == "routing_table"
+    assert client.messages[1][:1] == REPORT_OPCODES["CONFIG_SND"]
+    assert client.messages[2][:1] == REPORT_OPCODES["TOPOLOGY_SND"]
+    assert json.loads(client.messages[2][1:])["type"] == "topology"
+    assert client.messages[3][:1] == REPORT_OPCODES["ROUTING_TABLE_SND"]
+    assert json.loads(client.messages[3][1:])["type"] == "routing_table"
 
 
 def test_bridge_event_emits_voice_event_json() -> None:
@@ -89,4 +91,85 @@ def test_incremental_bridge_update_sends_delta() -> None:
     delta = json.loads(client.messages[1][1:].decode())
     assert delta["type"] == "delta"
     assert delta["patch"]["type"] == "routing_table"
+
+
+def test_inject_proxy_topology_expanded_for_monitor() -> None:
+    peer = bytes_4(730039101)
+    config = {
+        "REPORTS": {"REPORT": True, "REPORT_CLIENTS": ["*"]},
+        "PROXY": {"TARGET_SYSTEM": "SYSTEM"},
+    }
+    factory = ReportServerFactory(config)
+    factory.set_systems(
+        {
+            "SYSTEM": {
+                "MODE": "MASTER",
+                "ENABLED": True,
+                "MAX_PEERS": 102,
+                "_REPORT_BASE_PORT": 56400,
+                "PEERS": {
+                    peer: {
+                        "CONNECTION": "YES",
+                        "CONNECTED": 1_700_000_000,
+                        "IP": "203.0.113.10",
+                        "PORT": 62031,
+                        "CALLSIGN": b"CE5RPY  ",
+                    }
+                },
+            }
+        }
+    )
+    factory.set_peer_slot_map(lambda: {peer: 2})
+    client = _CapturingClient()
+    factory.clients.append(client)
+    factory._send_config_to(client, full_snapshot=True)
+    assert client.messages[0][:1] == REPORT_OPCODES["CONFIG_SND"]
+    topology = json.loads(client.messages[1][1:].decode())
+    names = {system["name"] for system in topology["systems"]}
+    assert "SYSTEM" not in names
+    assert "SYSTEM-2" in names
+    assert "SYSTEM-0" in names
+    assert len([name for name in names if name.startswith("SYSTEM-")]) == 102
+    system = next(item for item in topology["systems"] if item["name"] == "SYSTEM-2")
+    assert system["port"] == 56402
+    assert system["peers"][0]["id"] == 730039101
+    empty = next(item for item in topology["systems"] if item["name"] == "SYSTEM-0")
+    assert empty["peers"] == []
+
+
+def test_send_bridge_event_remaps_inject_proxy_system_name() -> None:
+    peer = bytes_4(730039101)
+    config = {
+        "REPORTS": {"REPORT": True, "REPORT_CLIENTS": ["*"]},
+        "PROXY": {"TARGET_SYSTEM": "SYSTEM"},
+    }
+    factory = ReportServerFactory(config)
+    factory.set_systems(
+        {
+            "SYSTEM": {
+                "MODE": "MASTER",
+                "ENABLED": True,
+                "MAX_PEERS": 102,
+                "PEERS": {
+                    peer: {
+                        "CONNECTION": "YES",
+                        "CONNECTED": 1_700_000_000,
+                        "IP": "203.0.113.10",
+                        "PORT": 62031,
+                    }
+                },
+            }
+        }
+    )
+    factory.set_peer_slot_map(lambda: {peer: 4})
+    client = _CapturingClient()
+    factory.clients.append(client)
+    factory.send_bridge_event(
+        "GROUP VOICE,START,TX,SYSTEM,2693411696,9990,7300392,2,9990"
+    )
+    assert len(client.messages) == 1
+    payload = json.loads(client.messages[0][1:].decode())
+    assert payload["type"] == "voice_event"
+    assert payload["system"] == "SYSTEM-4"
+    assert payload["peer_id"] == 9990
 

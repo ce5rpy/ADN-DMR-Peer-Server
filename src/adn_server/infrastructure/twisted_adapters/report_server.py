@@ -26,12 +26,17 @@
 from __future__ import annotations
 
 import logging
+from collections.abc import Callable
 from typing import Any
 
 from twisted.internet.protocol import Factory
 from twisted.protocols.basic import NetstringReceiver
 
 from adn_server.application.ports import ReportMqttPublisher, ReportWireEncoder
+from adn_server.application.report.monitor_topology import (
+    expand_inject_proxy_systems,
+    remap_inject_proxy_voice_event,
+)
 
 from .report import REPORT_OPCODES, create_report_wire
 
@@ -82,6 +87,7 @@ class ReportServerFactory(Factory):
         self.clients: list[ReportProtocol] = []
         self._systems: dict[str, Any] = {}
         self._bridges: dict[str, Any] = {}
+        self._peer_slot_map: Callable[[], dict[bytes, int]] | None = None
 
     def buildProtocol(self, addr: Any) -> ReportProtocol | None:
         allowed = self._config.get("REPORTS", {}).get("REPORT_CLIENTS", ["127.0.0.1"])
@@ -103,6 +109,15 @@ class ReportServerFactory(Factory):
     def set_bridges(self, bridges: dict[str, Any]) -> None:
         self._bridges = bridges
 
+    def set_peer_slot_map(self, provider: Callable[[], dict[bytes, int]] | None) -> None:
+        """Provide proxy upstream slot indices for monitor topology expansion."""
+        self._peer_slot_map = provider
+
+    def _systems_for_report(self) -> dict[str, Any]:
+        systems = self._systems
+        peer_slots = self._peer_slot_map() if self._peer_slot_map is not None else None
+        return expand_inject_proxy_systems(self._config, systems, peer_slots)
+
     def _send_frames(self, client: ReportProtocol, frames: tuple[bytes, ...]) -> None:
         for frame in frames:
             client.sendString(frame)
@@ -119,27 +134,35 @@ class ReportServerFactory(Factory):
 
     def _send_hello_to(self, client: ReportProtocol) -> None:
         try:
-            self._send_frames(client, self._wire.hello_frames(self._systems))
+            self._send_frames(client, self._wire.hello_frames(self._systems_for_report()))
         except Exception as e:
             logger.warning("(REPORT) Failed to send HELLO: %s", e)
 
     def _send_config_to(self, client: ReportProtocol, *, full_snapshot: bool) -> None:
-        self._send_frames(client, self._wire.config_frames(self._systems, full_snapshot=full_snapshot))
+        self._send_frames(
+            client,
+            self._wire.config_frames(self._systems_for_report(), full_snapshot=full_snapshot),
+        )
 
     def _send_bridge_to(self, client: ReportProtocol, *, full_snapshot: bool) -> None:
         self._send_frames(client, self._wire.bridge_frames(self._bridges, full_snapshot=full_snapshot))
 
     def send_config(self, *, incremental: bool = False) -> None:
-        frames = self._wire.config_frames(self._systems, full_snapshot=not incremental)
+        systems = self._systems_for_report()
+        frames = self._wire.config_frames(systems, full_snapshot=not incremental)
         self._broadcast_frames(frames)
         if self._mqtt is not None:
-            self._mqtt.publish_dashboard(self._systems)
+            self._mqtt.publish_dashboard(systems)
 
     def send_bridge(self, *, incremental: bool = False) -> None:
         frames = self._wire.bridge_frames(self._bridges, full_snapshot=not incremental)
         self._broadcast_frames(frames)
 
     def send_bridge_event(self, event: str) -> None:
+        peer_slots = self._peer_slot_map() if self._peer_slot_map is not None else None
+        event = remap_inject_proxy_voice_event(
+            event, self._config, self._systems, peer_slots
+        )
         frames = self._wire.bridge_event_frames(event)
         self._broadcast_frames(frames)
         if self._mqtt is not None:

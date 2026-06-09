@@ -20,6 +20,7 @@ from adn_server.application.report import (
 )
 
 from .opcodes import REPORT_OPCODES, SERVER_NAME, server_version
+from .pickle_legacy import encode_config_snd_frame
 
 logger = logging.getLogger(__name__)
 
@@ -57,8 +58,11 @@ class ReportWire(ReportWireEncoder):
             self._topology_seq += 1
             topology = build_topology(systems, seq=self._topology_seq, ts=ts)
             self._last_topology = topology
-            logger.debug("(REPORT) TOPOLOGY_SND seq=%s", self._topology_seq)
-            return (_json_wire(REPORT_OPCODES["TOPOLOGY_SND"], topology),)
+            logger.debug("(REPORT) CONFIG_SND pickle + TOPOLOGY_SND seq=%s", self._topology_seq)
+            return (
+                encode_config_snd_frame(systems),
+                _json_wire(REPORT_OPCODES["TOPOLOGY_SND"], topology),
+            )
         self._topology_seq += 1
         current = build_topology(systems, seq=self._topology_seq, ts=ts)
         delta = topology_delta(self._last_topology, current, seq=self._topology_seq, ts=ts)
