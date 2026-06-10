@@ -7,7 +7,6 @@ import struct
 from hashlib import pbkdf2_hmac
 from typing import Any
 
-from twisted.internet import reactor
 from twisted.internet.defer import inlineCallbacks
 from twisted.internet.interfaces import IDelayedCall
 from twisted.internet.task import LoopingCall
@@ -68,7 +67,7 @@ class ProxySelfServiceBridge:
             call.start(interval, now=False)
             self._loop_calls.append(call)
         self._log.info(
-            "(SELF_SERVICE) DB options at login, send_opts every 10s, "
+            "(SELF_SERVICE) DB options on PASS= (immediate), send_opts every 10s, "
             "clean_tbl every 1h, lst_seen every 2min"
         )
 
@@ -111,8 +110,8 @@ class ProxySelfServiceBridge:
         mode = data[97:98].decode("utf-8", errors="replace") if len(data) >= 98 else "4"
         callsign = data[8:16].rstrip().decode("utf-8", errors="replace")
         self._store.ins_conf(int_id(peer_id), peer_id, callsign, host, mode)
-        self._cancel_opt_timer(peer_id)
-        self._opt_timers[peer_id] = reactor.callLater(10, self._login_opt, peer_id)
+        if peer_id in self._mysql_option_peers:
+            self._fetch_options_now(peer_id)
 
     def _handle_rpto(
         self,
@@ -139,6 +138,7 @@ class ProxySelfServiceBridge:
                 )
                 self._log.info("(SELF_SERVICE) Password stored for: %s", int_id(peer_id))
                 self._mysql_option_peers.add(peer_id)
+                self._fetch_options_now(peer_id)
             return True
         self._mysql_option_peers.discard(peer_id)
         self._store.updt_tbl("opt_rcvd", peer_id)
@@ -150,6 +150,20 @@ class ProxySelfServiceBridge:
         timer = self._opt_timers.pop(peer_id, None)
         if timer is not None and timer.active():
             timer.cancel()
+
+    def _fetch_options_now(self, peer_id: bytes) -> None:
+        """Load OPTIONS from MySQL and inject RPTO to the server (no legacy 10s delay)."""
+        self._cancel_opt_timer(peer_id)
+        if peer_id not in self._mysql_option_peers:
+            return
+        if self._use_cases.resolve_client(peer_id) is None:
+            return
+        d = self._login_opt(peer_id)
+        d.addErrback(
+            lambda f: self._log.warning(
+                "(SELF_SERVICE) fetch_options_now error: %s", f.getErrorMessage()
+            )
+        )
 
     def _inject_rpto(self, peer_id: bytes, options: str | bytes) -> None:
         client = self._use_cases.resolve_client(peer_id)

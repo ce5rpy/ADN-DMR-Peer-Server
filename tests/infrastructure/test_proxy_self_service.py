@@ -124,7 +124,8 @@ def test_rptc_login_opt_skips_without_pass() -> None:
     assert sink.injected == []
 
 
-def test_rptc_login_opt_injects_rpto_after_pass() -> None:
+def test_rptc_after_pass_reinjects_rpto() -> None:
+    """RPTC after PASS= re-fetches OPTIONS once ins_conf has run (logged_in in DB)."""
     bridge, sink, store, _sender = _bridge()
     peer = bytes_4(7300444)
     store.options_by_peer[peer] = "TS2=730444;"
@@ -133,11 +134,12 @@ def test_rptc_login_opt_injects_rpto_after_pass() -> None:
         ("192.168.1.10", 62031),
         peer,
     )
+    assert len(sink.injected) == 1
     packet = RPTC + peer + b"CE1ILI  " + b"\x00" * 85 + b"4"
     bridge.before_inject(packet, ("192.168.1.10", 62031), peer)
-    _run_deferred(bridge._login_opt(peer))
-    assert sink.injected
-    assert sink.injected[0][0] == RPTO + peer + b"TS2=730444;"
+    assert ("ins_conf", peer) in store.actions
+    assert len(sink.injected) == 2
+    assert sink.injected[-1][0] == RPTO + peer + b"TS2=730444;"
 
 
 def test_rpto_pass_stores_password_and_skips_inject() -> None:
@@ -149,6 +151,23 @@ def test_rpto_pass_stores_password_and_skips_inject() -> None:
     assert sink.injected == []
     assert ("psswd", peer) in store.actions
     assert sender.sent and sender.sent[0][0][:6] == b"RPTACK"
+
+
+def test_rpto_pass_fetches_options_immediately() -> None:
+    """PASS= triggers MySQL slct_opt + RPTO inject without waiting for RPTC/10s timer."""
+    bridge, sink, store, sender = _bridge()
+    peer = bytes_4(7300444)
+    store.options_by_peer[peer] = "TS2=730444;SINGLE=1;"
+    skip = bridge.before_inject(
+        RPTO + peer + b"PASS=secret123",
+        ("192.168.1.10", 62031),
+        peer,
+    )
+    assert skip is True
+    assert ("psswd", peer) in store.actions
+    assert sender.sent and sender.sent[0][0][:6] == b"RPTACK"
+    assert sink.injected
+    assert sink.injected[0][0] == RPTO + peer + b"TS2=730444;SINGLE=1;"
 
 
 def test_send_opts_skips_without_pass() -> None:

@@ -11,6 +11,7 @@ from adn_server.application.bridge.helpers import (
     peer_should_receive_group_voice,
     peer_single_blocks_group_voice,
     peer_single_blocks_uplink,
+    register_peer_ua_multi_tg,
     register_peer_ua_session,
     seed_peer_ua_session_from_status,
 )
@@ -265,6 +266,55 @@ def test_peer_without_static_tgs_receives_nothing_until_dynamic() -> None:
     register_peer_ua_session(peer, peer_id, 2, 7305, sys_cfg, now=now)
     assert peer_should_receive_group_voice(
         peer, 2, 7305, peer_id=peer_id, connected_count=1, sys_cfg=sys_cfg, now=now + 10
+    )
+
+
+def test_single_zero_dynamic_heard_when_both_peers_keyed() -> None:
+    """SINGLE=0: HS1 and HS2 both keyed 7304 → each hears the other's TX on 7304."""
+    peer_a = {"OPTIONS": b"TS2=730,7305;SINGLE=0;"}
+    peer_b = {"OPTIONS": b"TS2=730,7305;SINGLE=0;"}
+    sys_cfg = _sys_cfg()
+    id_a = bytes_4(730039101)
+    id_b = bytes_4(730039210)
+    now = 1_000_000.0
+    register_peer_ua_session(peer_a, id_a, 2, 7304, sys_cfg, now=now)
+    register_peer_ua_session(peer_b, id_b, 2, 7304, sys_cfg, now=now + 5)
+
+    assert peer_should_receive_group_voice(
+        peer_a, 2, 7304, peer_id=id_a, connected_count=2, sys_cfg=sys_cfg, now=now + 10
+    )
+    assert peer_should_receive_group_voice(
+        peer_b, 2, 7304, peer_id=id_b, connected_count=2, sys_cfg=sys_cfg, now=now + 10
+    )
+
+
+def test_single_zero_dynamic_not_heard_without_local_key() -> None:
+    """SINGLE=0: dynamic 7304 only reaches peers that keyed it (not the other HS)."""
+    peer_a = {"OPTIONS": b"TS2=730,7305;SINGLE=0;"}
+    peer_b = {"OPTIONS": b"TS2=730,7305;SINGLE=0;"}
+    sys_cfg = _sys_cfg()
+    id_a = bytes_4(730039101)
+    id_b = bytes_4(730039210)
+    now = 1_000_000.0
+    register_peer_ua_session(peer_a, id_a, 2, 7304, sys_cfg, now=now)
+
+    assert peer_should_receive_group_voice(
+        peer_a, 2, 7304, peer_id=id_a, connected_count=2, sys_cfg=sys_cfg, now=now + 10
+    )
+    assert not peer_should_receive_group_voice(
+        peer_b, 2, 7304, peer_id=id_b, connected_count=2, sys_cfg=sys_cfg, now=now + 10
+    )
+
+
+def test_single_zero_tg4000_clears_multi_dynamic() -> None:
+    peer = {"OPTIONS": b"TS2=730,7305;SINGLE=0;"}
+    sys_cfg = _sys_cfg()
+    peer_id = _peer_id()
+    now = 1_000_000.0
+    register_peer_ua_multi_tg(peer, peer_id, 2, 7304, sys_cfg)
+    clear_peer_ua_sessions(peer, sys_cfg, peer_id, slot=2)
+    assert not peer_should_receive_group_voice(
+        peer, 2, 7304, peer_id=peer_id, connected_count=2, sys_cfg=sys_cfg, now=now + 10
     )
 
 

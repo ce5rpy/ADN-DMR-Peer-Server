@@ -1081,6 +1081,7 @@ class HBPProtocol(DatagramProtocol):
                         self._on_options_received(self._system, _this_peer["OPTIONS"])
                     except Exception:
                         pass
+                self._push_config_to_monitor()
             else:
                 self.transport.write(b"".join([MSTNAK, _peer_id]), _sockaddr)
                 logger.info("(%s) Options from Radio ID that is not logged: %s", self._system, int_id(_peer_id))

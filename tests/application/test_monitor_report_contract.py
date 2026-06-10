@@ -318,6 +318,27 @@ def test_report_wire_skips_unchanged_dashboard_state() -> None:
     assert wire.state_frames(snapshot, force=False) == ()
 
 
+def test_report_wire_emits_when_runtime_peer_options_change() -> None:
+    """RPTO / MySQL inject must push STATE_SND so monitor chips update without reload."""
+    peer_specs = [(730039101, 4)]
+    systems = _inject_runtime_systems(peer_specs)
+    proxy_cfg = _proxy_config()
+    slots = _peer_slots(peer_specs)
+    wire = ReportWire()
+    expanded = expand_inject_proxy_systems(proxy_cfg, systems, slots)
+    wire.state_frames(expanded, force=True)
+    assert wire.state_frames(expanded, force=False) == ()
+
+    systems["SYSTEM"]["PEERS"][bytes_4(730039101)]["OPTIONS"] = b"TS2=730444,7305;SINGLE=1;"
+    expanded2 = expand_inject_proxy_systems(proxy_cfg, systems, slots)
+    frames = wire.state_frames(expanded2, force=False)
+    assert len(frames) == 1
+    doc = json.loads(frames[0][1:].decode())
+    peer_row = doc["ctable"]["MASTERS"]["SYSTEM-4"]["peers"]["730039101"]
+    assert peer_row["options"] == "TS2=730444,7305;SINGLE=1;"
+    assert peer_row["ts2_static"] == ["730444", "7305"]
+
+
 def test_report_wire_bridge_frames_emits_routing_table() -> None:
     bridges = {
         "52090": [

@@ -194,6 +194,61 @@ def peer_single_mode(peer: dict[str, Any], sys_cfg: dict[str, Any]) -> bool:
     return single
 
 
+def _peer_ua_multi_store(sys_cfg: dict[str, Any]) -> dict[bytes, dict[int, set[int]]]:
+    store = sys_cfg.setdefault("_PEER_UA_MULTI_TGS", {})
+    if not isinstance(store, dict):
+        store = {}
+        sys_cfg["_PEER_UA_MULTI_TGS"] = store
+    return store
+
+
+def register_peer_ua_multi_tg(
+    peer: dict[str, Any],
+    peer_id: bytes,
+    slot: int,
+    tgid: int,
+    sys_cfg: dict[str, Any],
+) -> None:
+    """SINGLE=0: accumulate keyed dynamic TGs per peer/slot until TG 4000."""
+    if peer_single_mode(peer, sys_cfg):
+        return
+    tgid_i = int(tgid)
+    if tgid_i <= 0 or tgid_i == 4000:
+        return
+    if peer_receives_group_tgid(peer, slot, tgid_i):
+        return
+    pk = bytes_4(int_id(peer_id))
+    per_peer = _peer_ua_multi_store(sys_cfg).setdefault(pk, {})
+    slot_set = per_peer.setdefault(int(slot), set())
+    slot_set.add(tgid_i)
+
+
+def peer_owns_multi_dynamic_ua(
+    peer: dict[str, Any],
+    slot: int,
+    tgid: int,
+    sys_cfg: dict[str, Any] | None,
+    *,
+    peer_id: bytes | None = None,
+) -> bool:
+    """True when SINGLE=0 peer has keyed this non-static dynamic TG on ``slot``."""
+    if not sys_cfg or peer_single_mode(peer, sys_cfg):
+        return False
+    if peer_id is None:
+        return False
+    if peer_receives_group_tgid(peer, slot, tgid):
+        return False
+    pk = bytes_4(int_id(peer_id))
+    store = sys_cfg.get("_PEER_UA_MULTI_TGS")
+    if not isinstance(store, dict):
+        return False
+    per_peer = store.get(pk)
+    if not isinstance(per_peer, dict):
+        return False
+    slot_set = per_peer.get(int(slot))
+    return isinstance(slot_set, set) and int(tgid) in slot_set
+
+
 def register_peer_ua_session(
     peer: dict[str, Any],
     peer_id: bytes,
@@ -203,8 +258,9 @@ def register_peer_ua_session(
     *,
     now: float | None = None,
 ) -> None:
-    """Track exclusive SINGLE TG for this hotspot (RX / local TX), per-peer OPTIONS TIMER."""
+    """Track UA TG for this hotspot (SINGLE=1 exclusive; SINGLE=0 multi-dynamic set)."""
     if not peer_single_mode(peer, sys_cfg):
+        register_peer_ua_multi_tg(peer, peer_id, slot, tgid, sys_cfg)
         return
     from adn_server.application.report.payloads import resolve_peer_single_and_timer
 
@@ -300,7 +356,7 @@ def clear_peer_ua_sessions(
     *,
     slot: int | None = None,
 ) -> None:
-    """Clear per-peer SINGLE session (TG 4000, reconnect)."""
+    """Clear per-peer UA state (SINGLE session and/or SINGLE=0 multi-dynamic set)."""
     pk = bytes_4(int_id(peer_id))
     store = sys_cfg.get("_PEER_UA_SESSIONS")
     if isinstance(store, dict) and pk in store:
@@ -310,6 +366,14 @@ def clear_peer_ua_sessions(
             per_peer = store.get(pk)
             if isinstance(per_peer, dict):
                 per_peer.pop(slot, None)
+    multi = sys_cfg.get("_PEER_UA_MULTI_TGS")
+    if isinstance(multi, dict) and pk in multi:
+        if slot is None:
+            multi.pop(pk, None)
+        else:
+            per_peer = multi.get(pk)
+            if isinstance(per_peer, dict):
+                per_peer.pop(int(slot), None)
     sessions = peer.get("_UA_SESSION")
     if isinstance(sessions, dict):
         if slot is None:
@@ -429,8 +493,9 @@ def peer_should_receive_group_voice(
 
     1. ``SINGLE=1`` with an active session on another TG → deny all other TGs.
     2. TG in this peer's OPTIONS static list → allow (when not blocked by SINGLE).
-    3. Dynamic UA not in static list but owned by this peer's session → allow.
-    4. No static TG in OPTIONS and no owned dynamic session → deny (no fan-out).
+    3. ``SINGLE=1``: dynamic UA owned by this peer's exclusive session → allow.
+    4. ``SINGLE=0``: dynamic UA this peer keyed (multi set) → allow.
+    5. Otherwise → deny (no fan-out).
 
     A system-wide ACTIVE bridge leg must **not** fan out to every hotspot; that
     was the regression when ``bridges`` were passed into this helper.
@@ -441,6 +506,8 @@ def peer_should_receive_group_voice(
     if peer_receives_group_tgid(peer, slot, tgid):
         return True
     if _peer_owns_dynamic_ua(peer, slot, tgid, sys_cfg, peer_id=peer_id, now=now):
+        return True
+    if peer_owns_multi_dynamic_ua(peer, slot, tgid, sys_cfg, peer_id=peer_id):
         return True
     return False
 
