@@ -12,8 +12,10 @@ from adn_server.application.report import (
     REPORT_FEATURES,
     REPORT_PROTOCOL,
     build_dashboard_state,
+    build_routing_table,
     hello_connected_system_names,
     parse_bridge_event_csv,
+    routing_table_delta,
 )
 
 from .opcodes import REPORT_OPCODES, SERVER_NAME, server_version
@@ -34,10 +36,12 @@ def _state_dedup_key(payload: dict[str, Any]) -> bytes:
 
 
 class ReportWire(ReportWireEncoder):
-    """Slim monitor encoder — ``dashboard_state`` snapshots + ``voice_event`` only."""
+    """Slim monitor encoder — ``dashboard_state`` + ``routing_table`` + ``voice_event``."""
 
     def __init__(self) -> None:
         self._last_state_key: bytes | None = None
+        self._routing_seq: int = 0
+        self._last_routing_snapshot: dict[str, Any] | None = None
 
     def hello_frames(self, systems: dict[str, Any]) -> tuple[bytes, ...]:
         names = hello_connected_system_names(systems)
@@ -68,8 +72,22 @@ class ReportWire(ReportWireEncoder):
         return (_json_wire(REPORT_OPCODES["STATE_SND"], payload),)
 
     def bridge_frames(self, bridges: dict[str, Any], *, full_snapshot: bool) -> tuple[bytes, ...]:
-        """Routing is not exported to the monitor (D-25)."""
-        return ()
+        """UA / static bridge legs for monitor ``SINGLE_TS*`` chips (slim wire)."""
+        ts = time.time()
+        self._routing_seq += 1
+        current = build_routing_table(bridges, seq=self._routing_seq, ts=ts)
+        if full_snapshot or self._last_routing_snapshot is None:
+            self._last_routing_snapshot = current
+            logger.debug("(REPORT) ROUTING_TABLE_SND seq=%s routes=%d", self._routing_seq, len(current.get("routes", [])))
+            return (_json_wire(REPORT_OPCODES["ROUTING_TABLE_SND"], current),)
+        delta = routing_table_delta(self._last_routing_snapshot, current, seq=self._routing_seq, ts=ts)
+        if delta is None:
+            self._routing_seq -= 1
+            logger.debug("(REPORT) routing_table unchanged, skip")
+            return ()
+        self._last_routing_snapshot = current
+        logger.debug("(REPORT) DELTA_SND routing_table seq=%s", self._routing_seq)
+        return (_json_wire(REPORT_OPCODES["DELTA_SND"], delta),)
 
     def bridge_event_frames(self, event: str) -> tuple[bytes, ...]:
         voice = parse_bridge_event_csv(event)

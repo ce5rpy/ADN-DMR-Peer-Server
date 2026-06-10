@@ -49,11 +49,19 @@ from .bridge.obp_forward import BridgeObpForwardMixin
 from .bridge.hbp_forward import BridgeHbpForwardMixin
 from .bridge.lc_ta import BridgeLcTaMixin
 from .bridge.bridge_table import BridgeTableMixin
+from .bridge.voice_subscription import VoiceSubscriptionMixin
 
 logger = logging.getLogger(__name__)
 
 
-class BridgeUseCases(BridgeTimerMixin, BridgeObpForwardMixin, BridgeHbpForwardMixin, BridgeLcTaMixin, BridgeTableMixin):
+class BridgeUseCases(
+    BridgeTimerMixin,
+    BridgeObpForwardMixin,
+    BridgeHbpForwardMixin,
+    BridgeLcTaMixin,
+    BridgeTableMixin,
+    VoiceSubscriptionMixin,
+):
     """Use cases for conference bridge state (BRIDGES)."""
 
     def __init__(
@@ -75,6 +83,7 @@ class BridgeUseCases(BridgeTimerMixin, BridgeObpForwardMixin, BridgeHbpForwardMi
         self._router = bridge_router
         self._config = config
         self._subscription_store = subscription_store
+        self._subscription_router = None
         self._send_to_system = send_to_system  # (system_name, packet, **kwargs) -> None
         self._get_protocols = get_protocols  # () -> dict[str, protocol]
         self._reporting = reporting
@@ -105,6 +114,17 @@ class BridgeUseCases(BridgeTimerMixin, BridgeObpForwardMixin, BridgeHbpForwardMi
             return True
         except Exception:
             return False
+
+    def _send_bridge_snapshot(self, *, incremental: bool = True) -> None:
+        """Push BRIDGES / routing_table to report clients (monitor SINGLE_TS chips)."""
+        if not self._config.get("REPORTS", {}).get("REPORT", True):
+            return
+        if not self._reporting:
+            return
+        try:
+            self._reporting.send_bridge(self._router.get_bridges(), incremental=incremental)
+        except Exception:
+            pass
 
     def _sync_subscription_store(self) -> None:
         """Mirror BRIDGES into the subscription store (OPTIONS/static paths only for now)."""
@@ -202,13 +222,14 @@ class BridgeUseCases(BridgeTimerMixin, BridgeObpForwardMixin, BridgeHbpForwardMi
                 self.apply_static_tg_to_bridge(dst_int)
                 bridges = self._router.get_bridges()
             else:
-                tmout = self._config.get("SYSTEMS", {}).get(system_name, {}).get("DEFAULT_UA_TIMER", 10)
+                tmout = self._ua_timer_minutes_for_peer(system_name, peer_id)
                 logger.info(
                     "(%s) Bridge for TG %s does not exist. Creating as User Activated. Timeout %s",
                     system_name, dst_int, tmout,
                 )
                 self.make_single_bridge(dst_id, system_name, slot, float(tmout))
                 self.apply_static_tg_to_bridge(dst_int)
+                self._send_bridge_snapshot(incremental=True)
                 bridges = self._router.get_bridges()
         # Legacy bridge_master routerOBP ~2413-2418: scan every BRIDGES[_bridge] table; forward only within
         # a table that contains a matching ACTIVE source row (not a flat merge of TG + #TG only).
@@ -234,13 +255,13 @@ class BridgeUseCases(BridgeTimerMixin, BridgeObpForwardMixin, BridgeHbpForwardMi
             ):
                 return
         has_source = bool(
-            self._router.bridge_tables_with_active_source(system_name, bridge_match_slot, dst_int)
+            self._voice_bridge_tables_with_active_source(system_name, bridge_match_slot, dst_int)
         )
         if not has_source and systems_cfg.get(system_name, {}).get("MODE") == "MASTER":
             self.options_config_for_system(system_name)
             bridges = self._router.get_bridges()
             has_source = bool(
-                self._router.bridge_tables_with_active_source(system_name, bridge_match_slot, dst_int)
+                self._voice_bridge_tables_with_active_source(system_name, bridge_match_slot, dst_int)
             )
         # Do not call make_single_bridge here for 9990–9999 when BRIDGES["9990"] already exists:
         # make_single_bridge replaces the whole table and only sets the source MASTER ACTIVE; every
@@ -370,11 +391,23 @@ class BridgeUseCases(BridgeTimerMixin, BridgeObpForwardMixin, BridgeHbpForwardMi
             source_lc = b"\x00\x00\x20" + dst_id_b + rf_src
         # Legacy bridge_master routerOBP: _sysIgnore accumulates across each to_target(BRIDGES[_bridge])
         # pass; dedupe (SYSTEM, TS) for OpenBridge targets so the same leg is not sent twice per packet.
+        # When USE_SUBSCRIPTION_ROUTER is on, resolve() already applies OBP dedup — skip sys_ignore_obp.
+        forward_tables, forward_leg_key_set = self._voice_forward_plan(
+            system_name=system_name,
+            peer_id=peer_id,
+            rf_src=rf_src,
+            dst_id=dst_id,
+            slot=slot,
+            call_type=call_type,
+            stream_id=stream_id,
+            source_is_obp=source_is_obp,
+            bridge_match_slot=bridge_match_slot,
+            dst_int=dst_int,
+        )
+        use_subscription_legs = forward_leg_key_set is not None
         sys_ignore_obp: set[tuple[str, int]] = set()
         forwarded = []
-        for _bridge_table_name in self._router.bridge_tables_with_active_source(
-            system_name, bridge_match_slot, dst_int
-        ):
+        for _bridge_table_name in forward_tables:
             # Legacy: routerOBP/routerHBP to_target — if BRIDGES[_bridge] was removed mid-routing, skip
             if _bridge_table_name not in bridges:
                 continue
@@ -384,6 +417,14 @@ class BridgeUseCases(BridgeTimerMixin, BridgeObpForwardMixin, BridgeHbpForwardMi
                     continue
                 if not entry.get("ACTIVE", False):
                     continue
+                if forward_leg_key_set is not None:
+                    entry_key = (
+                        entry["SYSTEM"],
+                        int(entry.get("TS") or 1),
+                        int_id(entry.get("TGID") or b"\x00\x00\x00"),
+                    )
+                    if entry_key not in forward_leg_key_set:
+                        continue
                 if not systems_cfg.get(entry["SYSTEM"], {}).get("ENABLED", True):
                     continue
                 _target_system = systems_cfg.get(entry["SYSTEM"], {})
@@ -396,10 +437,11 @@ class BridgeUseCases(BridgeTimerMixin, BridgeObpForwardMixin, BridgeHbpForwardMi
                     entry_ts_obp = entry.get("TS")
                     if entry_ts_obp is None:
                         entry_ts_obp = 1
-                    _obp_key = (entry["SYSTEM"], int(entry_ts_obp))
-                    if _obp_key in sys_ignore_obp:
-                        continue
-                    sys_ignore_obp.add(_obp_key)
+                    if not use_subscription_legs:
+                        _obp_key = (entry["SYSTEM"], int(entry_ts_obp))
+                        if _obp_key in sys_ignore_obp:
+                            continue
+                        sys_ignore_obp.add(_obp_key)
                     target_tgid = entry.get("TGID")
                     if isinstance(target_tgid, int):
                         target_tgid = bytes_3(target_tgid)

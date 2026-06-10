@@ -86,6 +86,7 @@ def merge_system_config(old_cfg: dict[str, Any], new_cfg: dict[str, Any]) -> dic
             "DEFAULT_UA_TIMER",
             "_options_static_apply_fp",
             "_default_options",
+            "_PEER_UA_SESSIONS",
         ):
             if key in old_cfg:
                 merged[key] = old_cfg[key]

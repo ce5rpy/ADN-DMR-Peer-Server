@@ -318,13 +318,25 @@ def test_report_wire_skips_unchanged_dashboard_state() -> None:
     assert wire.state_frames(snapshot, force=False) == ()
 
 
-def test_report_wire_bridge_frames_empty() -> None:
+def test_report_wire_bridge_frames_emits_routing_table() -> None:
     bridges = {
         "52090": [
-            {"SYSTEM": "SYSTEM-0", "ACTIVE": True, "TS": 2, "TGID": 52090},
+            {
+                "SYSTEM": "SYSTEM-0",
+                "ACTIVE": True,
+                "TS": 2,
+                "TGID": 52090,
+                "TO_TYPE": "ON",
+                "TIMER": 1000.0,
+            },
         ]
     }
-    assert ReportWire().bridge_frames(bridges, full_snapshot=True) == ()
+    frames = ReportWire().bridge_frames(bridges, full_snapshot=True)
+    assert len(frames) == 1
+    assert frames[0][:1] == REPORT_OPCODES["ROUTING_TABLE_SND"]
+    doc = json.loads(frames[0][1:].decode())
+    assert doc["type"] == "routing_table"
+    assert doc["routes"][0]["bridge_key"] == "52090"
 
 
 def test_report_wire_emits_voice_event_only() -> None:

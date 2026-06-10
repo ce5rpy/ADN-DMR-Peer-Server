@@ -11,7 +11,15 @@
       "port": 62030,
       "repeat": true,
       "peers": [
-        { "id": 3120001, "connected": true, "ip": "10.0.0.50", "port": 62031 }
+        {
+          "id": 3120001,
+          "connected": true,
+          "ip": "10.0.0.50",
+          "port": 62031,
+          "single_mode": false,
+          "ua_timer_min": 10,
+          "ua_sessions": {}
+        }
       ]
     },
     {

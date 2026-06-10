@@ -23,7 +23,9 @@ from adn_server.domain.hbp_protocol import (
     HBPF_SLT_VTERM,
     HBPF_VOICE,
 )
+from adn_server.application.subscription.store_sync import replace_store_from_bridges
 from adn_server.infrastructure.bridge_router_impl import InMemoryBridgeRouter
+from adn_server.infrastructure.subscription_store import InMemorySubscriptionStore
 from adn_server.infrastructure.hbp_constants import DMRD
 
 ID_MAX = 16776415
@@ -375,6 +377,8 @@ class DeterministicScenario:
         )
         self.router = InMemoryBridgeRouter()
         self.router.set_bridges(copy.deepcopy(bridges or {}))
+        self.subscription_store = InMemorySubscriptionStore()
+        replace_store_from_bridges(self.subscription_store, self.router.get_bridges())
         self.protocols: dict[str, FakeHbpProtocol | FakeObpProtocol] = {}
         self._wire_protocols_from_config()
         self.bridge = BridgeUseCases(
@@ -388,6 +392,7 @@ class DeterministicScenario:
             get_dmra_blocks=lambda _sys, _sid: None,
             encode_emblc=encode_emblc,
             ta_emblc_encoder=default_ta_emblc_encoder,
+            subscription_store=self.subscription_store,
         )
 
     def _wire_protocols_from_config(self) -> None:

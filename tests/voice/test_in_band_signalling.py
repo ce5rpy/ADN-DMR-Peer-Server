@@ -68,3 +68,22 @@ def test_non_single_mode_deactivates_on_tg4000() -> None:
     scenario.bridge.apply_in_band_signalling("MASTER-A", 2, bytes_3(4000), pkt_time=3000.0)
 
     assert scenario.bridge.get_bridges()["52090"][0]["ACTIVE"] is False
+
+
+def test_in_band_signalling_pushes_routing_snapshot() -> None:
+    """Monitor UA chips need routing refresh after VTERM in-band mutates BRIDGES."""
+    scenario = DeterministicScenario(bridges=_user_bridge())
+    scenario.config["REPORTS"]["REPORT"] = True
+    sent: list[bool] = []
+
+    class _Rec:
+        def send_bridge(self, bridges, *, incremental: bool = False) -> None:
+            sent.append(incremental)
+
+        def send_bridge_event(self, _event: str) -> None:
+            pass
+
+    scenario.bridge._reporting = _Rec()  # noqa: SLF001
+    scenario.bridge.apply_in_band_signalling("MASTER-A", 2, bytes_3(52090), pkt_time=2000.0)
+
+    assert sent == [True]

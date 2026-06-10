@@ -491,6 +491,7 @@ def run_peer_server(
             on_talker_alias_repeat_burst=bridge_use_cases.rewrite_repeat_voice_burst,
             on_talker_alias_stream_end=bridge_use_cases.clear_talker_alias_stream,
             on_dmra_fragment_stored=bridge_use_cases.on_dmra_fragment_stored,
+            get_bridges=bridge_router.get_bridges,
         )
 
     def _listen_system(_name: str, bind: BindSpec, protocol: Any) -> Any:

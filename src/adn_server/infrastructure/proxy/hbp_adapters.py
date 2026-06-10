@@ -42,6 +42,9 @@ class HbpMasterPeerRegistry(MasterPeerRegistry):
         self._hbp = hbp
 
     def remove_peer(self, peer_id: bytes) -> None:
+        on_disconnect = getattr(self._hbp, "_on_peer_disconnected", None)
+        if callable(on_disconnect):
+            on_disconnect(peer_id)
         peers = getattr(self._hbp, "_peers", None)
         if isinstance(peers, dict):
             peers.pop(peer_id, None)

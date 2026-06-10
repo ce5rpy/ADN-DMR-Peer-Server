@@ -41,10 +41,15 @@ from twisted.internet import reactor, task
 from twisted.internet.protocol import DatagramProtocol
 
 from ...application.bridge.helpers import (
+    clear_peer_rx_status_slots,
+    clear_peer_ua_sessions,
     is_special_tg,
     parse_dmrd_route_fields,
     peer_matches_rf_source,
-    peer_receives_group_tgid,
+    peer_should_receive_group_voice,
+    peer_single_exclusive_tgid,
+    register_peer_ua_session,
+    seed_peer_ua_session_from_status,
 )
 from ...application.proxy.deployment import is_proxy_inject_only
 from ...domain import bytes_4, int_id
@@ -164,7 +169,7 @@ class HBPProtocol(DatagramProtocol):
         on_play_file_request: Callable[[str, str], None] | None = None,
         on_handle_recording: Callable[..., None] | None = None,
         on_in_band_signalling: Callable[[str, int, bytes, float], None] | None = None,
-        on_options_received: Callable[[str], None] | None = None,
+        on_options_received: Callable[..., None] | None = None,
         on_deactivate_dynamic_bridges: Callable[[str], None] | None = None,
         on_obp_bcsq_received: Callable[[str, bytes, bytes], None] | None = None,
         on_talker_alias_local_repeat: Callable[[str, bytes, bytes, bytes], None] | None = None,
@@ -172,11 +177,13 @@ class HBPProtocol(DatagramProtocol):
         on_talker_alias_repeat_burst: Callable[[str, int, bytes, int, bytes], bytes] | None = None,
         on_talker_alias_stream_end: Callable[[str, bytes], None] | None = None,
         on_dmra_fragment_stored: Callable[[str, bytes, bytes, bytes], None] | None = None,
+        get_bridges: Callable[[], dict[str, Any]] | None = None,
     ) -> None:
         self._CONFIG = config
         self._system = system_name
         self._report = report_factory
         self._router = router
+        self._get_bridges = get_bridges
         self._dmrd_received = dmrd_received
         self._get_user_password = get_user_password_callback if get_user_password_callback is not None else get_user_password
         self._on_play_file_request = on_play_file_request
@@ -269,13 +276,8 @@ class HBPProtocol(DatagramProtocol):
             self.send_peer(_peer, _packet)
 
     def _inject_multi_peer_options_filter(self) -> bool:
-        """Inject-only proxy: several hotspots share one MASTER — filter by per-peer OPTIONS."""
-        if not is_proxy_inject_only(self._CONFIG, self._system):
-            return False
-        connected = sum(
-            1 for peer in self._peers.values() if peer.get("CONNECTION") == "YES"
-        )
-        return connected > 1
+        """Inject-only proxy: always filter downlink by each peer's own OPTIONS."""
+        return is_proxy_inject_only(self._CONFIG, self._system)
 
     def _peer_should_receive_dmrd(self, peer_id: bytes, packet: bytes) -> bool:
         if not self._inject_multi_peer_options_filter():
@@ -284,7 +286,10 @@ class HBPProtocol(DatagramProtocol):
             return False
         parsed = parse_dmrd_route_fields(packet)
         if parsed is None:
-            return True
+            connected = sum(
+                1 for peer in self._peers.values() if peer.get("CONNECTION") == "YES"
+            )
+            return connected <= 1
         slot, tgid, call_type = parsed
         if call_type not in ("group", "vcsbk"):
             return True
@@ -301,7 +306,20 @@ class HBPProtocol(DatagramProtocol):
                 1 for peer in self._peers.values() if peer.get("CONNECTION") == "YES"
             )
             return connected == 1
-        return peer_receives_group_tgid(self._peers[peer_id], slot, tgid)
+        connected = sum(
+            1 for peer in self._peers.values() if peer.get("CONNECTION") == "YES"
+        )
+        bridges = self._get_bridges() if self._get_bridges else None
+        return peer_should_receive_group_voice(
+            self._peers[peer_id],
+            slot,
+            tgid,
+            peer_id=peer_id,
+            system=self._system,
+            bridges=bridges,
+            connected_count=connected,
+            sys_cfg=self._config,
+        )
 
     def send_peer(self, _peer: bytes, _packet: bytes) -> None:
         if _packet[:4] == DMRD:
@@ -642,7 +660,7 @@ class HBPProtocol(DatagramProtocol):
                 self._system, self._peers[peer].get("CALLSIGN", b""), self._peers[peer].get("RADIO_ID", b""),
             )
             self.transport.write(b"".join([MSTCL, peer]), self._peers[peer]["SOCKADDR"])
-            del self._peers[peer]
+            self._remove_peer(peer)
             if not self._peers:
                 sys_cfg = self._CONFIG["SYSTEMS"][self._system]
                 if "OPTIONS" in sys_cfg:
@@ -655,6 +673,20 @@ class HBPProtocol(DatagramProtocol):
                 sys_cfg["_reset"] = True
         if remove_list:
             self._push_config_to_monitor()
+
+    def _on_peer_disconnected(self, peer_id: bytes) -> None:
+        """Drop SINGLE/UA session and stale slot STATUS when a hotspot leaves or re-logs in."""
+        peer = self._peers.get(peer_id)
+        sys_cfg = self._config
+        if peer is not None:
+            clear_peer_ua_sessions(peer, sys_cfg, peer_id)
+        else:
+            clear_peer_ua_sessions({}, sys_cfg, peer_id)
+        clear_peer_rx_status_slots(self.STATUS, peer_id)
+
+    def _remove_peer(self, peer_id: bytes) -> None:
+        self._on_peer_disconnected(peer_id)
+        self._peers.pop(peer_id, None)
 
     def _master_datagram_received(self, _data: bytes, _sockaddr: tuple[str, int]) -> None:
         """Direct port of hblink.py master_datagramReceived (lines 888-1146)."""
@@ -738,6 +770,33 @@ class HBPProtocol(DatagramProtocol):
                 self.note_dmrd_stream(_peer_id, _rf_src, _stream_id)
                 if (
                     _call_type in ("group", "vcsbk")
+                    and _frame_type == HBPF_DATA_SYNC
+                    and _dtype_vseq == HBPF_SLT_VHEAD
+                ):
+                    _prev_single_tg = peer_single_exclusive_tgid(
+                        self._peers[_peer_id],
+                        _slot,
+                        self._config,
+                        peer_id=_peer_id,
+                        now=pkt_time,
+                    )
+                    if _int_dst_id == 4000:
+                        clear_peer_ua_sessions(
+                            self._peers[_peer_id], self._config, _peer_id, slot=_slot,
+                        )
+                    else:
+                        register_peer_ua_session(
+                            self._peers[_peer_id],
+                            _peer_id,
+                            _slot,
+                            _int_dst_id,
+                            self._config,
+                            now=pkt_time,
+                        )
+                    if _int_dst_id != 4000 and _prev_single_tg != _int_dst_id:
+                        self._push_config_to_monitor()
+                if (
+                    _call_type in ("group", "vcsbk")
                     and _frame_type != HBPF_DATA_SYNC
                     and _dtype_vseq in (1, 2, 3, 4)
                     and len(_data) >= 53
@@ -759,11 +818,10 @@ class HBPProtocol(DatagramProtocol):
                         self._on_talker_alias_local_repeat(
                             self._system, _peer_id, _rf_src, _stream_id,
                         )
-                if self._config.get("REPEAT", True):
+                if self._config.get("REPEAT", True) and _call_type in ("group", "vcsbk"):
                     _repeat_tail = _data[15:]
                     if (
-                        _call_type in ("group", "vcsbk")
-                        and _dtype_vseq in (1, 2, 3, 4)
+                        _dtype_vseq in (1, 2, 3, 4)
                         and len(_data) >= 53
                         and self._on_talker_alias_repeat_burst
                     ):
@@ -827,8 +885,7 @@ class HBPProtocol(DatagramProtocol):
                     reactor.callInThread(self._on_play_file_request, str(_int_dst_id), self._system)
                 if (
                     _call_type in ("group", "vcsbk")
-                    and
-                    _frame_type == HBPF_DATA_SYNC
+                    and _frame_type == HBPF_DATA_SYNC
                     and _dtype_vseq == HBPF_SLT_VTERM
                     and _slot in self.STATUS
                     and self.STATUS[_slot].get("RX_TYPE") != HBPF_SLT_VTERM
@@ -860,6 +917,7 @@ class HBPProtocol(DatagramProtocol):
                     and self._router.acl_check(_peer_id, self._config.get("REG_ACL", (True, [])))
                     and self.validate_id(_peer_id)
                 ):
+                    self._on_peer_disconnected(_peer_id)
                     self._peers[_peer_id] = {
                         "CONNECTION": "RPTL-RECEIVED",
                         "CONNECTED": time.time(),
@@ -923,7 +981,7 @@ class HBPProtocol(DatagramProtocol):
                     else:
                         logger.warning("(%s) Peer %s has FAILED the login exchange (wrong individual password)", self._system, _this_peer["RADIO_ID"])
                         self.transport.write(b"".join([MSTNAK, _peer_id]), _sockaddr)
-                        del self._peers[_peer_id]
+                        self._remove_peer(_peer_id)
                 elif len(_passphrase) > 0:
                     _calc_hash_val = _calc_hash(_salt_str, _passphrase)
                     if _sent_hash == _calc_hash_val:
@@ -933,11 +991,11 @@ class HBPProtocol(DatagramProtocol):
                     else:
                         logger.warning("(%s) Peer %s has FAILED the login exchange (wrong global passphrase)", self._system, _this_peer["RADIO_ID"])
                         self.transport.write(b"".join([MSTNAK, _peer_id]), _sockaddr)
-                        del self._peers[_peer_id]
+                        self._remove_peer(_peer_id)
                 else:
                     logger.warning("(%s) Peer %s has FAILED - no individual password configured and no global passphrase", self._system, _this_peer["RADIO_ID"])
                     self.transport.write(b"".join([MSTNAK, _peer_id]), _sockaddr)
-                    del self._peers[_peer_id]
+                    self._remove_peer(_peer_id)
             else:
                 self.transport.write(b"".join([MSTNAK, _peer_id]), _sockaddr)
                 logger.info("(%s) Login challenge from Radio ID that has not logged in: %s", self._system, int_id(_peer_id))
@@ -948,7 +1006,7 @@ class HBPProtocol(DatagramProtocol):
                 if _peer_id in self._peers and self._peers[_peer_id]["CONNECTION"] == "YES" and self._peers[_peer_id]["SOCKADDR"] == _sockaddr:
                     logger.info("(%s) Peer is closing down: %s (%s)", self._system, self._peers[_peer_id]["CALLSIGN"], int_id(_peer_id))
                     self.transport.write(b"".join([MSTNAK, _peer_id]), _sockaddr)
-                    del self._peers[_peer_id]
+                    self._remove_peer(_peer_id)
                     sys_cfg = self._CONFIG.get("SYSTEMS", {}).get(self._system, {})
                     if "OPTIONS" in sys_cfg:
                         if "_default_options" in sys_cfg:
@@ -981,7 +1039,7 @@ class HBPProtocol(DatagramProtocol):
                     _this_peer["SOFTWARE_ID"] = _data[222:262]
                     _this_peer["PACKAGE_ID"] = _data[262:302]
                     if ("ALLOW_UNREG_ID" in self._config and not self._config["ALLOW_UNREG_ID"]) and _this_peer["CALLSIGN"].decode("utf8", errors="replace").rstrip() != self.validate_id(_peer_id):
-                        del self._peers[_peer_id]
+                        self._remove_peer(_peer_id)
                         if self._config.get("PROXY_CONTROL"):
                             self.proxy_IPBlackList(_peer_id, _sockaddr)
                         self.transport.write(b"".join([MSTNAK, _peer_id]), _sockaddr)
@@ -1002,6 +1060,16 @@ class HBPProtocol(DatagramProtocol):
                 _this_peer["OPTIONS"] = _data[8:]
                 self.send_peer(_peer_id, b"".join([RPTACK, _peer_id]))
                 logger.info("(%s) Peer %s has sent options %s", self._system, _this_peer["CALLSIGN"], _this_peer["OPTIONS"])
+                if is_proxy_inject_only(self._CONFIG, self._system):
+                    for _slot in (1, 2):
+                        if _slot in self.STATUS:
+                            seed_peer_ua_session_from_status(
+                                _this_peer,
+                                _peer_id,
+                                _slot,
+                                self.STATUS[_slot],
+                                self._config,
+                            )
                 # Inject-only multi-hotspot: OPTIONS live on each peer; do not let last RPTO
                 # overwrite the shared SYSTEM row (legacy had one peer per virtual master).
                 if not is_proxy_inject_only(self._CONFIG, self._system):
@@ -1010,7 +1078,7 @@ class HBPProtocol(DatagramProtocol):
                     ] = _this_peer["OPTIONS"].decode("utf8", errors="replace")
                 if self._on_options_received:
                     try:
-                        self._on_options_received(self._system)
+                        self._on_options_received(self._system, _this_peer["OPTIONS"])
                     except Exception:
                         pass
             else:
@@ -1775,7 +1843,7 @@ def HBPProtocolFactory(
     on_play_file_request: Callable[[str, str], None] | None = None,
     on_handle_recording: Callable[..., None] | None = None,
     on_in_band_signalling: Callable[[str, int, bytes, float], None] | None = None,
-    on_options_received: Callable[[str], None] | None = None,
+    on_options_received: Callable[..., None] | None = None,
     on_deactivate_dynamic_bridges: Callable[[str], None] | None = None,
     on_obp_bcsq_received: Callable[[str, bytes, bytes], None] | None = None,
     on_talker_alias_local_repeat: Callable[[str, bytes, bytes, bytes], None] | None = None,
@@ -1783,6 +1851,7 @@ def HBPProtocolFactory(
     on_talker_alias_repeat_burst: Callable[[str, int, bytes, int, bytes], bytes] | None = None,
     on_talker_alias_stream_end: Callable[[str, bytes], None] | None = None,
     on_dmra_fragment_stored: Callable[[str, bytes, bytes, bytes], None] | None = None,
+    get_bridges: Callable[[], dict[str, Any]] | None = None,
 ) -> HBPProtocol:
     """Create HBP protocol instance (legacy: one HBSYSTEM per system)."""
     return HBPProtocol(
@@ -1803,4 +1872,5 @@ def HBPProtocolFactory(
         on_talker_alias_repeat_burst=on_talker_alias_repeat_burst,
         on_talker_alias_stream_end=on_talker_alias_stream_end,
         on_dmra_fragment_stored=on_dmra_fragment_stored,
+        get_bridges=get_bridges,
     )

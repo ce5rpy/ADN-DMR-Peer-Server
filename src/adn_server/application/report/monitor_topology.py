@@ -11,7 +11,7 @@ from __future__ import annotations
 import copy
 from typing import Any
 
-from adn_server.application.bridge.helpers import peer_receives_group_tgid
+from adn_server.application.bridge.helpers import peer_should_receive_group_voice
 from adn_server.application.proxy.deployment import is_proxy_inject_only, proxy_target_system
 from adn_server.domain.value_objects import bytes_4, int_id
 
@@ -82,6 +82,9 @@ def expand_inject_proxy_systems(
         virtual_name = f"{target}-{slot}"
         virtual = copy.deepcopy(sys_cfg)
         virtual["PORT"] = base_port + slot
+        # Merged TS1/TS2 on inject SYSTEM are for bridges only — not per-hotspot dashboard chips.
+        virtual["TS1_STATIC"] = ""
+        virtual["TS2_STATIC"] = ""
         virtual["PEERS"] = {
             peer_key: peers[peer_key]
             for peer_key, mapped in slot_map.items()
@@ -199,12 +202,25 @@ def _peers_receiving_tgid(
     slot: int,
     tgid: int,
     exclude: bytes | None = None,
+    system: str | None = None,
+    bridges: dict[str, Any] | None = None,
+    sys_cfg: dict[str, Any] | None = None,
 ) -> list[tuple[Any, dict[str, Any]]]:
     out: list[tuple[Any, dict[str, Any]]] = []
+    n_connected = len(connected)
     for peer_key, peer in connected:
         if exclude is not None and _peer_key_from_int(peer_key) == exclude:
             continue
-        if peer_receives_group_tgid(peer, slot, tgid):
+        if peer_should_receive_group_voice(
+            peer,
+            slot,
+            tgid,
+            peer_id=_peer_key_from_int(peer_key),
+            system=system,
+            bridges=bridges,
+            connected_count=n_connected,
+            sys_cfg=sys_cfg,
+        ):
             out.append((peer_key, peer))
     return out
 
@@ -254,15 +270,16 @@ def remap_inject_proxy_voice_events(
     config: dict[str, Any],
     systems: dict[str, Any],
     peer_slots: dict[bytes, int] | None = None,
+    bridges: dict[str, Any] | None = None,
 ) -> list[str]:
     """Map inject-only ``SYSTEM`` voice events to one or more ``SYSTEM-N`` rows.
 
     Inject-only multi-hotspot needs fan-out in two cases:
 
-    * **TX** (bridge downlink, OBP → SYSTEM): fan-out only to peers whose RPTO OPTIONS
-      include the event TG on that timeslot (not every connected hotspot).
-    * **RX** (local hotspot TX + HBP REPEAT): transmitter keeps RX; other peers with
-      that TG in OPTIONS get companion **TX** (field 5 = transmitter radio id).
+    * **TX** (bridge downlink, OBP → SYSTEM): peers that would get the DMRD downlink
+      (per-peer OPTIONS static list, sole connected hotspot, or owned dynamic UA).
+    * **RX** (local hotspot TX + HBP REPEAT): transmitter keeps RX; other eligible
+      peers get companion **TX** (field 5 = transmitter radio id).
     Echo/static TX (field 5 == 9990) still targets a single resolved hotspot.
     """
     target = proxy_target_system(config)
@@ -303,7 +320,12 @@ def remap_inject_proxy_voice_events(
             return [event]
         tgid, voice_slot = tgid_slot
         receivers = _peers_receiving_tgid(
-            connected, slot=voice_slot, tgid=tgid,
+            connected,
+            slot=voice_slot,
+            tgid=tgid,
+            system=target,
+            bridges=bridges,
+            sys_cfg=sys_cfg,
         )
         if not receivers:
             return [event]
@@ -338,7 +360,13 @@ def remap_inject_proxy_voice_events(
         tx_parts[2] = "TX"
         tx_parts[5] = str(int_id(peer_key))
         for other_key, _peer in _peers_receiving_tgid(
-            connected, slot=voice_slot, tgid=tgid, exclude=peer_key,
+            connected,
+            slot=voice_slot,
+            tgid=tgid,
+            exclude=peer_key,
+            system=target,
+            bridges=bridges,
+            sys_cfg=sys_cfg,
         ):
             other_slot = slot_map.get(other_key)
             if other_slot is None:
@@ -359,8 +387,9 @@ def remap_inject_proxy_voice_event(
     config: dict[str, Any],
     systems: dict[str, Any],
     peer_slots: dict[bytes, int] | None = None,
+    bridges: dict[str, Any] | None = None,
 ) -> str:
     """Single-event view of :func:`remap_inject_proxy_voice_events` (first mapping)."""
     return remap_inject_proxy_voice_events(
-        event, config, systems, peer_slots
+        event, config, systems, peer_slots, bridges
     )[0]

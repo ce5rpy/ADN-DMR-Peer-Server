@@ -15,8 +15,12 @@ from adn_server.application.report import (
     parse_bridge_event_csv,
     routing_table_delta,
 )
-from adn_server.application.report.payloads import parse_peer_options_static
-from adn_server.domain import bytes_3
+from adn_server.application.bridge.helpers import peer_should_receive_group_voice
+from adn_server.application.report.payloads import (
+    parse_peer_options_static,
+    resolve_peer_single_and_timer,
+)
+from adn_server.domain import bytes_3, bytes_4
 
 _SCHEMA_PATH = Path(__file__).resolve().parents[2] / "schemas" / "report-v2.json"
 _EXAMPLES_DIR = _SCHEMA_PATH.parent / "examples"
@@ -33,6 +37,33 @@ def test_parse_peer_options_static_ts2():
     ts1, ts2 = parse_peer_options_static(b"TS2=730444;TIMER=15;")
     assert ts1 == []
     assert ts2 == ["730444"]
+
+
+def test_resolve_peer_single_and_timer_yaml_defaults() -> None:
+    yaml_cfg = {"SINGLE_MODE": False, "DEFAULT_UA_TIMER": 60}
+    single, timer = resolve_peer_single_and_timer({}, yaml_cfg)
+    assert single is False
+    assert timer == 60.0
+
+
+def test_resolve_peer_single_and_timer_options_override_yaml() -> None:
+    yaml_cfg = {"SINGLE_MODE": False, "DEFAULT_UA_TIMER": 60}
+    fields = {"SINGLE": "1", "TIMER": 5.0}
+    single, timer = resolve_peer_single_and_timer(fields, yaml_cfg)
+    assert single is True
+    assert timer == 5.0
+
+
+def test_parse_peer_options_static_strips_wrapping_quotes() -> None:
+    """MMDVM_DMO hotspots may wrap OPTIONS in double quotes (CA1ROG / 7301896)."""
+    ts1, ts2 = parse_peer_options_static(b'"TS2=730444;VOICE=0;TIMER=300;"')
+    assert ts1 == []
+    assert ts2 == ["730444"]
+
+
+def test_quoted_options_eligible_for_group_voice_downlink() -> None:
+    peer = {"OPTIONS": b'"TS2=730444;VOICE=0;TIMER=300;"'}
+    assert peer_should_receive_group_voice(peer, 2, 730444, connected_count=8)
 
 
 def test_build_topology_exports_peer_options_static() -> None:
@@ -52,6 +83,26 @@ def test_build_topology_exports_peer_options_static() -> None:
     doc = build_topology(systems, seq=1)
     peer = doc["systems"][0]["peers"][0]
     assert peer["ts2_static"] == ["730444"]
+    assert peer["options"] == "TS2=730444;TIMER=15;"
+
+
+def test_build_topology_omits_pass_from_peer_options() -> None:
+    systems = {
+        "SYSTEM": {
+            "MODE": "MASTER",
+            "ENABLED": True,
+            "PEERS": {
+                bytes_4(730039101): {
+                    "CONNECTION": "YES",
+                    "OPTIONS": b"PASS=secret123;TS2=730;SINGLE=1;",
+                },
+            },
+        },
+    }
+    doc = build_topology(systems, seq=1)
+    peer = doc["systems"][0]["peers"][0]
+    assert peer["options"] == "TS2=730;SINGLE=1;"
+    assert "PASS" not in peer["options"]
 
 
 def test_build_topology_exports_master_static_tgs() -> None:

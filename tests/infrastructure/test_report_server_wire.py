@@ -74,7 +74,7 @@ def test_incremental_bridge_update_sends_delta() -> None:
     )
     client = _CapturingClient()
     factory.clients.append(client)
-    factory._send_state_to(client, force=True)
+    factory.send_bridge(incremental=False)
     factory.set_bridges(
         {
             "52090": [
@@ -83,7 +83,12 @@ def test_incremental_bridge_update_sends_delta() -> None:
         }
     )
     factory.send_bridge(incremental=True)
-    assert len(client.messages) == 1
+    assert len(client.messages) == 2
+    assert client.messages[0][:1] == REPORT_OPCODES["ROUTING_TABLE_SND"]
+    assert client.messages[1][:1] == REPORT_OPCODES["DELTA_SND"]
+    delta = json.loads(client.messages[1][1:].decode())
+    assert delta["type"] == "delta"
+    assert delta["patch"]["type"] == "routing_table"
 
 
 def test_inject_proxy_topology_expanded_for_monitor() -> None:

@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import re
 import time
 from typing import Any
 
+from adn_server.application.bridge.helpers import export_peer_ua_sessions
 from adn_server.domain import int_id
 
 REPORT_PROTOCOL = 2
@@ -50,17 +52,18 @@ def static_tg_list(value: Any) -> list[str]:
     return [text] if text else []
 
 
-def parse_peer_options_static(options: Any) -> tuple[list[str], list[str]]:
-    """Parse hotspot RPTO OPTIONS (``TS1=…;TS2=…;``) into static TG id lists."""
+def _parse_options_kv(options: Any) -> dict[str, str]:
+    """Parse RPTO OPTIONS string into upper-case keys (legacy normalisation)."""
     if options is None:
-        return [], []
+        return {}
     if isinstance(options, bytes):
         text = options.decode("utf-8", errors="replace")
     else:
         text = str(options)
-    text = text.rstrip("\x00").strip()
+    text = text.rstrip("\x00").encode("ascii", "ignore").decode()
+    text = re.sub(r"['\"]", "", text).strip()
     if not text:
-        return [], []
+        return {}
     parsed: dict[str, str] = {}
     for part in text.split(";"):
         part = part.strip()
@@ -68,6 +71,60 @@ def parse_peer_options_static(options: Any) -> tuple[list[str], list[str]]:
             continue
         key, value = part.split("=", 1)
         parsed[key.strip().upper()] = value.strip()
+    for old, new in (("TS1", "TS1_STATIC"), ("TS2", "TS2_STATIC"), ("TIMER", "DEFAULT_UA_TIMER")):
+        if old in parsed and new not in parsed:
+            parsed[new] = parsed[old]
+    return parsed
+
+
+def parse_peer_options_fields(options: Any) -> dict[str, Any]:
+    """Parse OPTIONS into static lists plus optional ``SINGLE`` / ``TIMER`` when present."""
+    parsed = _parse_options_kv(options)
+    if not parsed:
+        return {}
+    out: dict[str, Any] = {}
+    ts1, ts2 = parse_peer_options_static(options)
+    if ts1:
+        out["TS1_STATIC"] = ts1
+    if ts2:
+        out["TS2_STATIC"] = ts2
+    if "SINGLE" in parsed:
+        out["SINGLE"] = parsed["SINGLE"]
+    timer_raw = parsed.get("DEFAULT_UA_TIMER")
+    if timer_raw is not None:
+        try:
+            out["TIMER"] = float(timer_raw)
+        except (TypeError, ValueError):
+            pass
+    return out
+
+
+def resolve_peer_single_and_timer(
+    fields: dict[str, Any],
+    sys_cfg: dict[str, Any],
+) -> tuple[bool, float]:
+    """Use OPTIONS ``SINGLE``/``TIMER`` when present; else YAML ``SINGLE_MODE``/``DEFAULT_UA_TIMER``."""
+    if "SINGLE" in fields:
+        single = str(fields["SINGLE"]).strip() == "1"
+    else:
+        single = bool(sys_cfg.get("SINGLE_MODE", False))
+    if "TIMER" in fields:
+        try:
+            timer = float(fields["TIMER"])
+        except (TypeError, ValueError):
+            timer = float(sys_cfg.get("DEFAULT_UA_TIMER", 10))
+    else:
+        timer = float(sys_cfg.get("DEFAULT_UA_TIMER", 10))
+    if timer <= 0:
+        timer = 35_791_394.0
+    return single, timer
+
+
+def parse_peer_options_static(options: Any) -> tuple[list[str], list[str]]:
+    """Parse hotspot RPTO OPTIONS (``TS1=…;TS2=…;``) into static TG id lists."""
+    parsed = _parse_options_kv(options)
+    if not parsed:
+        return [], []
     for old, new in (("TS1", "TS1_STATIC"), ("TS2", "TS2_STATIC")):
         if old in parsed and new not in parsed:
             parsed[new] = parsed[old]
@@ -131,7 +188,36 @@ def _peer_connected_at(peer: dict[str, Any]) -> int | None:
     return ts if ts > 0 else None
 
 
-def _topology_peer_row(peer_key: Any, peer: dict[str, Any]) -> dict[str, Any]:
+def _sanitized_peer_options_text(options: Any) -> str | None:
+    """RPTO OPTIONS for monitor display (omit ``PASS=`` secrets)."""
+    if options is None:
+        return None
+    if isinstance(options, bytes):
+        text = options.decode("utf-8", errors="replace")
+    else:
+        text = str(options)
+    text = text.rstrip("\x00").strip()
+    if not text:
+        return None
+    parts: list[str] = []
+    for part in text.split(";"):
+        piece = part.strip()
+        if not piece:
+            continue
+        if piece.upper().startswith("PASS="):
+            continue
+        parts.append(piece)
+    if not parts:
+        return None
+    return ";".join(parts) + ";"
+
+
+def _topology_peer_row(
+    peer_key: Any,
+    peer: dict[str, Any],
+    *,
+    sys_cfg: dict[str, Any] | None = None,
+) -> dict[str, Any]:
     row: dict[str, Any] = {
         "id": _dmr_id(peer_key),
         "connected": _peer_connected(peer),
@@ -149,12 +235,24 @@ def _topology_peer_row(peer_key: Any, peer: dict[str, Any]) -> dict[str, Any]:
         text = _peer_field_json(peer[legacy_key])
         if text is not None:
             row[json_key] = text
+    yaml_cfg = sys_cfg if isinstance(sys_cfg, dict) else {}
     if "OPTIONS" in peer:
-        ts1, ts2 = parse_peer_options_static(peer.get("OPTIONS"))
+        opt_text = _sanitized_peer_options_text(peer.get("OPTIONS"))
+        if opt_text:
+            row["options"] = opt_text
+        fields = parse_peer_options_fields(peer.get("OPTIONS"))
+        ts1 = fields.get("TS1_STATIC") or []
+        ts2 = fields.get("TS2_STATIC") or []
         if ts1:
             row["ts1_static"] = ts1
         if ts2:
             row["ts2_static"] = ts2
+        single, timer = resolve_peer_single_and_timer(fields, yaml_cfg)
+    else:
+        single, timer = resolve_peer_single_and_timer({}, yaml_cfg)
+    row["single_mode"] = single
+    row["ua_timer_min"] = timer
+    row["ua_sessions"] = export_peer_ua_sessions(yaml_cfg, peer_key)
     return row
 
 
@@ -230,7 +328,7 @@ def build_topology(systems: dict[str, Any], *, seq: int, ts: float | None = None
         for peer_key, peer in cfg.get("PEERS", {}).items():
             if not isinstance(peer, dict):
                 continue
-            peers_out.append(_topology_peer_row(peer_key, peer))
+            peers_out.append(_topology_peer_row(peer_key, peer, sys_cfg=cfg))
         entry["peers"] = peers_out
         out_systems.append(entry)
     return {"type": "topology", "seq": int(seq), "ts": float(epoch), "systems": out_systems}

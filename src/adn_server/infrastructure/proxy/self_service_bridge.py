@@ -54,6 +54,8 @@ class ProxySelfServiceBridge:
         self._log = logger or logging.getLogger(__name__)
         self._opt_timers: dict[bytes, IDelayedCall] = {}
         self._loop_calls: list[LoopingCall] = []
+        # Peers that sent PASS= this session — only they get MySQL OPTIONS push.
+        self._mysql_option_peers: set[bytes] = set()
 
     def start_loops(self) -> None:
         """Legacy timers: send_opts 10s, lst_seen 120s, clean_tbl 3600s."""
@@ -79,6 +81,7 @@ class ProxySelfServiceBridge:
             if timer.active():
                 timer.cancel()
         self._opt_timers.clear()
+        self._mysql_option_peers.clear()
 
     def before_inject(
         self,
@@ -99,6 +102,7 @@ class ProxySelfServiceBridge:
 
     def on_session_expired(self, peer_id: bytes) -> None:
         self._cancel_opt_timer(peer_id)
+        self._mysql_option_peers.discard(peer_id)
         self._store.updt_tbl("log_out", peer_id)
 
     def _handle_rptc(self, data: bytes, peer_id: bytes, host: str) -> None:
@@ -134,7 +138,9 @@ class ProxySelfServiceBridge:
                     ClientEndpoint(host=host, port=port),
                 )
                 self._log.info("(SELF_SERVICE) Password stored for: %s", int_id(peer_id))
+                self._mysql_option_peers.add(peer_id)
             return True
+        self._mysql_option_peers.discard(peer_id)
         self._store.updt_tbl("opt_rcvd", peer_id)
         self._cancel_opt_timer(peer_id)
         self._log.info("(SELF_SERVICE) Options received from: %s", int_id(peer_id))
@@ -161,6 +167,8 @@ class ProxySelfServiceBridge:
     @inlineCallbacks
     def _login_opt(self, peer_id: bytes) -> None:
         self._opt_timers.pop(peer_id, None)
+        if peer_id not in self._mysql_option_peers:
+            return
         if self._use_cases.resolve_client(peer_id) is None:
             return
         try:
@@ -187,6 +195,8 @@ class ProxySelfServiceBridge:
                 if pid is None or not options:
                     continue
                 if self._use_cases.resolve_client(pid) is None:
+                    continue
+                if pid not in self._mysql_option_peers:
                     continue
                 self._store.updt_tbl("rst_mod", pid)
                 self._inject_rpto(pid, options)

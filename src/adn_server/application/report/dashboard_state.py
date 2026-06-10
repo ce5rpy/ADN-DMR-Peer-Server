@@ -6,7 +6,7 @@ import time
 from typing import Any
 
 from adn_server.domain import int_id
-from .payloads import _peer_field_json, build_topology, static_tg_list
+from .payloads import _peer_field_json, build_topology
 
 
 def _connected_topology_peers(system: dict[str, Any]) -> list[dict[str, Any]]:
@@ -106,17 +106,14 @@ def build_dashboard_state(
                 "mode": "MASTER",
                 "peers": {int(p["id"]): p for p in live if "id" in p},
             }
+            if "SINGLE_MODE" in cfg:
+                block["single_mode"] = bool(cfg.get("SINGLE_MODE", False))
+            if cfg.get("DEFAULT_UA_TIMER") is not None:
+                block["default_ua_timer"] = float(cfg.get("DEFAULT_UA_TIMER", 10))
             if topo.get("ip"):
                 block["ip"] = topo["ip"]
             if topo.get("port") is not None:
                 block["port"] = int(topo["port"])
-            master_ts1 = static_tg_list(cfg.get("TS1_STATIC"))
-            master_ts2 = static_tg_list(cfg.get("TS2_STATIC"))
-            for peer_row in block["peers"].values():
-                if master_ts1 and "ts1_static" not in peer_row:
-                    peer_row["ts1_static"] = master_ts1
-                if master_ts2 and "ts2_static" not in peer_row:
-                    peer_row["ts2_static"] = master_ts2
             masters[name] = block
         elif mode == "OPENBRIDGE":
             openbridges[name] = _openbridge_block(name, cfg, topo)

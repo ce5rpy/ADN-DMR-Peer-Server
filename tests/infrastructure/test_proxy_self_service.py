@@ -113,13 +113,28 @@ def test_self_service_settings_reads_monitor_keys() -> None:
     assert ss["pbkdf2_iterations"] == 2000
 
 
-def test_rptc_ins_conf_and_login_opt_injects_rpto() -> None:
+def test_rptc_login_opt_skips_without_pass() -> None:
     bridge, sink, store, _sender = _bridge()
     peer = bytes_4(7300444)
     store.options_by_peer[peer] = "TS2=730444;"
     packet = RPTC + peer + b"CE1ILI  " + b"\x00" * 85 + b"4"
     bridge.before_inject(packet, ("192.168.1.10", 62031), peer)
     assert ("ins_conf", peer) in store.actions
+    _run_deferred(bridge._login_opt(peer))
+    assert sink.injected == []
+
+
+def test_rptc_login_opt_injects_rpto_after_pass() -> None:
+    bridge, sink, store, _sender = _bridge()
+    peer = bytes_4(7300444)
+    store.options_by_peer[peer] = "TS2=730444;"
+    bridge.before_inject(
+        RPTO + peer + b"PASS=secret123",
+        ("192.168.1.10", 62031),
+        peer,
+    )
+    packet = RPTC + peer + b"CE1ILI  " + b"\x00" * 85 + b"4"
+    bridge.before_inject(packet, ("192.168.1.10", 62031), peer)
     _run_deferred(bridge._login_opt(peer))
     assert sink.injected
     assert sink.injected[0][0] == RPTO + peer + b"TS2=730444;"
@@ -136,9 +151,23 @@ def test_rpto_pass_stores_password_and_skips_inject() -> None:
     assert sender.sent and sender.sent[0][0][:6] == b"RPTACK"
 
 
-def test_send_opts_pushes_modified_rows_to_master() -> None:
+def test_send_opts_skips_without_pass() -> None:
     bridge, sink, store, _sender = _bridge()
     peer = bytes_4(7300444)
+    store.pending_modified = [(peer, "TS2=730444;")]
+    _run_deferred(bridge.send_opts())
+    assert ("rst_mod", peer) not in store.actions
+    assert sink.injected == []
+
+
+def test_send_opts_pushes_modified_rows_after_pass() -> None:
+    bridge, sink, store, _sender = _bridge()
+    peer = bytes_4(7300444)
+    bridge.before_inject(
+        RPTO + peer + b"PASS=secret123",
+        ("192.168.1.10", 62031),
+        peer,
+    )
     store.pending_modified = [(peer, "TS2=730444;")]
     _run_deferred(bridge.send_opts())
     assert ("rst_mod", peer) in store.actions

@@ -5,6 +5,7 @@
 
 from __future__ import annotations
 
+import time
 from typing import Any
 
 from ...domain import bytes_3, bytes_4, int_id
@@ -124,6 +125,246 @@ def parse_dmrd_route_fields(packet: bytes) -> tuple[int, int, str] | None:
     return slot, int_id(packet[8:11]), call_type
 
 
+def _system_has_active_bridge_leg(
+    bridges: dict[str, Any] | None,
+    system: str,
+    slot: int,
+    tgid: int,
+) -> bool:
+    """True when BRIDGES has an ACTIVE leg for ``system`` on ``(slot, tgid)``."""
+    if not bridges or not system:
+        return False
+    legs = bridges.get(str(tgid))
+    if not isinstance(legs, list):
+        return False
+    for leg in legs:
+        if not isinstance(leg, dict) or not leg.get("ACTIVE"):
+            continue
+        if str(leg.get("SYSTEM", "")) != system:
+            continue
+        if int(leg.get("TS", 0)) != int(slot):
+            continue
+        return True
+    return False
+
+
+def peer_options_fields(peer: dict[str, Any]) -> dict[str, Any]:
+    """Parse hotspot OPTIONS into fields used by SINGLE/TIMER resolution."""
+    from adn_server.application.report.payloads import parse_peer_options_fields
+
+    return parse_peer_options_fields(peer.get("OPTIONS"))
+
+
+def _peer_ua_session_entry(
+    sys_cfg: dict[str, Any],
+    peer_id: bytes | None,
+    slot: int,
+) -> dict[str, Any] | None:
+    if peer_id is None:
+        return None
+    store = sys_cfg.get("_PEER_UA_SESSIONS")
+    if not isinstance(store, dict):
+        return None
+    pk = bytes_4(int_id(peer_id))
+    per_peer = store.get(pk)
+    if not isinstance(per_peer, dict):
+        return None
+    entry = per_peer.get(slot)
+    return entry if isinstance(entry, dict) else None
+
+
+def _write_peer_ua_session(
+    peer: dict[str, Any],
+    peer_id: bytes,
+    slot: int,
+    tgid: int,
+    expires: float,
+    sys_cfg: dict[str, Any],
+) -> None:
+    entry = {"tgid": int(tgid), "expires": float(expires)}
+    pk = bytes_4(int_id(peer_id))
+    sys_cfg.setdefault("_PEER_UA_SESSIONS", {}).setdefault(pk, {})[slot] = entry
+    peer.setdefault("_UA_SESSION", {})[slot] = entry
+
+
+def peer_single_mode(peer: dict[str, Any], sys_cfg: dict[str, Any]) -> bool:
+    from adn_server.application.report.payloads import resolve_peer_single_and_timer
+
+    single, _ = resolve_peer_single_and_timer(peer_options_fields(peer), sys_cfg)
+    return single
+
+
+def register_peer_ua_session(
+    peer: dict[str, Any],
+    peer_id: bytes,
+    slot: int,
+    tgid: int,
+    sys_cfg: dict[str, Any],
+    *,
+    now: float | None = None,
+) -> None:
+    """Track exclusive SINGLE TG for this hotspot (RX / local TX), per-peer OPTIONS TIMER."""
+    if not peer_single_mode(peer, sys_cfg):
+        return
+    from adn_server.application.report.payloads import resolve_peer_single_and_timer
+
+    _, timer_min = resolve_peer_single_and_timer(peer_options_fields(peer), sys_cfg)
+    pkt_time = time.time() if now is None else now
+    _write_peer_ua_session(
+        peer,
+        peer_id,
+        slot,
+        int(tgid),
+        pkt_time + float(timer_min) * 60.0,
+        sys_cfg,
+    )
+
+
+def seed_peer_ua_session_from_status(
+    peer: dict[str, Any],
+    peer_id: bytes,
+    slot: int,
+    status_slot: dict[str, Any],
+    sys_cfg: dict[str, Any],
+    *,
+    now: float | None = None,
+) -> None:
+    """Seed SINGLE session after RPTO when TX happened before OPTIONS (inject-only)."""
+    if not peer_single_mode(peer, sys_cfg):
+        return
+    pkt_time = time.time() if now is None else now
+    if peer_single_exclusive_tgid(peer, slot, sys_cfg, peer_id=peer_id, now=pkt_time) is not None:
+        return
+    rx_peer = status_slot.get("RX_PEER", b"\x00\x00\x00\x00")
+    if bytes_4(int_id(peer_id)) != bytes_4(int_id(rx_peer)):
+        return
+    rx_tgid = int_id(status_slot.get("RX_TGID", b"\x00\x00\x00"))
+    if rx_tgid <= 0:
+        return
+    connected_at = float(peer.get("CONNECTED", 0) or 0)
+    rx_time = float(status_slot.get("RX_TIME", 0) or 0)
+    if connected_at > 0 and rx_time < connected_at - 0.5:
+        return
+    register_peer_ua_session(peer, peer_id, slot, rx_tgid, sys_cfg, now=pkt_time)
+
+
+def clear_peer_rx_status_slots(
+    status: dict[Any, Any],
+    peer_id: bytes,
+) -> None:
+    """Reset RX fields on slots last owned by this peer (avoids stale OPTIONS seed)."""
+    pk = bytes_4(int_id(peer_id))
+    for slot in (1, 2):
+        slot_st = status.get(slot)
+        if not isinstance(slot_st, dict):
+            continue
+        if bytes_4(int_id(slot_st.get("RX_PEER", b"\x00"))) != pk:
+            continue
+        slot_st["RX_PEER"] = b"\x00"
+        slot_st["RX_TGID"] = b"\x00\x00\x00"
+        slot_st["RX_STREAM_ID"] = b"\x00"
+        slot_st["RX_TIME"] = 0.0
+
+
+def export_peer_ua_sessions(
+    sys_cfg: dict[str, Any],
+    peer_id: bytes | int,
+    *,
+    now: float | None = None,
+) -> dict[str, dict[str, float | int]]:
+    """Active SINGLE sessions for monitor snapshot (server source of truth)."""
+    pkt_time = time.time() if now is None else now
+    pk = bytes_4(int_id(peer_id))
+    out: dict[str, dict[str, float | int]] = {}
+    store = sys_cfg.get("_PEER_UA_SESSIONS")
+    if not isinstance(store, dict):
+        return out
+    per_peer = store.get(pk)
+    if not isinstance(per_peer, dict):
+        return out
+    for slot in (1, 2):
+        entry = per_peer.get(slot)
+        if not isinstance(entry, dict):
+            continue
+        exp = float(entry.get("expires", 0) or 0)
+        tgid = int(entry.get("tgid", 0) or 0)
+        if tgid > 0 and exp > pkt_time:
+            out[str(slot)] = {"tgid": tgid, "expires_at": exp}
+    return out
+
+
+def clear_peer_ua_sessions(
+    peer: dict[str, Any],
+    sys_cfg: dict[str, Any],
+    peer_id: bytes,
+    *,
+    slot: int | None = None,
+) -> None:
+    """Clear per-peer SINGLE session (TG 4000, reconnect)."""
+    pk = bytes_4(int_id(peer_id))
+    store = sys_cfg.get("_PEER_UA_SESSIONS")
+    if isinstance(store, dict) and pk in store:
+        if slot is None:
+            store.pop(pk, None)
+        else:
+            per_peer = store.get(pk)
+            if isinstance(per_peer, dict):
+                per_peer.pop(slot, None)
+    sessions = peer.get("_UA_SESSION")
+    if isinstance(sessions, dict):
+        if slot is None:
+            sessions.clear()
+        else:
+            sessions.pop(slot, None)
+
+
+def peer_single_exclusive_tgid(
+    peer: dict[str, Any],
+    slot: int,
+    sys_cfg: dict[str, Any],
+    *,
+    peer_id: bytes | None = None,
+    now: float | None = None,
+) -> int | None:
+    """Active SINGLE session TG on ``slot``, or ``None`` when no exclusive lock."""
+    if not peer_single_mode(peer, sys_cfg):
+        return None
+    pkt_time = time.time() if now is None else now
+    entry = _peer_ua_session_entry(sys_cfg, peer_id, slot)
+    if entry is None:
+        sessions = peer.get("_UA_SESSION")
+        if isinstance(sessions, dict):
+            entry = sessions.get(slot)
+    if not isinstance(entry, dict):
+        return None
+    if pkt_time >= float(entry.get("expires", 0)):
+        return None
+    locked = entry.get("tgid")
+    return int(locked) if locked is not None else None
+
+
+def peer_single_blocks_group_voice(
+    peer: dict[str, Any],
+    slot: int,
+    tgid: int,
+    sys_cfg: dict[str, Any] | None,
+    *,
+    peer_id: bytes | None = None,
+    now: float | None = None,
+) -> bool:
+    """True when SINGLE=1 peer must not receive downlink for ``tgid`` on ``slot``.
+
+    With an active session on TG X, every other TG (static or dynamic) is blocked
+    until the TIMER expires or a new local TX replaces the session.
+    """
+    if not sys_cfg:
+        return False
+    locked = peer_single_exclusive_tgid(peer, slot, sys_cfg, peer_id=peer_id, now=now)
+    if locked is None:
+        return False
+    return int(tgid) != locked
+
+
 def peer_receives_group_tgid(peer: dict[str, Any], slot: int, tgid: int) -> bool:
     """True when peer RPTO OPTIONS list the group TG on that voice timeslot."""
     from adn_server.application.report.payloads import parse_peer_options_static
@@ -133,6 +374,75 @@ def peer_receives_group_tgid(peer: dict[str, Any], slot: int, tgid: int) -> bool
     if not static:
         return False
     return str(tgid) in static
+
+
+def peer_single_blocks_uplink(
+    peer: dict[str, Any],
+    peer_id: bytes,
+    slot: int,
+    tgid: int,
+    sys_cfg: dict[str, Any] | None,
+    *,
+    now: float | None = None,
+) -> bool:
+    """SINGLE=1 never blocks local TX; a new TG replaces the session (see ``register_peer_ua_session``).
+
+    Downlink exclusivity is enforced by :func:`peer_single_blocks_group_voice` only.
+    """
+    del peer, peer_id, slot, tgid, sys_cfg, now
+    return False
+
+
+def _peer_owns_dynamic_ua(
+    peer: dict[str, Any],
+    slot: int,
+    tgid: int,
+    sys_cfg: dict[str, Any] | None,
+    *,
+    peer_id: bytes | None = None,
+    now: float | None = None,
+) -> bool:
+    """True when ``tgid`` is a non-static UA this peer activated (SINGLE session owner)."""
+    if peer_receives_group_tgid(peer, slot, tgid):
+        return False
+    if not sys_cfg:
+        return False
+    locked = peer_single_exclusive_tgid(peer, slot, sys_cfg, peer_id=peer_id, now=now)
+    return locked is not None and int(tgid) == locked
+
+
+def peer_should_receive_group_voice(
+    peer: dict[str, Any],
+    slot: int,
+    tgid: int,
+    *,
+    peer_id: bytes | None = None,
+    system: str | None = None,
+    bridges: dict[str, Any] | None = None,
+    connected_count: int = 1,
+    sys_cfg: dict[str, Any] | None = None,
+    now: float | None = None,
+) -> bool:
+    """Whether a hotspot should get downlink / monitor voice for ``(slot, tgid)``.
+
+    Inject-only multi-hotspot rules (per peer):
+
+    1. ``SINGLE=1`` with an active session on another TG → deny all other TGs.
+    2. TG in this peer's OPTIONS static list → allow (when not blocked by SINGLE).
+    3. Dynamic UA not in static list but owned by this peer's session → allow.
+    4. No static TG in OPTIONS and no owned dynamic session → deny (no fan-out).
+
+    A system-wide ACTIVE bridge leg must **not** fan out to every hotspot; that
+    was the regression when ``bridges`` were passed into this helper.
+    """
+    _ = (system, bridges)  # kept for call-site compatibility; not used for fan-out
+    if peer_single_blocks_group_voice(peer, slot, tgid, sys_cfg, peer_id=peer_id, now=now):
+        return False
+    if peer_receives_group_tgid(peer, slot, tgid):
+        return True
+    if _peer_owns_dynamic_ua(peer, slot, tgid, sys_cfg, peer_id=peer_id, now=now):
+        return True
+    return False
 
 
 def peer_matches_rf_source(peer_id: bytes, rf_src: bytes, peers: dict[Any, Any]) -> bool:

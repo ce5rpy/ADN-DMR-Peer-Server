@@ -11,7 +11,7 @@ import time
 from collections import deque
 from typing import Any
 
-from ...domain import bytes_3, int_id
+from ...domain import bytes_3, bytes_4, int_id
 
 logger = logging.getLogger(__name__)
 
@@ -157,10 +157,34 @@ class BridgeTableMixin:
             self.make_single_bridge(bytes_3(tg), system, ts, _tmout)
         self._ensure_master_legs_in_tg_bridge(tg, system, _tmout)
         bridges = self._router.get_bridges()
+        timeout_sec = _tmout * 60.0
+        now = time.time()
+        single_mode = bool(
+            self._config.get("SYSTEMS", {}).get(system, {}).get("SINGLE_MODE", False)
+        )
         bridgetemp = deque()
         for bridgesystem in bridges.get(key, []):
             if bridgesystem.get("SYSTEM") == system and bridgesystem.get("TS") == ts:
-                bridgetemp.append({"SYSTEM": system, "TS": ts, "TGID": bytes_3(tg), "ACTIVE": True, "TIMEOUT": _tmout * 60.0, "TO_TYPE": "OFF", "OFF": [], "ON": [bytes_3(tg)], "RESET": [], "TIMER": time.time() + _tmout * 60.0})
+                active = True
+                timer = now + timeout_sec
+                if single_mode and bridgesystem.get("ACTIVE") is False:
+                    # OPTIONS refresh must not undo in-band SINGLE deactivation ([5] on VTERM).
+                    active = False
+                    timer = float(bridgesystem.get("TIMER") or timer)
+                bridgetemp.append(
+                    {
+                        "SYSTEM": system,
+                        "TS": ts,
+                        "TGID": bytes_3(tg),
+                        "ACTIVE": active,
+                        "TIMEOUT": timeout_sec,
+                        "TO_TYPE": "OFF",
+                        "OFF": [],
+                        "ON": [bytes_3(tg)],
+                        "RESET": [],
+                        "TIMER": timer,
+                    }
+                )
             else:
                 bridgetemp.append(bridgesystem)
         bridges[key] = list(bridgetemp)
@@ -316,15 +340,9 @@ class BridgeTableMixin:
                 self.make_static_tg(tg, 2, tmout, system)
         self._sync_subscription_store()
 
-    def options_config_for_system(self, system_name: str) -> None:
-        """Update static TG bridges for one system immediately (e.g. when RPTO received). So incoming OBP traffic reaches hotspots without waiting for the 26s options_config_loop."""
-        prohibited_tgs = (0, 1, 2, 3, 4, 5, 9, 9990, 9991, 9992, 9993, 9994, 9995, 9996, 9997, 9998, 9999)
-        systems_cfg = self._config.get("SYSTEMS", {})
-        sys_cfg = systems_cfg.get(system_name, {})
-        if sys_cfg.get("MODE") != "MASTER" or "OPTIONS" not in sys_cfg:
-            return
+    def _parse_options_string(self, opt_str: bytes | str) -> dict[str, Any] | None:
+        """Parse hotspot OPTIONS / RPTO payload into a normalized options dict."""
         try:
-            opt_str = sys_cfg["OPTIONS"]
             if isinstance(opt_str, bytes):
                 opt_str = opt_str.decode("utf8", errors="replace")
             opt_str = opt_str.rstrip("\x00").encode("ascii", "ignore").decode()
@@ -336,7 +354,15 @@ class BridgeTableMixin:
                     _options[k.strip()] = v.strip()
                 except ValueError:
                     continue
-            for old_k, new_k in [("DIAL", "DEFAULT_REFLECTOR"), ("TIMER", "DEFAULT_UA_TIMER"), ("TS1", "TS1_STATIC"), ("TS2", "TS2_STATIC")]:
+            for old_k, new_k in [
+                ("DIAL", "DEFAULT_REFLECTOR"),
+                ("TIMER", "DEFAULT_UA_TIMER"),
+                ("TS1", "TS1_STATIC"),
+                ("TS2", "TS2_STATIC"),
+                ("IDENTTG", "OVERRIDE_IDENT_TG"),
+                ("VOICETG", "OVERRIDE_IDENT_TG"),
+                ("IDENT", "VOICE"),
+            ]:
                 if old_k in _options:
                     _options[new_k] = _options.pop(old_k)
             for old_k, new_k in [("StartRef", "DEFAULT_REFLECTOR"), ("RelinkTime", "DEFAULT_UA_TIMER")]:
@@ -356,31 +382,216 @@ class BridgeTableMixin:
                     if p is not None:
                         parts.append(p)
                 _options["TS2_STATIC"] = ",".join(parts)
-            _options.setdefault("DEFAULT_UA_TIMER", sys_cfg.get("DEFAULT_UA_TIMER", 10))
-            _tmout = float(int(_options.get("DEFAULT_UA_TIMER", 10)))
-            if _tmout <= 0:
-                _tmout = 35791394
-            new_ts1 = str(_options.get("TS1_STATIC") or "").strip()
-            new_ts2 = str(_options.get("TS2_STATIC") or "").strip()
-            # Legacy options_config: malformed TS1/TS2 aborts the whole OPTIONS apply (continue).
-            if new_ts1 and re.search(r"[^\d,]", new_ts1):
+            return _options
+        except Exception:
+            return None
+
+    def _yaml_default_ua_timer(self, sys_cfg: dict[str, Any]) -> float:
+        tmout = float(sys_cfg.get("DEFAULT_UA_TIMER", 10))
+        return 35791394.0 if tmout <= 0 else tmout
+
+    def _peer_ua_timer_minutes(self, parsed: dict[str, Any], sys_cfg: dict[str, Any]) -> float:
+        try:
+            value = int(parsed.get("DEFAULT_UA_TIMER", sys_cfg.get("DEFAULT_UA_TIMER", 10)))
+        except (TypeError, ValueError):
+            return self._yaml_default_ua_timer(sys_cfg)
+        if value == 0:
+            return 35791394.0
+        return float(value)
+
+    def _ua_timer_minutes_for_peer(self, system_name: str, peer_id: bytes) -> float:
+        """UA bridge timeout (minutes): transmitting peer OPTIONS TIMER, else YAML default."""
+        sys_cfg = self._config.get("SYSTEMS", {}).get(system_name, {})
+        protocols = self._get_protocols() if self._get_protocols else {}
+        proto = protocols.get(system_name)
+        peers = getattr(proto, "_peers", {}) if proto is not None else {}
+        if isinstance(peers, dict):
+            peer_int = int_id(peer_id)
+            for pk, peer in peers.items():
+                if not isinstance(peer, dict) or peer.get("CONNECTION") != "YES":
+                    continue
+                try:
+                    pk_int = int_id(pk if isinstance(pk, bytes) else bytes_4(int(pk)))
+                except (TypeError, ValueError):
+                    continue
+                if pk_int != peer_int:
+                    continue
+                opt = peer.get("OPTIONS")
+                if opt is None:
+                    break
+                parsed = self._parse_options_string(opt)
+                if parsed:
+                    return self._peer_ua_timer_minutes(parsed, sys_cfg)
+                break
+        return self._yaml_default_ua_timer(sys_cfg)
+
+    def _connected_peer_options_strings(self, system_name: str) -> list[bytes | str]:
+        protocols = self._get_protocols() if self._get_protocols else {}
+        proto = protocols.get(system_name)
+        peers = getattr(proto, "_peers", {}) if proto is not None else {}
+        options: list[bytes | str] = []
+        if not isinstance(peers, dict):
+            return options
+        for peer in peers.values():
+            if not isinstance(peer, dict) or peer.get("CONNECTION") != "YES":
+                continue
+            opt = peer.get("OPTIONS")
+            if opt is not None:
+                options.append(opt)
+        return options
+
+    def _static_tg_timer_maps_for_master(
+        self,
+        system_name: str,
+        *,
+        peer_options: bytes | str | None = None,
+    ) -> tuple[dict[int, float], dict[int, float]]:
+        """Per-TG TIMER (minutes) from each peer OPTIONS; never merged with max() across peers."""
+        sys_cfg = self._config.get("SYSTEMS", {}).get(system_name, {})
+        ts1_timers: dict[int, float] = {}
+        ts2_timers: dict[int, float] = {}
+        if peer_options is not None:
+            parsed = self._parse_options_static_tgs(peer_options, sys_cfg)
+            if parsed is not None:
+                peer_tmout, ts1_list, ts2_list = parsed
+                for tg in ts1_list:
+                    ts1_timers[tg] = peer_tmout
+                for tg in ts2_list:
+                    ts2_timers[tg] = peer_tmout
+            return ts1_timers, ts2_timers
+        for opt in self._connected_peer_options_strings(system_name):
+            parsed = self._parse_options_static_tgs(opt, sys_cfg)
+            if parsed is None:
+                continue
+            peer_tmout, ts1_list, ts2_list = parsed
+            for tg in ts1_list:
+                if tg not in ts1_timers:
+                    ts1_timers[tg] = peer_tmout
+            for tg in ts2_list:
+                if tg not in ts2_timers:
+                    ts2_timers[tg] = peer_tmout
+        return ts1_timers, ts2_timers
+
+    def _options_static_apply_fingerprint(self, system_name: str) -> str:
+        """Fingerprint for duplicate RPTO short-circuit (includes runtime SINGLE_MODE)."""
+        sys_cfg = self._config.get("SYSTEMS", {}).get(system_name, {})
+        merged = self._merged_static_tg_lists_for_master(system_name)
+        if merged is not None:
+            ts1_nums, ts2_nums = merged
+            new_ts1 = ",".join(str(x) for x in ts1_nums)
+            new_ts2 = ",".join(str(x) for x in ts2_nums)
+        else:
+            new_ts1 = str(sys_cfg.get("TS1_STATIC") or "").strip()
+            new_ts2 = str(sys_cfg.get("TS2_STATIC") or "").strip()
+        return (
+            f"{new_ts1}|{new_ts2}|"
+            f"{int(bool(sys_cfg.get('SINGLE_MODE', False)))}"
+        )
+
+    def _options_static_lists_valid(self, opt_str: bytes | str) -> bool:
+        """Legacy: malformed TS1/TS2 in OPTIONS aborts static bridge refresh."""
+        parsed = self._parse_options_string(opt_str)
+        if not parsed:
+            return False
+        for key in ("TS1_STATIC", "TS2_STATIC"):
+            val = str(parsed.get(key) or "").strip()
+            if val and re.search(r"[^\d,]", val):
+                return False
+        return True
+
+    def _apply_master_runtime_options(self, system_name: str, _options: dict[str, Any]) -> None:
+        """Apply SINGLE/TIMER/VOICE/LANG from peer OPTIONS over YAML defaults (legacy options_config).
+
+        Independent of ``GLOBAL.USE_SUBSCRIPTION_ROUTER``: BRIDGES remains authoritative for
+        ACTIVE/timer mutations; the store is refreshed via ``_sync_subscription_store`` on OPTIONS paths.
+        """
+        systems_cfg = self._config.get("SYSTEMS", {})
+        sys_cfg = systems_cfg.get(system_name, {})
+        if sys_cfg.get("MODE") != "MASTER":
+            return
+        if "VOICE" in _options and bool(_options["VOICE"]) and (
+            sys_cfg.get("VOICE_IDENT") != bool(int(_options["VOICE"]))
+        ):
+            sys_cfg["VOICE_IDENT"] = bool(int(_options["VOICE"]))
+            logger.debug("(OPTIONS) %s - Setting voice ident to %s", system_name, sys_cfg["VOICE_IDENT"])
+        if "OVERRIDE_IDENT_TG" in _options and _options["OVERRIDE_IDENT_TG"] and (
+            sys_cfg.get("OVERRIDE_IDENT_TG") != int(_options["OVERRIDE_IDENT_TG"])
+        ):
+            sys_cfg["OVERRIDE_IDENT_TG"] = int(_options["OVERRIDE_IDENT_TG"])
+            logger.debug(
+                "(OPTIONS) %s - Setting OVERRIDE_IDENT_TG to %s",
+                system_name,
+                sys_cfg["OVERRIDE_IDENT_TG"],
+            )
+        if "LANG" in _options and _options["LANG"] != sys_cfg.get("ANNOUNCEMENT_LANGUAGE"):
+            sys_cfg["ANNOUNCEMENT_LANGUAGE"] = _options["LANG"]
+            logger.debug("(OPTIONS) %s - Setting voice language to %s", system_name, sys_cfg["ANNOUNCEMENT_LANGUAGE"])
+        if "SINGLE" in _options and (sys_cfg.get("SINGLE_MODE") != bool(int(_options["SINGLE"]))):
+            sys_cfg["SINGLE_MODE"] = bool(int(_options["SINGLE"]))
+            logger.info("(OPTIONS) %s - Setting SINGLE_MODE to %s", system_name, sys_cfg["SINGLE_MODE"])
+        # TIMER is per-peer: applied via make_static_tg for that peer's static TGs only.
+
+    def options_config_for_system(
+        self,
+        system_name: str,
+        peer_options: bytes | str | None = None,
+    ) -> None:
+        """Update runtime flags and static TG bridges (RPTO or voice path).
+
+        ``peer_options`` from RPTO overrides YAML (inject-only proxy: OPTIONS live on each peer).
+        """
+        prohibited_tgs = (0, 1, 2, 3, 4, 5, 9, 9990, 9991, 9992, 9993, 9994, 9995, 9996, 9997, 9998, 9999)
+        systems_cfg = self._config.get("SYSTEMS", {})
+        sys_cfg = systems_cfg.get(system_name, {})
+        if sys_cfg.get("MODE") != "MASTER":
+            return
+        try:
+            if peer_options is not None:
+                parsed_peer = self._parse_options_string(peer_options)
+                if parsed_peer:
+                    self._apply_master_runtime_options(system_name, parsed_peer)
+            elif "OPTIONS" in sys_cfg:
+                parsed_sys = self._parse_options_string(sys_cfg["OPTIONS"])
+                if parsed_sys:
+                    self._apply_master_runtime_options(system_name, parsed_sys)
+
+            source_opt: bytes | str | None = peer_options
+            if source_opt is None and "OPTIONS" in sys_cfg:
+                source_opt = sys_cfg["OPTIONS"]
+            if source_opt is not None and not self._options_static_lists_valid(source_opt):
+                self._sync_subscription_store()
                 return
-            if new_ts2 and re.search(r"[^\d,]", new_ts2):
-                return
+
             merged = self._merged_static_tg_lists_for_master(system_name)
-            if merged is not None:
-                _tmout, ts1_nums, ts2_nums = merged
-                new_ts1 = ",".join(str(x) for x in ts1_nums)
-                new_ts2 = ",".join(str(x) for x in ts2_nums)
-            if re.search(r"[^\d,]", new_ts1) or re.search(r"[^\d,]", new_ts2):
-                return
-            # Peers may resend identical RPTO on every voice burst. YAML may already match parsed TS — do not
-            # compare only to TS*_STATIC (first RPTO could skip make_static_tg). Skip if we already applied
-            # this exact fingerprint after a previous RPTO in this process.
-            _fp = f"{new_ts1}|{new_ts2}|{int(_tmout)}"
+            _fp = self._options_static_apply_fingerprint(system_name)
             if sys_cfg.get("_options_static_apply_fp") == _fp:
+                if peer_options is not None:
+                    ts1_timers, ts2_timers = self._static_tg_timer_maps_for_master(
+                        system_name, peer_options=peer_options
+                    )
+                    for tg, tmout in ts1_timers.items():
+                        self.make_static_tg(tg, 1, tmout, system_name)
+                    for tg, tmout in ts2_timers.items():
+                        self.make_static_tg(tg, 2, tmout, system_name)
                 self._restore_prohibited_static_bridge_legs(system_name)
                 self._sync_subscription_store()
+                return
+            if merged is None:
+                # Echo / parrot TGs (9990–9999) are excluded from merged lists but still need restore.
+                self._restore_prohibited_static_bridge_legs(system_name)
+                self._sync_subscription_store()
+                return
+            ts1_nums, ts2_nums = merged
+            yaml_tmout = self._yaml_default_ua_timer(sys_cfg)
+            if peer_options is not None:
+                ts1_timers, ts2_timers = self._static_tg_timer_maps_for_master(
+                    system_name, peer_options=peer_options
+                )
+            else:
+                ts1_timers, ts2_timers = self._static_tg_timer_maps_for_master(system_name)
+            new_ts1 = ",".join(str(x) for x in ts1_nums)
+            new_ts2 = ",".join(str(x) for x in ts2_nums)
+            if re.search(r"[^\d,]", new_ts1) or re.search(r"[^\d,]", new_ts2):
                 return
             # Legacy: reset TGs that were removed (bridge_master.py 1736-1767)
             old_ts1 = str(sys_cfg.get("TS1_STATIC") or "").strip()
@@ -407,7 +618,7 @@ class BridgeTableMixin:
                 try:
                     tg = int(tg_s)
                     if tg not in new_ts1_set:
-                        self.reset_static_tg(tg, 1, _tmout, system_name)
+                        self.reset_static_tg(tg, 1, ts1_timers.get(tg, yaml_tmout), system_name)
                 except ValueError:
                     pass
             for tg_s in old_ts2.split(","):
@@ -416,33 +627,28 @@ class BridgeTableMixin:
                 try:
                     tg = int(tg_s)
                     if tg not in new_ts2_set and tg != 0 and tg < 16777215:
-                        self.reset_static_tg(tg, 2, _tmout, system_name)
+                        self.reset_static_tg(tg, 2, ts2_timers.get(tg, yaml_tmout), system_name)
                 except ValueError:
                     pass
-            for tg_s in new_ts1.split(","):
-                if not tg_s.strip():
+            peer_ts1_set = set(ts1_timers) if peer_options is not None else None
+            peer_ts2_set = set(ts2_timers) if peer_options is not None else None
+            for tg in ts1_nums:
+                if tg in prohibited_tgs:
                     continue
-                try:
-                    tg = int(tg_s)
-                    if tg in prohibited_tgs:
-                        continue
-                    self.make_static_tg(tg, 1, _tmout, system_name)
-                except ValueError:
-                    pass
-            for tg_s in new_ts2.split(","):
-                if not tg_s.strip():
+                if peer_ts1_set is not None and tg not in peer_ts1_set:
                     continue
-                try:
-                    tg = int(tg_s)
-                    if tg == 0 or tg >= 16777215 or tg in prohibited_tgs:
-                        continue
-                    self.make_static_tg(tg, 2, _tmout, system_name)
-                except ValueError:
-                    pass
+                self.make_static_tg(tg, 1, ts1_timers.get(tg, yaml_tmout), system_name)
+            for tg in ts2_nums:
+                if tg == 0 or tg >= 16777215 or tg in prohibited_tgs:
+                    continue
+                if peer_ts2_set is not None and tg not in peer_ts2_set:
+                    continue
+                self.make_static_tg(tg, 2, ts2_timers.get(tg, yaml_tmout), system_name)
             systems_cfg[system_name]["TS1_STATIC"] = new_ts1
             systems_cfg[system_name]["TS2_STATIC"] = new_ts2
-            systems_cfg[system_name]["DEFAULT_UA_TIMER"] = int(_tmout)
-            systems_cfg[system_name]["_options_static_apply_fp"] = _fp
+            systems_cfg[system_name]["_options_static_apply_fp"] = self._options_static_apply_fingerprint(
+                system_name
+            )
             if new_ts1 or new_ts2:
                 logger.info("(OPTIONS) %s static TGs applied: TS1=%s TS2=%s", system_name, new_ts1 or "-", new_ts2 or "-")
             self._restore_prohibited_static_bridge_legs(system_name)
@@ -450,14 +656,9 @@ class BridgeTableMixin:
         except Exception as e:
             logger.debug("(OPTIONS) options_config_for_system %s: %s", system_name, e)
 
-    def _static_tg_lists_from_runtime_cfg(
-        self, sys_cfg: dict[str, Any]
-    ) -> tuple[float, list[int], list[int]] | None:
+    def _static_tg_lists_from_runtime_cfg(self, sys_cfg: dict[str, Any]) -> tuple[list[int], list[int]] | None:
         """Build static TG lists from TS1_STATIC / TS2_STATIC (updated when peers send RPTO)."""
         prohibited_tgs = (0, 1, 2, 3, 4, 5, 9, 9990, 9991, 9992, 9993, 9994, 9995, 9996, 9997, 9998, 9999)
-        tmout = float(sys_cfg.get("DEFAULT_UA_TIMER", 10))
-        if tmout <= 0:
-            tmout = 35791394.0
         ts1_list: list[int] = []
         ts2_list: list[int] = []
         for tg_s in str(sys_cfg.get("TS1_STATIC") or "").split(","):
@@ -484,7 +685,7 @@ class BridgeTableMixin:
             ts2_list.append(tg)
         if not ts1_list and not ts2_list:
             return None
-        return (tmout, ts1_list, ts2_list)
+        return (ts1_list, ts2_list)
 
     def _parse_options_static_tgs(self, opt_str: str, sys_cfg: dict) -> tuple[float, list[int], list[int]] | None:
         """Parse OPTIONS string; return (tmout, ts1_tg_list, ts2_tg_list) or None. Used to apply static TGs to an existing bridge."""
@@ -546,19 +747,16 @@ class BridgeTableMixin:
 
     def _merged_static_tg_lists_for_master(
         self, system_name: str
-    ) -> tuple[float, list[int], list[int]] | None:
+    ) -> tuple[list[int], list[int]] | None:
         """Union static TG ids from runtime YAML and every connected peer RPTO (inject proxy)."""
         sys_cfg = self._config.get("SYSTEMS", {}).get(system_name, {})
         if sys_cfg.get("MODE") != "MASTER":
             return None
-        tmout = float(sys_cfg.get("DEFAULT_UA_TIMER", 10))
-        if tmout <= 0:
-            tmout = 35791394.0
         ts1_set: set[int] = set()
         ts2_set: set[int] = set()
         runtime = self._static_tg_lists_from_runtime_cfg(sys_cfg)
         if runtime is not None:
-            tmout, ts1_list, ts2_list = runtime
+            ts1_list, ts2_list = runtime
             ts1_set.update(ts1_list)
             ts2_set.update(ts2_list)
         protocols = self._get_protocols() if self._get_protocols else {}
@@ -578,20 +776,18 @@ class BridgeTableMixin:
                 parsed = self._parse_options_static_tgs(opt_str, sys_cfg)
                 if parsed is None:
                     continue
-                peer_tmout, ts1_list, ts2_list = parsed
-                if peer_tmout > 0:
-                    tmout = max(tmout, peer_tmout)
+                _peer_tmout, ts1_list, ts2_list = parsed
                 ts1_set.update(ts1_list)
                 ts2_set.update(ts2_list)
         if not ts1_set and not ts2_set and "OPTIONS" in sys_cfg:
             parsed = self._parse_options_static_tgs(sys_cfg["OPTIONS"], sys_cfg)
             if parsed is not None:
-                tmout, ts1_list, ts2_list = parsed
+                _peer_tmout, ts1_list, ts2_list = parsed
                 ts1_set.update(ts1_list)
                 ts2_set.update(ts2_list)
         if not ts1_set and not ts2_set:
             return None
-        return (tmout, sorted(ts1_set), sorted(ts2_set))
+        return (sorted(ts1_set), sorted(ts2_set))
 
     def apply_static_tg_to_bridge(self, tg_int: int) -> None:
         """When a bridge was just created from OBP, mark MASTER systems that have this TG in static TS1/TS2 (runtime lists or OPTIONS) ACTIVE so the first OBP traffic reaches them."""
@@ -604,11 +800,13 @@ class BridgeTableMixin:
             parsed = self._merged_static_tg_lists_for_master(_system)
             if not parsed:
                 continue
-            _tmout, ts1_list, ts2_list = parsed
+            ts1_list, ts2_list = parsed
+            ts1_timers, ts2_timers = self._static_tg_timer_maps_for_master(_system)
+            yaml_tmout = self._yaml_default_ua_timer(systems_cfg.get(_system, {}))
             if tg_int in ts1_list:
-                self.make_static_tg(tg_int, 1, _tmout, _system)
+                self.make_static_tg(tg_int, 1, ts1_timers.get(tg_int, yaml_tmout), _system)
             if tg_int in ts2_list:
-                self.make_static_tg(tg_int, 2, _tmout, _system)
+                self.make_static_tg(tg_int, 2, ts2_timers.get(tg_int, yaml_tmout), _system)
 
     def log_connected_systems_and_tgs(self) -> None:
         """Periodic debug: log each system, connection state, and static TGs (TS1/TS2). Only emits at DEBUG level."""
@@ -663,20 +861,20 @@ class BridgeTableMixin:
                     continue
                 if not systems_cfg.get(_system, {}).get("ENABLED", True):
                     continue
-                if "OPTIONS" not in systems_cfg.get(_system, {}):
-                    continue
-                opt_str = systems_cfg[_system]["OPTIONS"]
-                if isinstance(opt_str, bytes):
-                    opt_str = opt_str.decode("utf8", errors="replace")
-                opt_str = opt_str.rstrip("\x00").encode("ascii", "ignore").decode()
-                opt_str = re.sub(r"['\"]", "", opt_str)
-                _options: dict[str, Any] = {}
-                for x in opt_str.split(";"):
-                    try:
-                        k, v = x.split("=", 1)
-                        _options[k.strip()] = v.strip()
-                    except ValueError:
+                opt_str: bytes | str | None = systems_cfg.get(_system, {}).get("OPTIONS")
+                if opt_str is None:
+                    protocols = self._get_protocols() if self._get_protocols else {}
+                    proto = protocols.get(_system)
+                    peers = getattr(proto, "_peers", {}) if proto is not None else {}
+                    if isinstance(peers, dict):
+                        for peer in peers.values():
+                            if isinstance(peer, dict) and peer.get("CONNECTION") == "YES" and peer.get("OPTIONS"):
+                                opt_str = peer["OPTIONS"]
+                    if opt_str is None:
                         continue
+                _options = self._parse_options_string(opt_str)
+                if not _options:
+                    continue
                 logger.debug("(OPTIONS) Options found for %s", _system)
                 if "_opt_key" in systems_cfg[_system] and systems_cfg[_system].get("_opt_key"):
                     if "KEY" not in _options:
@@ -691,39 +889,7 @@ class BridgeTableMixin:
                 else:
                     systems_cfg[_system]["_opt_key"] = False
                     logger.debug("(OPTIONS) %s, _opt_key not set and no key sent. Set to false", _system)
-                for old_k, new_k in [("DIAL", "DEFAULT_REFLECTOR"), ("TIMER", "DEFAULT_UA_TIMER"), ("TS1", "TS1_STATIC"), ("TS2", "TS2_STATIC"), ("IDENTTG", "OVERRIDE_IDENT_TG"), ("VOICETG", "OVERRIDE_IDENT_TG"), ("IDENT", "VOICE")]:
-                    if old_k in _options:
-                        _options[new_k] = _options.pop(old_k)
-                for old_k, new_k in [("StartRef", "DEFAULT_REFLECTOR"), ("RelinkTime", "DEFAULT_UA_TIMER")]:
-                    if old_k in _options:
-                        _options[new_k] = _options.pop(old_k)
-                if "TS1_1" in _options:
-                    parts = [_options.pop("TS1_1", "")]
-                    for i in range(2, 10):
-                        p = _options.pop(f"TS1_{i}", None)
-                        if p is not None:
-                            parts.append(p)
-                    _options["TS1_STATIC"] = ",".join(parts)
-                if "TS2_1" in _options:
-                    parts = [_options.pop("TS2_1", "")]
-                    for i in range(2, 10):
-                        p = _options.pop(f"TS2_{i}", None)
-                        if p is not None:
-                            parts.append(p)
-                    _options["TS2_STATIC"] = ",".join(parts)
-                # VOICE_IDENT, SINGLE_MODE, LANG (legacy options_config lines 1576-1587)
-                if "VOICE" in _options and bool(_options["VOICE"]) and (systems_cfg[_system].get("VOICE_IDENT") != bool(int(_options["VOICE"]))):
-                    systems_cfg[_system]["VOICE_IDENT"] = bool(int(_options["VOICE"]))
-                    logger.debug("(OPTIONS) %s - Setting voice ident to %s", _system, systems_cfg[_system]["VOICE_IDENT"])
-                if "OVERRIDE_IDENT_TG" in _options and _options["OVERRIDE_IDENT_TG"] and (systems_cfg[_system].get("OVERRIDE_IDENT_TG") != int(_options["OVERRIDE_IDENT_TG"])):
-                    systems_cfg[_system]["OVERRIDE_IDENT_TG"] = int(_options["OVERRIDE_IDENT_TG"])
-                    logger.debug("(OPTIONS) %s - Setting OVERRIDE_IDENT_TG to %s", _system, systems_cfg[_system]["OVERRIDE_IDENT_TG"])
-                if "LANG" in _options and _options["LANG"] != systems_cfg[_system].get("ANNOUNCEMENT_LANGUAGE"):
-                    systems_cfg[_system]["ANNOUNCEMENT_LANGUAGE"] = _options["LANG"]
-                    logger.debug("(OPTIONS) %s - Setting voice language to %s", _system, systems_cfg[_system]["ANNOUNCEMENT_LANGUAGE"])
-                if "SINGLE" in _options and (systems_cfg[_system].get("SINGLE_MODE") != bool(int(_options["SINGLE"]))):
-                    systems_cfg[_system]["SINGLE_MODE"] = bool(int(_options["SINGLE"]))
-                    logger.debug("(OPTIONS) %s - Setting SINGLE_MODE to %s", _system, systems_cfg[_system]["SINGLE_MODE"])
+                self._apply_master_runtime_options(_system, _options)
                 _options.setdefault("TS1_STATIC", False)
                 _options.setdefault("TS2_STATIC", False)
                 _options.setdefault("DEFAULT_REFLECTOR", 0)
@@ -749,11 +915,6 @@ class BridgeTableMixin:
                 if int(_options.get("DEFAULT_UA_TIMER", 0)) == 0:
                     _options["DEFAULT_UA_TIMER"] = 35791394
                 _tmout = float(int(_options["DEFAULT_UA_TIMER"]))
-                ua_timer_changed = int(_options["DEFAULT_UA_TIMER"]) != systems_cfg[_system].get("DEFAULT_UA_TIMER")
-                if ua_timer_changed:
-                    logger.debug("(OPTIONS) %s Updating DEFAULT_UA_TIMER for existing bridges.", _system)
-                    self.remove_bridge_system(_system)
-                    self._readd_system_after_ua_timer_change(_system, _tmout)
                 new_ref = int(_options.get("DEFAULT_REFLECTOR", 0))
                 cur_ref = int(systems_cfg[_system].get("DEFAULT_REFLECTOR", 0))
                 if new_ref != cur_ref:
@@ -766,68 +927,7 @@ class BridgeTableMixin:
                     else:
                         logger.debug("(OPTIONS) %s default reflector disabled, updating", _system)
                         self.reset_all_reflector_system(_tmout, _system)
-                cur_ts1 = systems_cfg[_system].get("TS1_STATIC") or ""
-                cur_ts2 = systems_cfg[_system].get("TS2_STATIC") or ""
-                new_ts1 = _options.get("TS1_STATIC") or ""
-                new_ts2 = _options.get("TS2_STATIC") or ""
-                merged = self._merged_static_tg_lists_for_master(_system)
-                if merged is not None:
-                    _tmout, ts1_nums, ts2_nums = merged
-                    new_ts1 = ",".join(str(x) for x in ts1_nums) if ts1_nums else ""
-                    new_ts2 = ",".join(str(x) for x in ts2_nums) if ts2_nums else ""
-                if str(new_ts1) != str(cur_ts1) or ua_timer_changed:
-                    logger.debug("(OPTIONS) %s TS1 static TGs changed, updating", _system)
-                    if cur_ts1:
-                        for tg_s in str(cur_ts1).split(","):
-                            if not tg_s.strip():
-                                continue
-                            try:
-                                self.reset_static_tg(int(tg_s), 1, _tmout, _system)
-                            except ValueError:
-                                pass
-                    if new_ts1:
-                        for tg_s in str(new_ts1).split(","):
-                            if not tg_s.strip():
-                                continue
-                            try:
-                                tg = int(tg_s)
-                                if tg in prohibited_tgs:
-                                    logger.debug("(OPTIONS) %s TS1 TG %s is prohibited, ignoring change", _system, tg)
-                                    continue
-                                self.make_static_tg(tg, 1, _tmout, _system)
-                            except ValueError:
-                                pass
-                if str(new_ts2) != str(cur_ts2) or ua_timer_changed:
-                    logger.debug("(OPTIONS) %s TS2 static TGs changed, updating", _system)
-                    if cur_ts2:
-                        for tg_s in str(cur_ts2).split(","):
-                            if not tg_s.strip():
-                                continue
-                            try:
-                                t = int(tg_s)
-                                if t == 0 or t >= 16777215:
-                                    continue
-                                self.reset_static_tg(t, 2, _tmout, _system)
-                            except ValueError:
-                                pass
-                    if new_ts2:
-                        for tg_s in str(new_ts2).split(","):
-                            if not tg_s.strip():
-                                continue
-                            try:
-                                tg = int(tg_s)
-                                if tg == 0 or tg >= 16777215:
-                                    continue
-                                if tg in prohibited_tgs:
-                                    logger.debug("(OPTIONS) %s TS2 TG %s is prohibited, ignoring change", _system, tg)
-                                    continue
-                                self.make_static_tg(tg, 2, _tmout, _system)
-                            except ValueError:
-                                pass
-                systems_cfg[_system]["TS1_STATIC"] = _options.get("TS1_STATIC") or ""
-                systems_cfg[_system]["TS2_STATIC"] = _options.get("TS2_STATIC") or ""
-                systems_cfg[_system]["DEFAULT_REFLECTOR"] = int(_options.get("DEFAULT_REFLECTOR", 0))
-                systems_cfg[_system]["DEFAULT_UA_TIMER"] = int(_options.get("DEFAULT_UA_TIMER", 10))
+                self.options_config_for_system(_system)
             except Exception as e:
                 logger.exception("(OPTIONS) caught exception: %s", e)
         self._sync_subscription_store()

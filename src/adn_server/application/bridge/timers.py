@@ -305,6 +305,8 @@ class BridgeTimerMixin:
                             _system["TIMER"] = pkt_time
                             logger.info("(%s) [8b] Bridge: %s set to ON with and \"OFF\" timer rule: timeout timer cancelled", system_name, _bridge)
 
+        self._send_bridge_snapshot(incremental=True)
+
     def _obp_emit_end_tx_forward_leg(
         self,
         tgt_name: str,

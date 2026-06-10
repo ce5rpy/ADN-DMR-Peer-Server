@@ -31,7 +31,7 @@ def test_options_duplicate_fingerprint_restores_prohibited_legs() -> None:
     config = DeterministicScenario().config
     config["SYSTEMS"]["MASTER-A"]["OPTIONS"] = "TS2=9990;TIMER=10"
     config["SYSTEMS"]["MASTER-A"]["TS2_STATIC"] = "9990"
-    config["SYSTEMS"]["MASTER-A"]["_options_static_apply_fp"] = "|9990|10"
+    config["SYSTEMS"]["MASTER-A"]["_options_static_apply_fp"] = "|9990|10|1"
     bridges = active_bridge(9990, (("MASTER-A", 2),))
     bridges["9990"] = [
         {
@@ -142,7 +142,7 @@ def test_options_applies_valid_static_tg_once() -> None:
     assert sys_cfg["TS2_STATIC"] == "52090"
     assert "52090" in scenario.bridge.get_bridges()
     fp = sys_cfg.get("_options_static_apply_fp")
-    assert fp == "|52090|10"
+    assert fp == "|52090|1"
 
     scenario.bridge.options_config_for_system("MASTER-A")
     assert scenario.config["SYSTEMS"]["MASTER-A"].get("_options_static_apply_fp") == fp

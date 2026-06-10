@@ -121,6 +121,28 @@
                 "type": "array",
                 "items": { "type": "string" },
                 "description": "Slot-2 static TGs from this peer's RPTO OPTIONS."
+              },
+              "single_mode": {
+                "type": "boolean",
+                "description": "Resolved SINGLE=1 from peer OPTIONS, else YAML SINGLE_MODE."
+              },
+              "ua_timer_min": {
+                "type": "number",
+                "minimum": 0,
+                "description": "Resolved TIMER from peer OPTIONS (minutes), else YAML DEFAULT_UA_TIMER."
+              },
+              "ua_sessions": {
+                "type": "object",
+                "description": "Active SINGLE sessions per slot from server runtime (empty when none).",
+                "additionalProperties": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": ["tgid", "expires_at"],
+                  "properties": {
+                    "tgid": { "$ref": "#/$defs/dmr_id" },
+                    "expires_at": { "type": "number" }
+                  }
+                }
               }
             }
           }

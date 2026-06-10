@@ -84,6 +84,15 @@ def test_build_topology_after_expand_matches_monitor_shape() -> None:
     assert row["callsign"] == "CE5RPY"
 
 
+def test_expand_inject_clears_merged_system_static_on_virtual() -> None:
+    peer = bytes_4(730039101)
+    config = _proxy_config({peer: _peer(options=b"TS2=7305;")})
+    config["SYSTEMS"]["SYSTEM"]["TS2_STATIC"] = "730,7305,214091"
+    expanded = expand_inject_proxy_systems(config, config["SYSTEMS"], {peer: 2})
+    assert expanded["SYSTEM-2"]["TS2_STATIC"] == ""
+    assert expanded["SYSTEM-2"]["TS1_STATIC"] == ""
+
+
 def test_expand_inject_proxy_emits_all_virtual_masters() -> None:
     peer = bytes_4(730039101)
     config = _proxy_config({peer: _peer()}, max_peers=4)
@@ -192,6 +201,31 @@ def test_local_hotspot_rx_fans_out_tx_only_to_peers_with_matching_tg() -> None:
     assert "SYSTEM-4" not in by_system
 
 
+def test_obp_tx_single_hotspot_remaps_dynamic_tg_not_in_static() -> None:
+    """One HS online: downlink/monitor must remap TX even when TG is UA-only (not in OPTIONS)."""
+    peer = bytes_4(730039101)
+    peers = {peer: _peer(options=b"TS2=730,7305;")}
+    config = _proxy_config(peers)
+    peer_slots = {peer: 2}
+    raw = "GROUP VOICE,START,TX,SYSTEM,4100887026,73010,7000002,2,730444"
+    bridges = {
+        "730444": [
+            {
+                "SYSTEM": "SYSTEM",
+                "TS": 2,
+                "TGID": 730444,
+                "ACTIVE": True,
+                "TO_TYPE": "ON",
+            }
+        ],
+    }
+    events = remap_inject_proxy_voice_events(
+        raw, config, config["SYSTEMS"], peer_slots, bridges
+    )
+    assert len(events) == 1
+    assert events[0].startswith("GROUP VOICE,START,TX,SYSTEM-2,")
+
+
 def test_obp_bridge_tx_fans_out_only_to_peers_with_matching_static_tg() -> None:
     """OBP downlink TX must not light hotspots without the TG in OPTIONS."""
     peers = {
@@ -202,8 +236,18 @@ def test_obp_bridge_tx_fans_out_only_to_peers_with_matching_static_tg() -> None:
     config = _proxy_config(peers)
     peer_slots = {bytes_4(7300444): 3, bytes_4(7301795): 1, bytes_4(730039101): 4}
     raw = "GROUP VOICE,START,TX,SYSTEM,4100887026,73010,7000002,2,730444"
+    bridges = {
+        "730444": [
+            {
+                "SYSTEM": "SYSTEM",
+                "TS": 2,
+                "ACTIVE": True,
+                "TO_TYPE": "ON",
+            }
+        ],
+    }
     events = remap_inject_proxy_voice_events(
-        raw, config, config["SYSTEMS"], peer_slots
+        raw, config, config["SYSTEMS"], peer_slots, bridges
     )
     systems = {ev.split(",")[3] for ev in events}
     assert systems == {"SYSTEM-1", "SYSTEM-3"}
