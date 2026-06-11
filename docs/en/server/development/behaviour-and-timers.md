@@ -19,7 +19,7 @@ The following intervals are part of the current runtime behavior:
 | `rule_timer` | **52s** | Bridge timeout/on-off state progression. |
 | `stream_trimmer` | **5s** | Stream cleanup, timeout handling, end-of-call state trimming. |
 | `bridge_reset` | **6s** | Bridge reset flag cleanup and pending reset completion. |
-| `options_config_loop` | **26s** | Refresh static TG / reflector options from peer OPTIONS payloads. |
+| OPTIONS refresh | **event-driven** | Static TG / reflector from **RPTO**, **startup/reload** (`apply_startup_bridges`), **dmrd** no-source fallback. No periodic 26s loop (**D-28**). |
 | `statTrimmer` | **303s** | Trim stale STAT bridges and transient status entries. |
 
 If you change one of these intervals, document the operational impact for monitoring, loop behavior, and troubleshooting.

@@ -16,7 +16,7 @@ logger = logging.getLogger(__name__)
 
 
 class BridgeTableMixin:
-    """make_single_bridge, stat/static TG, options_config_loop."""
+    """make_single_bridge, stat/static TG, OPTIONS refresh (RPTO / startup / dmrd)."""
 
     def make_single_bridge(
         self,
@@ -32,9 +32,7 @@ class BridgeTableMixin:
         if _tgid_s in ("9990", "9991", "9992", "9993", "9994", "9995", "9996", "9997", "9998", "9999"):
             _tmout = 1.0 / 6.0
         from ..subscription.bridge_table_ops import make_single_bridge_store
-        from ..subscription.store_sync import replace_store_from_bridges
 
-        replace_store_from_bridges(self._subscription_store, self._router.get_bridges())
         make_single_bridge_store(
             self._subscription_store,
             tgid_int,
@@ -131,9 +129,7 @@ class BridgeTableMixin:
         """Legacy make_stat_bridge: on-the-fly relay bridges for OBP traffic when GEN_STAT_BRIDGES is True."""
         _tgid_s = str(int_id(_tgid))
         from ..subscription.bridge_table_ops import make_stat_bridge_store
-        from ..subscription.store_sync import replace_store_from_bridges
 
-        replace_store_from_bridges(self._subscription_store, self._router.get_bridges())
         make_stat_bridge_store(
             self._subscription_store,
             _tgid,
@@ -145,9 +141,7 @@ class BridgeTableMixin:
     def deactivate_all_dynamic_bridges(self, system_name: str) -> None:
         """Legacy deactivate_all_dynamic_bridges: deactivate all non-STAT, non-reflector bridges for a system (TG 4000)."""
         from ..subscription.bridge_table_ops import deactivate_all_dynamic_bridges_store
-        from ..subscription.store_sync import replace_store_from_bridges
 
-        replace_store_from_bridges(self._subscription_store, self._router.get_bridges())
         deactivate_all_dynamic_bridges_store(self._subscription_store, system_name)
         self._export_store_to_router()
 
@@ -164,9 +158,6 @@ class BridgeTableMixin:
 
     def apply_startup_bridges(self) -> None:
         """Legacy startup: set default reflectors and static TGs for each MASTER system."""
-        from ..subscription.store_sync import replace_store_from_bridges
-
-        replace_store_from_bridges(self._subscription_store, self._router.get_bridges())
         prohibited_tgs = (0, 1, 2, 3, 4, 5, 9, 9990, 9991, 9992, 9993, 9994, 9995, 9996, 9997, 9998, 9999)
         logger.debug("(ROUTER) Setting default reflectors")
         for system, sys_cfg in self._config.get("SYSTEMS", {}).items():
@@ -200,7 +191,77 @@ class BridgeTableMixin:
                 if tg in prohibited_tgs:
                     continue
                 self.make_static_tg(tg, 2, tmout, system)
+        for system, sys_cfg in self._config.get("SYSTEMS", {}).items():
+            if sys_cfg.get("MODE") != "MASTER":
+                continue
+            if not sys_cfg.get("ENABLED", True):
+                continue
+            self.options_config_for_system(system)
         self._sync_subscription_store()
+
+    def _first_connected_peer_options(self, system_name: str) -> bytes | str | None:
+        """First connected peer OPTIONS (legacy options_config peer scan without 26s loop)."""
+        protocols = self._get_protocols() if self._get_protocols else {}
+        proto = protocols.get(system_name)
+        peers = getattr(proto, "_peers", {}) if proto is not None else {}
+        if not isinstance(peers, dict):
+            return None
+        for peer in peers.values():
+            if isinstance(peer, dict) and peer.get("CONNECTION") == "YES" and peer.get("OPTIONS"):
+                return peer["OPTIONS"]
+        return None
+
+    def _options_key_allows(self, system_name: str, parsed: dict[str, Any]) -> bool:
+        """Legacy OPTIONS KEY gate (_opt_key on MASTER)."""
+        sys_cfg = self._config.get("SYSTEMS", {}).get(system_name, {})
+        if sys_cfg.get("_opt_key"):
+            if "KEY" not in parsed:
+                logger.debug(
+                    "(OPTIONS) %s, options key set but no key in options string, skipping",
+                    system_name,
+                )
+                return False
+            if sys_cfg["_opt_key"] != parsed.get("KEY"):
+                logger.debug(
+                    "(OPTIONS) %s, options key set but key sent does not match, skipping",
+                    system_name,
+                )
+                return False
+        elif parsed.get("KEY"):
+            sys_cfg["_opt_key"] = parsed["KEY"]
+            logger.debug(
+                "(OPTIONS) %s, _opt_key not set but key sent. Setting to sent key",
+                system_name,
+            )
+        else:
+            sys_cfg["_opt_key"] = False
+        return True
+
+    def _maybe_update_reflector_from_options(
+        self, system_name: str, parsed: dict[str, Any]
+    ) -> None:
+        """Apply DEFAULT_REFLECTOR / DIAL changes from parsed OPTIONS (legacy options_config)."""
+        prohibited_tgs = (0, 1, 2, 3, 4, 5, 9, 9990, 9991, 9992, 9993, 9994, 9995, 9996, 9997, 9998, 9999)
+        sys_cfg = self._config.get("SYSTEMS", {}).get(system_name, {})
+        raw_timer = parsed.get("DEFAULT_UA_TIMER", sys_cfg.get("DEFAULT_UA_TIMER", 10))
+        try:
+            timer_int = int(raw_timer)
+            tmout = float(35791394 if timer_int == 0 else timer_int)
+        except (TypeError, ValueError):
+            tmout = float(sys_cfg.get("DEFAULT_UA_TIMER", 10))
+        new_ref = int(parsed.get("DEFAULT_REFLECTOR", 0) or 0)
+        cur_ref = int(sys_cfg.get("DEFAULT_REFLECTOR", 0) or 0)
+        if new_ref == cur_ref:
+            return
+        if new_ref > 0:
+            logger.debug("(OPTIONS) %s default reflector changed, updating", system_name)
+            self.reset_all_reflector_system(tmout, system_name)
+            self.make_default_reflector(new_ref, tmout, system_name)
+        elif new_ref in prohibited_tgs and not bool(new_ref):
+            logger.debug("(OPTIONS) %s default reflector is prohibited, ignoring change", system_name)
+        else:
+            logger.debug("(OPTIONS) %s default reflector disabled, updating", system_name)
+            self.reset_all_reflector_system(tmout, system_name)
 
     def _parse_options_string(self, opt_str: bytes | str) -> dict[str, Any] | None:
         """Parse hotspot OPTIONS / RPTO payload into a normalized options dict."""
@@ -401,24 +462,22 @@ class BridgeTableMixin:
 
         ``peer_options`` from RPTO overrides YAML (inject-only proxy: OPTIONS live on each peer).
         """
-        if not getattr(self, "_options_store_batch", False):
-            from ..subscription.store_sync import replace_store_from_bridges
-
-            replace_store_from_bridges(self._subscription_store, self._router.get_bridges())
         prohibited_tgs = (0, 1, 2, 3, 4, 5, 9, 9990, 9991, 9992, 9993, 9994, 9995, 9996, 9997, 9998, 9999)
         systems_cfg = self._config.get("SYSTEMS", {})
         sys_cfg = systems_cfg.get(system_name, {})
         if sys_cfg.get("MODE") != "MASTER":
             return
         try:
-            if peer_options is not None:
-                parsed_peer = self._parse_options_string(peer_options)
-                if parsed_peer:
-                    self._apply_master_runtime_options(system_name, parsed_peer)
-            elif "OPTIONS" in sys_cfg:
-                parsed_sys = self._parse_options_string(sys_cfg["OPTIONS"])
-                if parsed_sys:
-                    self._apply_master_runtime_options(system_name, parsed_sys)
+            runtime_source: bytes | str | None = peer_options
+            if runtime_source is None and "OPTIONS" in sys_cfg:
+                runtime_source = sys_cfg["OPTIONS"]
+            if runtime_source is None:
+                runtime_source = self._first_connected_peer_options(system_name)
+            if runtime_source is not None:
+                parsed_runtime = self._parse_options_string(runtime_source)
+                if parsed_runtime and self._options_key_allows(system_name, parsed_runtime):
+                    self._apply_master_runtime_options(system_name, parsed_runtime)
+                    self._maybe_update_reflector_from_options(system_name, parsed_runtime)
 
             source_opt: bytes | str | None = peer_options
             if source_opt is None and "OPTIONS" in sys_cfg:
@@ -714,96 +773,4 @@ class BridgeTableMixin:
             lines.append("".join(parts))
         if len(lines) > 1:
             logger.debug("\n".join(lines))
-
-    def options_config_loop(self) -> None:
-        """Legacy options_config: parse OPTIONS from MASTER systems and update bridges (default reflector, static TGs)."""
-        batch_store = True
-        if batch_store:
-            from ..subscription.store_sync import replace_store_from_bridges
-
-            replace_store_from_bridges(self._subscription_store, self._router.get_bridges())
-            self._options_store_batch = True
-        prohibited_tgs = (0, 1, 2, 3, 4, 5, 9, 9990, 9991, 9992, 9993, 9994, 9995, 9996, 9997, 9998, 9999)
-        logger.debug("(OPTIONS) Running options parser")
-        systems_cfg = self._config.get("SYSTEMS", {})
-        try:
-            for _system in list(systems_cfg.keys()):
-                try:
-                    if systems_cfg.get(_system, {}).get("MODE") != "MASTER":
-                        continue
-                    if not systems_cfg.get(_system, {}).get("ENABLED", True):
-                        continue
-                    opt_str: bytes | str | None = systems_cfg.get(_system, {}).get("OPTIONS")
-                    if opt_str is None:
-                        protocols = self._get_protocols() if self._get_protocols else {}
-                        proto = protocols.get(_system)
-                        peers = getattr(proto, "_peers", {}) if proto is not None else {}
-                        if isinstance(peers, dict):
-                            for peer in peers.values():
-                                if isinstance(peer, dict) and peer.get("CONNECTION") == "YES" and peer.get("OPTIONS"):
-                                    opt_str = peer["OPTIONS"]
-                        if opt_str is None:
-                            continue
-                    _options = self._parse_options_string(opt_str)
-                    if not _options:
-                        continue
-                    logger.debug("(OPTIONS) Options found for %s", _system)
-                    if "_opt_key" in systems_cfg[_system] and systems_cfg[_system].get("_opt_key"):
-                        if "KEY" not in _options:
-                            logger.debug("(OPTIONS) %s, options key set but no key in options string, skipping", _system)
-                            continue
-                        if systems_cfg[_system]["_opt_key"] != _options.get("KEY"):
-                            logger.debug("(OPTIONS) %s, options key set but key sent does not match, skipping", _system)
-                            continue
-                    elif _options.get("KEY"):
-                        systems_cfg[_system]["_opt_key"] = _options["KEY"]
-                        logger.debug("(OPTIONS) %s, _opt_key not set but key sent. Setting to sent key", _system)
-                    else:
-                        systems_cfg[_system]["_opt_key"] = False
-                        logger.debug("(OPTIONS) %s, _opt_key not set and no key sent. Set to false", _system)
-                    self._apply_master_runtime_options(_system, _options)
-                    _options.setdefault("TS1_STATIC", False)
-                    _options.setdefault("TS2_STATIC", False)
-                    _options.setdefault("DEFAULT_REFLECTOR", 0)
-                    _options.setdefault("OVERRIDE_IDENT_TG", False)
-                    _options.setdefault("DEFAULT_UA_TIMER", systems_cfg[_system].get("DEFAULT_UA_TIMER", 10))
-                    if "TS1_STATIC" not in _options or "TS2_STATIC" not in _options or "DEFAULT_REFLECTOR" not in _options or "DEFAULT_UA_TIMER" not in _options:
-                        logger.debug("(OPTIONS) %s - Required field missing, ignoring", _system)
-                        continue
-                    if _options["TS1_STATIC"] == "":
-                        _options["TS1_STATIC"] = False
-                    if _options["TS2_STATIC"] == "":
-                        _options["TS2_STATIC"] = False
-                    if _options.get("TS1_STATIC") and re.search(r"[^\d,]", str(_options["TS1_STATIC"])):
-                        logger.debug("(OPTIONS) %s - TS1_STATIC contains characters other than numbers and comma, ignoring", _system)
-                        continue
-                    if _options.get("TS2_STATIC") and re.search(r"[^\d,]", str(_options["TS2_STATIC"])):
-                        logger.debug("(OPTIONS) %s - TS2_STATIC contains characters other than numbers and comma, ignoring", _system)
-                        continue
-                    for key in ("DEFAULT_REFLECTOR", "OVERRIDE_IDENT_TG", "DEFAULT_UA_TIMER"):
-                        if isinstance(_options.get(key), str) and not str(_options[key]).isdigit():
-                            logger.debug("(OPTIONS) %s - %s is not an integer, ignoring", _system, key)
-                            continue
-                    if int(_options.get("DEFAULT_UA_TIMER", 0)) == 0:
-                        _options["DEFAULT_UA_TIMER"] = 35791394
-                    _tmout = float(int(_options["DEFAULT_UA_TIMER"]))
-                    new_ref = int(_options.get("DEFAULT_REFLECTOR", 0))
-                    cur_ref = int(systems_cfg[_system].get("DEFAULT_REFLECTOR", 0))
-                    if new_ref != cur_ref:
-                        if new_ref > 0:
-                            logger.debug("(OPTIONS) %s default reflector changed, updating", _system)
-                            self.reset_all_reflector_system(_tmout, _system)
-                            self.make_default_reflector(new_ref, _tmout, _system)
-                        elif new_ref in prohibited_tgs and not bool(new_ref):
-                            logger.debug("(OPTIONS) %s default reflector is prohibited, ignoring change", _system)
-                        else:
-                            logger.debug("(OPTIONS) %s default reflector disabled, updating", _system)
-                            self.reset_all_reflector_system(_tmout, _system)
-                    self.options_config_for_system(_system)
-                except Exception as e:
-                    logger.exception("(OPTIONS) caught exception: %s", e)
-        finally:
-            if batch_store:
-                self._options_store_batch = False
-        self._sync_subscription_store()
 

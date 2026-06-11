@@ -20,8 +20,7 @@ class BridgeTimerMixin:
     def rule_timer_loop(self) -> None:
         """Run one iteration of rule_timer_loop (legacy 52s LoopingCall). Activate/deactivate by timeout."""
         from ..subscription.rule_timer_ops import apply_rule_timer_store
-        from ..subscription.store_sync import replace_store_from_bridges
-        replace_store_from_bridges(self._subscription_store, self._router.get_bridges())
+
         apply_rule_timer_store(
             self._subscription_store,
             self._config.get("SYSTEMS", {}),
@@ -33,8 +32,7 @@ class BridgeTimerMixin:
         """Legacy bridgeDebug (bridge_master.py 487-543): remove invalid bridges, fix >1 active dial per MASTER."""
         logger.debug("(BRIDGEDEBUG) Running bridge debug")
         from ..subscription.bridge_debug_ops import apply_bridge_debug_store
-        from ..subscription.store_sync import replace_store_from_bridges
-        replace_store_from_bridges(self._subscription_store, self._router.get_bridges())
+
         apply_bridge_debug_store(
             self._subscription_store,
             self._config.get("SYSTEMS", {}),
@@ -50,8 +48,7 @@ class BridgeTimerMixin:
         De-activation distinguishes SINGLE_MODE True/False (legacy ~3484-3548).
         """
         from ..subscription.in_band_signalling_ops import apply_in_band_signalling_store
-        from ..subscription.store_sync import replace_store_from_bridges
-        replace_store_from_bridges(self._subscription_store, self._router.get_bridges())
+
         apply_in_band_signalling_store(
             self._subscription_store,
             system_name,
@@ -319,8 +316,7 @@ class BridgeTimerMixin:
             deactivate_system_legs_store,
             restore_prohibited_static_legs_store,
         )
-        from ..subscription.store_sync import replace_store_from_bridges
-        replace_store_from_bridges(self._subscription_store, self._router.get_bridges())
+
         now = time.time()
         for system_name in list(systems_cfg.keys()):
             sys_cfg = systems_cfg.get(system_name, {})
@@ -357,7 +353,6 @@ class BridgeTimerMixin:
         """Trim STAT-only bridges with no ON/OFF in use (legacy statTrimmer, 303s)."""
         logger.debug("(ROUTER) STAT trimmer loop started")
         from ..subscription.stat_trimmer_ops import apply_stat_trimmer_store
-        from ..subscription.store_sync import replace_store_from_bridges
-        replace_store_from_bridges(self._subscription_store, self._router.get_bridges())
+
         apply_stat_trimmer_store(self._subscription_store)
         self._export_store_to_router()

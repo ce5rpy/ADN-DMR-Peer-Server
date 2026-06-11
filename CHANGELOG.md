@@ -6,6 +6,7 @@ All notable changes to **adn-server** are documented here. Versioning follows [S
 
 ### Added
 
+- SIGHUP reload reapplies YAML static TGs via `apply_startup_bridges()` when SYSTEMS change.
 - Store-native timer loops (`rule_timer`, `stat_trimmer`, `bridge_debug`, `bridge_reset`) and in-band signalling.
 - Store-native bridge table (OPTIONS, static TG, reflectors, UA) and OBP source ensure.
 - `InbandTriggers` (ON/OFF/RESET) on `Subscription` with import/export round-trip.
@@ -21,6 +22,11 @@ All notable changes to **adn-server** are documented here. Versioning follows [S
 
 - Dashboard peers without RPTO inherit `TS1_STATIC` / `TS2_STATIC` from the MASTER YAML.
 - Inject-only monitor remap: sole connected hotspot receives dynamic UA downlink when a bridge leg is ACTIVE.
+
+### Removed
+
+- Periodic 26s `options_config_loop` (V2-P2-016): OPTIONS/static TGs covered by RPTO, startup/reload, and dmrd fallback.
+- Runtime `replace_store_from_bridges` calls in bridge timers and OPTIONS paths (store-native slice 6).
 
 ## [2.0.0-alpha.2] - 2026-06-11
 

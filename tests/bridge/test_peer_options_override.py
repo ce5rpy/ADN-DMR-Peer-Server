@@ -58,12 +58,12 @@ def test_rpto_single_and_timer_override_yaml() -> None:
     assert scenario.bridge.get_bridges()["52090"][0]["TIMEOUT"] == 300.0
 
 
-def test_options_loop_reads_connected_peer_without_yaml_options() -> None:
+def test_options_config_reads_connected_peer_without_yaml_options() -> None:
     scenario = _proxy_system_scenario(single_mode_yaml=False)
     bridges = active_bridge(730444, (("MASTER-A", 2), ("MASTER-B", 2)))
     scenario.router.set_bridges(bridges)
 
-    scenario.bridge.options_config_loop()
+    scenario.bridge.options_config_for_system("MASTER-A")
 
     assert scenario.config["SYSTEMS"]["MASTER-A"]["SINGLE_MODE"] is True
 
@@ -224,7 +224,7 @@ def test_peer_timer_does_not_override_other_peer_static_tg_timeout() -> None:
 
 
 def test_make_static_tg_preserves_single_mode_deactivation_on_options_refresh() -> None:
-    """OPTIONS loop (make_static_tg) must not re-activate TGs turned off by SINGLE VTERM."""
+    """OPTIONS refresh (make_static_tg) must not re-activate TGs turned off by SINGLE VTERM."""
     scenario = _proxy_system_scenario(single_mode_yaml=True)
     bridges = {
         "730444": [

@@ -1,4 +1,8 @@
-"""Keep ``SubscriptionStore`` aligned with legacy ``BRIDGES`` (read-only mirror; not routing authority yet)."""
+"""Import legacy ``BRIDGES`` snapshots into ``SubscriptionStore`` (tests and harness only).
+
+Runtime paths mutate the store directly and publish via ``export_bridges``; they must not
+call ``replace_store_from_bridges`` — that would overwrite store authority with the shim.
+"""
 
 from __future__ import annotations
 

@@ -55,7 +55,7 @@ Mark new stack tests with `@pytest.mark.integration`.
 | `test_config_reload.py` | 1 | Merge system config on reload |
 | `test_crc_dedup.py` | 3 | HBP/OBP CRC dedup, seq=0 |
 | `test_echo_bridgereset.py` | 5 | Echo leg after BRIDGERESET / OPTIONS |
-| `test_options_config_loop.py` | 2 | 26s OPTIONS static TG |
+| `test_options_config_loop.py` | 3 | OPTIONS paths (RPTO/startup; no 26s loop) |
 | `test_private_voice.py` | 3 | Private call routing |
 | `test_startup_bridges.py` | 4 | Startup BRIDGES + voice E2E |
 | `test_static_tg_options.py` | 4 | Static TG from peer OPTIONS |

@@ -521,6 +521,7 @@ def run_peer_server(
         return not is_proxy_inject_only(config, system_name)
 
     def _on_config_systems_changed() -> None:
+        bridge_use_cases.apply_startup_bridges()
         reporting_use_cases.send_config(config.get("SYSTEMS", {}))
         reporting_use_cases.send_bridge(get_bridges())
         user_passwords_loader.load(config)
@@ -611,7 +612,6 @@ def run_peer_server(
         reactor.callInThread(ident_use_cases.run_ident)
 
     task.LoopingCall(ident_loop).start(3600).addErrback(_looping_errback, logger)
-    task.LoopingCall(bridge_use_cases.options_config_loop).start(26).addErrback(_looping_errback, logger)
     task.LoopingCall(bridge_use_cases.log_connected_systems_and_tgs).start(60).addErrback(_looping_errback, logger)
     task.LoopingCall(lambda: logger.debug("(ROUTER) KeepAlive reporting loop started")).start(60).addErrback(_looping_errback, logger)
 

@@ -36,3 +36,19 @@ def test_merge_system_config_preserves_peers_and_static_tgs() -> None:
     assert merged["TS2_STATIC"] == old["TS2_STATIC"]
     assert merged["_options_static_apply_fp"] == old["_options_static_apply_fp"]
     assert merged["GROUP_HANGTIME"] == 3
+
+
+def test_merge_new_master_keeps_yaml_static_tg() -> None:
+    """New MASTER on reload keeps YAML static lists (apply_startup_bridges materializes them)."""
+    new = {
+        "MODE": "MASTER",
+        "ENABLED": True,
+        "IP": "127.0.0.1",
+        "PORT": 62032,
+        "TS2_STATIC": "52090",
+        "DEFAULT_UA_TIMER": 10,
+    }
+
+    merged = merge_system_config({}, new)
+
+    assert merged["TS2_STATIC"] == "52090"
