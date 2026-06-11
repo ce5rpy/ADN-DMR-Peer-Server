@@ -11,7 +11,7 @@ Las llamadas **unitarias (privadas)** usan un camino distinto a la voz de **grup
 
 ## OpenBridge frente a MASTER
 
-El manejo privado usa ramas CSBK/datos/unit, búsqueda `SUB_MAP` y comprobaciones de slot ocupado donde aplique (ver `BridgeUseCases` en el código).
+El manejo privado usa ramas CSBK/datos/unit, búsqueda `SUB_MAP` y comprobaciones de slot ocupado donde aplique (ver `RoutingUseCases` en el código).
 
 ## TG / ID 4000 (unitaria)
 
@@ -21,4 +21,4 @@ Como en [Números especiales](special-numbers.md), una llamada **privada** a **4
 
 Los eventos privados **START/END** pueden emitirse al cliente TCP de informes si **`REPORTS.REPORT`** está habilitado, análogo a voz de grupo (forma `PRIVATE VOICE,...` donde esté implementado).
 
-Para detalles de ingreso de protocolo, ver [HBP](../protocols/hbp.md) y los casos de uso de bridge en código (`BridgeUseCases._pvt_call_received`).
+Para detalles de ingreso de protocolo, ver [HBP](../protocols/hbp.md) y los casos de uso de routing en código (`RoutingUseCases._pvt_call_received`).

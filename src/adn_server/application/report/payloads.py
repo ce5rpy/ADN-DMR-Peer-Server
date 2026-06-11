@@ -6,7 +6,7 @@ import re
 import time
 from typing import Any
 
-from adn_server.application.bridge.helpers import export_peer_ua_sessions
+from adn_server.application.routing.helpers import export_peer_ua_sessions
 from adn_server.domain import int_id
 
 REPORT_PROTOCOL = 2
@@ -344,7 +344,7 @@ def build_routing_table(bridges: dict[str, Any], *, seq: int, ts: float | None =
     """Routing table snapshot from BRIDGES."""
     epoch = time.time() if ts is None else ts
     routes: list[dict[str, Any]] = []
-    for bridge_key, legs in bridges.items():
+    for relay_table_key, legs in bridges.items():
         if not isinstance(legs, list):
             continue
         leg_rows: list[dict[str, Any]] = []
@@ -365,7 +365,7 @@ def build_routing_table(bridges: dict[str, Any], *, seq: int, ts: float | None =
             if timer is not None:
                 row["timer_expires_at"] = float(timer)
             leg_rows.append(row)
-        routes.append({"bridge_key": str(bridge_key), "legs": leg_rows})
+        routes.append({"relay_table_key": str(relay_table_key), "legs": leg_rows})
     return {"type": "routing_table", "seq": int(seq), "ts": float(epoch), "routes": routes}
 
 
@@ -425,10 +425,10 @@ def routing_table_delta(
     """Build a delta message when only some routes changed; ``None`` if unchanged."""
     if previous is None:
         return None
-    prev_routes = {r["bridge_key"]: r for r in previous.get("routes", [])}
+    prev_routes = {r["relay_table_key"]: r for r in previous.get("routes", [])}
     changed: list[dict[str, Any]] = []
     for route in current.get("routes", []):
-        key = route["bridge_key"]
+        key = route["relay_table_key"]
         if prev_routes.get(key) != route:
             changed.append(route)
     if not changed:

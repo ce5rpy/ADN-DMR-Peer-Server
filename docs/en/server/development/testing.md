@@ -1,6 +1,6 @@
 # Testing
 
-Regression tests live under **`tests/`**, **one topic per file**, grouped by domain (`bridge/`, `hbp/`, `obp/`, …). Full file index: `tests/README.md` (repo root, maintainer checkout).
+Regression tests live under **`tests/`**, **one topic per file**, grouped by domain (`routing/`, `hbp/`, `obp/`, …). Full file index: `tests/README.md` (repo root, maintainer checkout).
 
 They use an in-process **deterministic harness** (no Twisted reactor, no UDP sockets).
 
@@ -23,7 +23,7 @@ python3 -m pytest tests/ -q
 **By domain** (while working on one area):
 
 ```bash
-python3 -m pytest tests/bridge/ -q
+python3 -m pytest tests/routing/ -q
 python3 -m pytest tests/hbp/ -q
 python3 -m pytest tests/parrot/ -q
 ```
@@ -31,14 +31,14 @@ python3 -m pytest tests/parrot/ -q
 **By file** (recommended for point checks):
 
 ```bash
-python3 -m pytest tests/bridge/test_unit_data_routing.py -q
+python3 -m pytest tests/routing/test_unit_data_routing.py -q
 python3 -m pytest tests/parrot/test_rekey_playback.py -q
 ```
 
 **Single test**:
 
 ```bash
-python3 -m pytest tests/bridge/test_startup_bridges.py::test_startup_bridge_routes_voice_after_apply -q
+python3 -m pytest tests/routing/test_startup_subscriptions.py::test_startup_bridge_routes_voice_after_apply -q
 ```
 
 Collect only:
@@ -60,7 +60,8 @@ Registered in `pyproject.toml`:
 
 | Component | Role |
 |-----------|------|
-| `DeterministicScenario` | Wires `BridgeUseCases` with fakes and packet capture |
+| `DeterministicScenario` | Wires `RoutingUseCases` with fakes and packet capture |
+| `scenario.routing` | Routing use-case facade (`dmrd_received`, timers) |
 | `inject_hbp` / `inject_unit` / `inject_obp` | Public ingress paths into `dmrd_received` |
 | `PacketCapture` | Records outbound `send_to_system` + parsed DMR fields |
 | `FakeReportSender` + `ReportingUseCases` | Reporting events (via `scenario.report_factory.events`) |

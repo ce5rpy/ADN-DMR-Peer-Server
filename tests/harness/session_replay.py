@@ -2,7 +2,7 @@
 
 Session file format (one JSON object per line):
 
-- ``meta`` — optional first line: ``config``, ``bridges``, ``apply_startup_bridges``, ``expect``
+- ``meta`` — optional first line: ``config``, ``bridges``, ``apply_startup_subscriptions``, ``expect``
 - ``ingress`` — inject one packet: ``channel`` (hbp|obp|unit), ``system``, ``dt`` (clock advance
   seconds before inject), and either ``packet`` shortcut or ``spec`` fields for PacketSpec
 - ``packet`` shortcuts: ``voice_head``, ``voice_burst``, ``voice_term`` (+ ``base``, ``seq``, …)
@@ -36,7 +36,7 @@ from tests.harness.deterministic import (
     DeterministicScenario,
     PacketSpec,
     minimal_config,
-    patch_bridge_wall_time,
+    patch_routing_wall_time,
 )
 
 SESSION_VERSION = 1
@@ -61,8 +61,8 @@ class SessionMeta:
     version: int = SESSION_VERSION
     name: str = ""
     config: dict[str, Any] | None = None
-    bridges: dict[str, list[dict[str, Any]]] | None = None
-    apply_startup_bridges: bool = False
+    routing_table: dict[str, list[dict[str, Any]]] | None = None
+    apply_startup_subscriptions: bool = False
     expect: SessionExpect = field(default_factory=SessionExpect)
 
 
@@ -128,12 +128,16 @@ def _parse_meta(obj: dict[str, Any]) -> SessionMeta:
         forwards=dict(expect_raw.get("forwards") or {}),
         dst_id=expect_raw.get("dst_id"),
     )
+    routing_raw = obj.get("routing_table") or obj.get("bridges")
+    apply_startup = obj.get("apply_startup_subscriptions")
+    if apply_startup is None:
+        apply_startup = obj.get("apply_startup_bridges", False)
     return SessionMeta(
         version=int(obj.get("version", SESSION_VERSION)),
         name=str(obj.get("name", "")),
         config=obj.get("config"),
-        bridges=obj.get("bridges"),
-        apply_startup_bridges=bool(obj.get("apply_startup_bridges")),
+        routing_table=routing_raw,
+        apply_startup_subscriptions=bool(apply_startup),
         expect=expect,
     )
 
@@ -224,15 +228,17 @@ class SessionReplayer:
 
     def run(self) -> DeterministicScenario:
         meta = self.session.meta
-        bridges = bridges_from_json(meta.bridges) if meta.bridges else None
+        routing_table = (
+            bridges_from_json(meta.routing_table) if meta.routing_table else None
+        )
         scenario = DeterministicScenario(
             config=meta.config or minimal_config(("MASTER-A", "MASTER-B")),
-            bridges=bridges,
+            routing_table=routing_table,
         )
-        if meta.apply_startup_bridges:
-            scenario.bridge.apply_startup_bridges()
+        if meta.apply_startup_subscriptions:
+            scenario.routing.apply_startup_subscriptions()
 
-        with patch_bridge_wall_time(scenario.clock):
+        with patch_routing_wall_time(scenario.clock):
             for event in self.session.events:
                 if event.dt:
                     scenario.clock.advance(event.dt)
@@ -334,12 +340,12 @@ class SessionCapture:
             "type": "meta",
             "version": self.meta.version,
             "name": self.meta.name,
-            "apply_startup_bridges": self.meta.apply_startup_bridges,
+            "apply_startup_subscriptions": self.meta.apply_startup_subscriptions,
         }
         if self.meta.config is not None:
             meta_row["config"] = config_to_json(self.meta.config)
-        if self.meta.bridges is not None:
-            meta_row["bridges"] = _json_sanitize(self.meta.bridges)
+        if self.meta.routing_table is not None:
+            meta_row["routing_table"] = _json_sanitize(self.meta.routing_table)
         if self.meta.expect.forwards or self.meta.expect.dst_id is not None:
             meta_row["expect"] = {
                 "forwards": self.meta.expect.forwards,

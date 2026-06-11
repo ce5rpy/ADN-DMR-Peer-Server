@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from unittest.mock import MagicMock
 
-from adn_server.application.bridge.helpers import (
+from adn_server.application.routing.helpers import (
     export_peer_ua_sessions,
     register_peer_ua_session,
 )
@@ -47,7 +47,7 @@ def test_disconnect_clears_internal_sessions_without_bridge_event() -> None:
 
     proto._on_peer_disconnected(peer_id)
 
-    report.send_bridge_event.assert_not_called()
+    report.send_routing_event.assert_not_called()
     assert export_peer_ua_sessions(sys_cfg, peer_id, now=1_000_100.0) == {}
 
 

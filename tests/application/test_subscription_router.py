@@ -4,13 +4,35 @@ from __future__ import annotations
 
 from typing import Any
 
-from adn_server.application.subscription.bridges_import import subscriptions_from_bridges
+from adn_server.application.subscription.routing_table_import import subscriptions_from_routing_table
 from adn_server.application.subscription.router import SubscriptionRouter
 from adn_server.domain import bytes_3, int_id
 from adn_server.domain.subscription import TgId
 from adn_server.domain.voice_routing import ForwardLeg, VoiceIngress
-from adn_server.infrastructure.bridge_router_impl import InMemoryBridgeRouter
 from adn_server.infrastructure.subscription_store import InMemorySubscriptionStore
+
+
+def _legacy_relay_tables(
+    bridges: dict[str, list[dict[str, Any]]],
+    system_name: str,
+    bridge_match_slot: int,
+    dst_int: int,
+) -> list[str]:
+    dst_id_b = bytes_3(dst_int)
+    result: list[str] = []
+    for table_name, rows in bridges.items():
+        for row in rows:
+            if not row.get("ACTIVE"):
+                continue
+            if row.get("SYSTEM") != system_name:
+                continue
+            if int(row.get("TS") or 1) != bridge_match_slot:
+                continue
+            row_tgid = row.get("TGID") or b"\x00\x00\x00"
+            if row_tgid == dst_id_b or int_id(row_tgid) == dst_int:
+                result.append(table_name)
+                break
+    return result
 
 
 def legacy_forward_targets(
@@ -25,12 +47,10 @@ def legacy_forward_targets(
     """Minimal legacy forward set: (target_system, ts, tgid_int) from BRIDGES scan.
 
     When ``openbridge_targets`` is set, OBP dedup (``sys_ignore_obp``) applies only to those
-    systems — matching ``bridge_use_cases`` where dedup runs inside the OPENBRIDGE branch.
+    systems — matching ``routing_use_cases`` where dedup runs inside the OPENBRIDGE branch.
     """
-    router = InMemoryBridgeRouter()
-    router.set_bridges(bridges)
     match_slot = 1 if source_is_obp else slot
-    tables = router.bridge_tables_with_active_source(source_system, match_slot, dst_tgid)
+    tables = _legacy_relay_tables(bridges, source_system, match_slot, dst_tgid)
     targets: set[tuple[str, int, int]] = set()
     seen_obp: set[tuple[str, int]] = set()
     for table in tables:
@@ -80,7 +100,7 @@ def _row(
     }
 
 
-def test_bridge_tables_with_active_source_matches_legacy():
+def test_relay_tables_with_active_source_matches_legacy():
     bridges = {
         "730444": [
             _row(system="MASTER-A", ts=1, tgid=730444, active=True),
@@ -88,12 +108,10 @@ def test_bridge_tables_with_active_source_matches_legacy():
         ]
     }
     store = InMemorySubscriptionStore()
-    store.replace_all(subscriptions_from_bridges(bridges))
+    store.replace_all(subscriptions_from_routing_table(bridges))
     sub_router = SubscriptionRouter(store)
-    legacy = InMemoryBridgeRouter()
-    legacy.set_bridges(bridges)
-    assert sub_router.bridge_tables_with_active_source("MASTER-A", 1, 730444) == tuple(
-        legacy.bridge_tables_with_active_source("MASTER-A", 1, 730444)
+    assert sub_router.relay_tables_with_active_source("MASTER-A", 1, 730444) == tuple(
+        _legacy_relay_tables(bridges, "MASTER-A", 1, 730444)
     )
 
 
@@ -106,7 +124,7 @@ def test_resolve_matches_legacy_forward_targets():
         ]
     }
     store = InMemorySubscriptionStore()
-    store.replace_all(subscriptions_from_bridges(bridges))
+    store.replace_all(subscriptions_from_routing_table(bridges))
     ingress = VoiceIngress(source_system="MASTER-A", slot=1, dst_tgid=TgId(730444))
     legs = SubscriptionRouter(store).resolve(ingress)
     assert subscription_forward_targets(legs) == legacy_forward_targets(
@@ -127,9 +145,9 @@ def test_obp_ingress_forwards_to_all_active_hbp_slots():
         ]
     }
     store = InMemorySubscriptionStore()
-    store.replace_all(subscriptions_from_bridges(bridges))
+    store.replace_all(subscriptions_from_routing_table(bridges))
     router = SubscriptionRouter(store)
-    assert router.bridge_tables_with_active_source("OBP-CL", 1, 730444) == ("730444",)
+    assert router.relay_tables_with_active_source("OBP-CL", 1, 730444) == ("730444",)
     ingress = VoiceIngress(
         source_system="OBP-CL",
         slot=2,
@@ -162,7 +180,7 @@ def test_resolve_obp_dedupes_same_openbridge_peer_across_tables():
         ],
     }
     store = InMemorySubscriptionStore()
-    store.replace_all(subscriptions_from_bridges(bridges))
+    store.replace_all(subscriptions_from_routing_table(bridges))
     ingress = VoiceIngress(
         source_system="OBP-CL",
         slot=2,
@@ -191,7 +209,7 @@ def test_resolve_empty_when_no_active_source_row():
         ]
     }
     store = InMemorySubscriptionStore()
-    store.replace_all(subscriptions_from_bridges(bridges))
+    store.replace_all(subscriptions_from_routing_table(bridges))
     ingress = VoiceIngress(source_system="MASTER-A", slot=1, dst_tgid=TgId(730444))
     assert SubscriptionRouter(store).resolve(ingress) == ()
 
@@ -209,7 +227,7 @@ def test_two_bridge_tables_same_dst_tgid():
         ],
     }
     store = InMemorySubscriptionStore()
-    store.replace_all(subscriptions_from_bridges(bridges))
+    store.replace_all(subscriptions_from_routing_table(bridges))
     ingress = VoiceIngress(source_system="MASTER-A", slot=1, dst_tgid=TgId(730444))
     legs = SubscriptionRouter(store).resolve(ingress)
     assert subscription_forward_targets(legs) == {("OBP-CL", 1, 730444)}

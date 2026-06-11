@@ -4,10 +4,10 @@ from __future__ import annotations
 
 from typing import Any
 
-from adn_server.application.subscription.bridges_export import export_bridges
-from adn_server.application.subscription.store_sync import replace_store_from_bridges
+from adn_server.application.subscription.routing_table_export import export_routing_table
+from adn_server.application.subscription.store_sync import replace_store_from_routing_table
 from adn_server.domain import bytes_3, int_id
-from adn_server.infrastructure.bootstrap.peer_server import _make_echo_bridges
+from adn_server.infrastructure.bootstrap.peer_server import _seed_echo_routing_table
 from adn_server.infrastructure.subscription_store import InMemorySubscriptionStore
 
 
@@ -39,14 +39,14 @@ def test_replace_store_from_echo_bridges_round_trip():
             "MASTER-B": {"MODE": "MASTER", "DEFAULT_UA_TIMER": 15},
         }
     }
-    bridges = _make_echo_bridges(config)
+    bridges = _seed_echo_routing_table(config)
     store = InMemorySubscriptionStore()
-    replace_store_from_bridges(store, bridges)
+    replace_store_from_routing_table(store, bridges)
 
     assert len(store.snapshot()) == len(_bridges_fingerprints(bridges))
 
     now = 1_700_000_000.0
-    exported = export_bridges(store, now=now)
+    exported = export_routing_table(store, now=now)
     assert _bridges_fingerprints(bridges) == _bridges_fingerprints(exported)
 
 
@@ -76,9 +76,9 @@ def test_replace_store_clears_stale_entries():
             }
         ]
     }
-    replace_store_from_bridges(store, bridges_a)
+    replace_store_from_routing_table(store, bridges_a)
     assert len(store.snapshot()) == 1
-    replace_store_from_bridges(store, bridges_b)
+    replace_store_from_routing_table(store, bridges_b)
     assert len(store.snapshot()) == 1
     (sub,) = store.snapshot()
     assert int(sub.channel.tgid) == 200

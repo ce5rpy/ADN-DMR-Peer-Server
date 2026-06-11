@@ -15,7 +15,7 @@ from adn_server.application.report import (
     parse_bridge_event_csv,
     routing_table_delta,
 )
-from adn_server.application.bridge.helpers import peer_should_receive_group_voice
+from adn_server.application.routing.helpers import peer_should_receive_group_voice
 from adn_server.application.report.payloads import (
     parse_peer_options_static,
     resolve_peer_single_and_timer,

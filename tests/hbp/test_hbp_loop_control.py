@@ -4,13 +4,13 @@ from __future__ import annotations
 
 import pytest
 from tests.harness.assertions import assert_capture_unchanged, assert_inject_ok
-from tests.harness.deterministic import DeterministicScenario, PacketSpec, active_bridge
+from tests.harness.deterministic import DeterministicScenario, PacketSpec, active_routing_table
 
 
 def test_hbp_loop_loser_when_other_hbp_owns_stream() -> None:
     """Second HBP source loses when another MASTER slot already has RX_STREAM_ID."""
-    bridges = active_bridge(91, (("MASTER-A", 2), ("MASTER-B", 2)))
-    scenario = DeterministicScenario(bridges=bridges)
+    bridges = active_routing_table(91, (("MASTER-A", 2), ("MASTER-B", 2)))
+    scenario = DeterministicScenario(routing_table=bridges)
     stream_id = 0x41414141
     scenario.seed_hbp_slot_stream("MASTER-B", 2, stream_id, tgid=91)
     base = PacketSpec(dst_id=91, stream_id=stream_id, slot=2)
@@ -28,8 +28,8 @@ def test_hbp_loop_loser_when_other_hbp_owns_stream() -> None:
 @pytest.mark.behavior
 def test_hbp_loop_winner_forwards_until_loser_detected() -> None:
     """Regression: VHEAD bridges; loop loser burst does not add forwards."""
-    bridges = active_bridge(91, (("MASTER-A", 2), ("MASTER-B", 2)))
-    scenario = DeterministicScenario(bridges=bridges)
+    bridges = active_routing_table(91, (("MASTER-A", 2), ("MASTER-B", 2)))
+    scenario = DeterministicScenario(routing_table=bridges)
     stream_id = 0x42424242
     scenario.seed_hbp_slot_stream("MASTER-B", 2, stream_id, tgid=91)
     base = PacketSpec(dst_id=91, stream_id=stream_id, slot=2)

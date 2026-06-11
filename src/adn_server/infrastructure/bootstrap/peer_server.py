@@ -14,7 +14,7 @@ from typing import Any
 from twisted.internet import reactor, task, threads
 
 from adn_server.application import (
-    BridgeUseCases,
+    RoutingUseCases,
     IdentUseCases,
     ReportingUseCases,
     ReportSender,
@@ -35,8 +35,8 @@ from adn_server.application.runtime_context import (
 )
 from adn_server.domain import bytes_3
 from adn_server.domain.dmr.bptc import encode_emblc
-from adn_server.application.subscription.store_sync import replace_store_from_bridges
-from adn_server.infrastructure.bridge_router_impl import InMemoryBridgeRouter
+from adn_server.application.subscription.store_sync import replace_store_from_routing_table
+from adn_server.infrastructure.acl_router import InMemoryAclRouter
 from adn_server.infrastructure.subscription_store import InMemorySubscriptionStore
 from adn_server.infrastructure.config_normalizer import (
     ensure_system_runtime_config as _ensure_system_runtime_config,
@@ -83,19 +83,19 @@ class ReportSenderAdapter(ReportSender):
     def set_systems(self, systems) -> None:
         self._factory.set_systems(systems)
 
-    def set_bridges(self, bridges) -> None:
-        self._factory.set_bridges(bridges)
+    def set_routing_table(self, bridges) -> None:
+        self._factory.set_routing_table(bridges)
 
     def send_config(self, systems, *, incremental: bool = False) -> None:
         self._factory.set_systems(systems)
         self._factory.send_config(incremental=incremental)
 
-    def send_bridge(self, bridges, *, incremental: bool = False) -> None:
-        self._factory.set_bridges(bridges)
-        self._factory.send_bridge(incremental=incremental)
+    def send_routing_table(self, bridges, *, incremental: bool = False) -> None:
+        self._factory.set_routing_table(bridges)
+        self._factory.send_routing_table(incremental=incremental)
 
-    def send_bridge_event(self, event: str) -> None:
-        self._factory.send_bridge_event(event)
+    def send_routing_event(self, event: str) -> None:
+        self._factory.send_routing_event(event)
 
     def set_peer_slot_map(self, provider) -> None:
         self._factory.set_peer_slot_map(provider)
@@ -120,7 +120,7 @@ def _wire_proxy_report_slots(
     report_factory.set_peer_slot_map(_slot_map)
 
 
-def _make_echo_bridges(config: dict) -> dict:
+def _seed_echo_routing_table(config: dict) -> dict:
     """Initial BRIDGES for ECHO system (legacy make_bridges 9990 + MASTER expansion)."""
     now = time.time()
     timeout_sec = 2 * 60
@@ -212,13 +212,20 @@ def run_peer_server(
     runtime_holder = RuntimeContextHolder(RuntimeContext(config=config, config_path=config_path))
     config = ConfigProxy(runtime_holder)
 
-    # BRIDGES
-    bridge_router = InMemoryBridgeRouter()
+    # Subscription store is runtime routing authority; acl_router is ACL-only (D-08).
+    acl_router = InMemoryAclRouter()
     systems_cfg = config.get("SYSTEMS", {})
+    subscription_store = InMemorySubscriptionStore()
     if "ECHO" in systems_cfg and systems_cfg["ECHO"].get("MODE") in ("PEER", "MASTER"):
-        bridge_router.set_bridges(_make_echo_bridges(config))
-    else:
-        bridge_router.set_bridges({})
+        replace_store_from_routing_table(subscription_store, _seed_echo_routing_table(config))
+    _ctx = runtime_holder.get()
+    runtime_holder.swap(
+        RuntimeContext(
+            config=_ctx.config,
+            config_path=_ctx.config_path,
+            subscription_store=subscription_store,
+        )
+    )
 
     # Protocol registry for send_to_system (legacy: systems[name].send_system(packet))
     protocols: dict[str, Any] = {}
@@ -257,7 +264,7 @@ def run_peer_server(
     report_queue = BoundedReportQueue()
     report_sender = QueuedReportSender(report_queue, report_inner)
     report_factory.set_systems(systems_cfg)
-    report_factory.set_bridges(bridge_router.get_bridges())
+    report_factory.set_routing_table({})
     reporting_use_cases = ReportingUseCases(report_sender, config)
     if config.get("GLOBAL", {}).get("URL_SECURITY", "").strip():
         security = DefaultSecurityDownloader(project_root)
@@ -291,7 +298,7 @@ def run_peer_server(
         get_protocols=lambda: protocols,
         call_from_reactor=reactor.callFromThread,
         audio_path=audio_path,
-        get_bridges=bridge_router.get_bridges,
+        routing_table_for_report=lambda: {},
         call_later=reactor.callLater,
         start_looping_call=_start_voice_loop,
         defer_to_thread=threads.deferToThread,
@@ -305,27 +312,14 @@ def run_peer_server(
         call_from_reactor=reactor.callFromThread,
     )
 
-    subscription_store = InMemorySubscriptionStore()
-    initial_bridges = bridge_router.get_bridges()
-    if initial_bridges:
-        # Bootstrap-only: seed echo/parrot tables (_make_echo_bridges) into the store authority.
-        replace_store_from_bridges(subscription_store, initial_bridges)
-    _ctx = runtime_holder.get()
-    runtime_holder.swap(
-        RuntimeContext(
-            config=_ctx.config,
-            config_path=_ctx.config_path,
-            subscription_store=subscription_store,
-        )
-    )
-    bridge_use_cases = BridgeUseCases(
-        bridge_router,
+    routing_use_cases = RoutingUseCases(
+        acl_router,
         config,
         subscription_store,
         send_to_system=send_to_system,
         get_protocols=lambda: protocols,
         reporting=reporting_use_cases,
-        on_bridge_deactivated=lambda sys: reactor.callInThread(voice_use_cases.disconnected_voice, sys),
+        on_relay_deactivated=lambda sys: reactor.callInThread(voice_use_cases.disconnected_voice, sys),
         send_bcsq=send_bcsq,
         send_dmra_to_system=send_dmra_to_system,
         get_dmra_blocks=get_dmra_blocks,
@@ -333,9 +327,10 @@ def run_peer_server(
         encode_emblc=encode_emblc,
         ta_emblc_encoder=default_ta_emblc_encoder,
     )
-    bridge_use_cases.apply_startup_bridges()
-    get_bridges = bridge_use_cases.get_bridges
-    report_factory.set_bridges(get_bridges())
+    routing_use_cases.apply_startup_subscriptions()
+    routing_table_for_report = routing_use_cases.routing_table_for_report
+    voice_use_cases._routing_table_for_report = routing_table_for_report
+    report_factory.set_routing_table(routing_table_for_report())
     report_factory.set_systems(config.get("SYSTEMS", {}))
 
     # Report server (same order as legacy: log then listen)
@@ -353,11 +348,11 @@ def run_peer_server(
             report_factory.start_mqtt()
             reactor.addSystemEventTrigger("during", "shutdown", report_mqtt.stop)
 
-    # Reporting loop (REPORT_INTERVAL) — same logs as legacy after send_config/send_bridge
+    # Reporting loop (REPORT_INTERVAL) — same logs as legacy after send_config/send_routing_table
     def reporting_loop():
         logger.debug("(REPORT) Periodic reporting loop started")
         reporting_use_cases.send_config(config.get("SYSTEMS", {}))
-        reporting_use_cases.send_bridge(get_bridges())
+        reporting_use_cases.send_routing_table(routing_table_for_report())
         # Legacy: peer count and SUB_MAP count
         systems_with_peers = sum(1 for s in config.get("SYSTEMS", {}) if config.get("SYSTEMS", {}).get(s, {}).get("PEERS"))
         logger.info("(REPORT) %s systems have at least one peer", systems_with_peers)
@@ -366,20 +361,20 @@ def run_peer_server(
     report_interval = config.get("REPORTS", {}).get("REPORT_INTERVAL", 60)
     task.LoopingCall(reporting_loop).start(report_interval).addErrback(_looping_errback, logger)
 
-    # LoopingCalls (legacy intervals). rule_timer / stat_trimmer mutate BRIDGES on reactor
+    # LoopingCalls (legacy intervals). rule_timer / stat_trimmer mutate SubscriptionStore on reactor
     # Timer loops run on the reactor thread (no deferToThread — avoids races with dmrd_received).
     def _rule_timer_on_reactor() -> None:
-        bridge_use_cases.rule_timer_loop()
-        reporting_use_cases.send_bridge(get_bridges(), incremental=True)
+        routing_use_cases.rule_timer_loop()
+        reporting_use_cases.send_routing_table(routing_table_for_report(), incremental=True)
 
     task.LoopingCall(_rule_timer_on_reactor).start(52).addErrback(_looping_errback, logger)
-    task.LoopingCall(bridge_use_cases.stream_trimmer_loop).start(5).addErrback(_looping_errback, logger)
-    task.LoopingCall(bridge_use_cases.bridge_reset_loop).start(6).addErrback(_looping_errback, logger)
+    task.LoopingCall(routing_use_cases.stream_trimmer_loop).start(5).addErrback(_looping_errback, logger)
+    task.LoopingCall(routing_use_cases.subscription_reset_loop).start(6).addErrback(_looping_errback, logger)
     if config.get("GLOBAL", {}).get("GEN_STAT_BRIDGES", False):
 
         def _stat_trimmer_on_reactor() -> None:
-            bridge_use_cases.stat_trimmer_loop()
-            reporting_use_cases.send_bridge(get_bridges(), incremental=True)
+            routing_use_cases.stat_trimmer_loop()
+            reporting_use_cases.send_routing_table(routing_table_for_report(), incremental=True)
 
         task.LoopingCall(_stat_trimmer_on_reactor).start(303).addErrback(_looping_errback, logger)
 
@@ -390,8 +385,8 @@ def run_peer_server(
     if config.get("GLOBAL", {}).get("DEBUG_BRIDGES"):
         task.LoopingCall(
             lambda: (
-                bridge_use_cases.bridge_debug_loop(),
-                reporting_use_cases.send_bridge(get_bridges(), incremental=True),
+                routing_use_cases.subscription_debug_loop(),
+                reporting_use_cases.send_routing_table(routing_table_for_report(), incremental=True),
             )
         ).start(66).addErrback(_looping_errback, logger)
 
@@ -492,20 +487,21 @@ def run_peer_server(
             system_name,
             config,
             report_sender,
-            router=bridge_router,
-            dmrd_received=bridge_use_cases.dmrd_received,
+            router=acl_router,
+            dmrd_received=routing_use_cases.dmrd_received,
             get_user_password_callback=user_passwords_loader.get_user_password,
             on_play_file_request=voice_use_cases.play_file_on_request,
             on_handle_recording=recording_handler.handle_recording,
-            on_in_band_signalling=bridge_use_cases.apply_in_band_signalling,
-            on_options_received=bridge_use_cases.options_config_for_system,
-            on_deactivate_dynamic_bridges=bridge_use_cases.deactivate_all_dynamic_bridges,
-            on_obp_bcsq_received=bridge_use_cases.on_obp_bcsq_received,
-            on_talker_alias_repeat_prepare=bridge_use_cases.prepare_talker_alias_local_repeat,
-            on_talker_alias_repeat_burst=bridge_use_cases.rewrite_repeat_voice_burst,
-            on_talker_alias_stream_end=bridge_use_cases.clear_talker_alias_stream,
-            on_dmra_fragment_stored=bridge_use_cases.on_dmra_fragment_stored,
-            get_bridges=bridge_router.get_bridges,
+            on_in_band_signalling=routing_use_cases.apply_in_band_signalling,
+            on_options_received=routing_use_cases.options_config_for_system,
+            on_deactivate_dynamic_relays=routing_use_cases.deactivate_all_dynamic_relays,
+            on_obp_bcsq_received=routing_use_cases.on_obp_bcsq_received,
+            on_talker_alias_repeat_prepare=routing_use_cases.prepare_talker_alias_local_repeat,
+            on_talker_alias_repeat_burst=routing_use_cases.rewrite_repeat_voice_burst,
+            on_talker_alias_stream_end=routing_use_cases.clear_talker_alias_stream,
+            on_dmra_fragment_stored=routing_use_cases.on_dmra_fragment_stored,
+            routing_table_for_report=routing_table_for_report,
+            get_subscription_store=lambda: subscription_store,
         )
 
     def _listen_system(_name: str, bind: BindSpec, protocol: Any) -> Any:
@@ -526,9 +522,9 @@ def run_peer_server(
         return not is_proxy_inject_only(config, system_name)
 
     def _on_config_systems_changed() -> None:
-        bridge_use_cases.apply_startup_bridges()
+        routing_use_cases.apply_startup_subscriptions()
         reporting_use_cases.send_config(config.get("SYSTEMS", {}))
-        reporting_use_cases.send_bridge(get_bridges())
+        reporting_use_cases.send_routing_table(routing_table_for_report())
         user_passwords_loader.load(config)
 
     def _apply_reload_success(result: Any, *, new_config: dict[str, Any], mqtt_before: Any) -> None:
@@ -576,7 +572,7 @@ def run_peer_server(
             listen_udp=lambda n, b, p: _listen_system(n, b, p),
             stop_listener=_stop_udp_port,
             on_systems_changed=None,
-            on_system_removed=bridge_use_cases.flush_monitor_events_for_system,
+            on_system_removed=routing_use_cases.flush_monitor_events_for_system,
             should_bind_udp=_should_bind_udp,
             log=logger,
         ).addCallbacks(_on_reload_done, _on_reload_failed)
@@ -617,7 +613,7 @@ def run_peer_server(
         reactor.callInThread(ident_use_cases.run_ident)
 
     task.LoopingCall(ident_loop).start(3600).addErrback(_looping_errback, logger)
-    task.LoopingCall(bridge_use_cases.log_connected_systems_and_tgs).start(60).addErrback(_looping_errback, logger)
+    task.LoopingCall(routing_use_cases.log_connected_systems_and_tgs).start(60).addErrback(_looping_errback, logger)
     task.LoopingCall(lambda: logger.debug("(ROUTER) KeepAlive reporting loop started")).start(60).addErrback(_looping_errback, logger)
 
     # UDP listeners per system (same order as legacy: SYSTEM STARTING then instance created per system)

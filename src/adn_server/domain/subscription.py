@@ -87,7 +87,7 @@ class Subscription:
     role: SubscriptionRole
     policy: ActivationPolicy
     state: SubscriptionState
-    bridge_key: str | None = None
+    relay_table_key: str | None = None
     timeout_seconds: float | None = None
     triggers: InbandTriggers = field(default_factory=InbandTriggers)
 
@@ -99,6 +99,6 @@ class Subscription:
         return self.state.phase == SubscriptionPhase.ACTIVE
 
     def table_key(self) -> str:
-        if self.bridge_key is not None:
-            return self.bridge_key
+        if self.relay_table_key is not None:
+            return self.relay_table_key
         return str(self.channel.tgid.value)

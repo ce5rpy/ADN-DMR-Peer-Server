@@ -6,10 +6,11 @@ import logging
 from typing import Any
 
 from adn_server.application.ports import SubscriptionStore
-from adn_server.application.subscription.bridges_export import _legacy_to_type
+from adn_server.application.routing.helpers import is_special_tg
+from adn_server.application.subscription.routing_table_export import _legacy_to_type
 from adn_server.application.subscription.trigger_bytes import dst_in_triggers
 from adn_server.domain import bytes_3, int_id
-from adn_server.domain.subscription import Subscription, SubscriptionPhase
+from adn_server.domain.subscription import ActivationPolicy, Subscription, SubscriptionPhase
 
 logger = logging.getLogger(__name__)
 
@@ -27,7 +28,7 @@ def apply_in_band_signalling_store(
     pkt_time: float,
     systems_cfg: dict[str, Any],
 ) -> None:
-    """Mirror ``BridgeTimerMixin.apply_in_band_signalling`` on the subscription store."""
+    """Mirror ``RoutingTimerMixin.apply_in_band_signalling`` on the subscription store."""
     dst_group = int_id(dst_id)
     dst_id_b = dst_id if isinstance(dst_id, bytes) and len(dst_id) >= 3 else bytes_3(dst_group)
 
@@ -35,8 +36,8 @@ def apply_in_band_signalling_store(
         if sub.system.value != system_name:
             continue
 
-        bridge_key = sub.table_key()
-        if bridge_key[:1] == "#" and dst_group != 9:
+        relay_table_key = sub.table_key()
+        if relay_table_key[:1] == "#" and dst_group != 9:
             continue
 
         entry_ts = int(sub.channel.slot)
@@ -55,7 +56,7 @@ def apply_in_band_signalling_store(
                     logger.info(
                         "(%s) [1] Transmission match for Bridge: %s. Reset timeout to %s",
                         system_name,
-                        bridge_key,
+                        relay_table_key,
                         sub.state.timer_expires_at,
                     )
 
@@ -73,7 +74,7 @@ def apply_in_band_signalling_store(
                     logger.info(
                         "(%s) [2] Bridge: %s, connection changed to state: %s",
                         system_name,
-                        bridge_key,
+                        relay_table_key,
                         True,
                     )
                     if to_type == "OFF":
@@ -81,7 +82,7 @@ def apply_in_band_signalling_store(
                         logger.info(
                             "(%s) [3] Bridge: %s set to \"OFF\" with an on timer rule: timeout timer cancelled",
                             system_name,
-                            bridge_key,
+                            relay_table_key,
                         )
                 if sub.is_active() and to_type == "ON" and timeout_sec:
                     sub.state.timer_expires_at = pkt_time + timeout_sec
@@ -89,7 +90,7 @@ def apply_in_band_signalling_store(
                     logger.info(
                         "(%s) [4] Bridge: %s, timeout timer reset to: %s",
                         system_name,
-                        bridge_key,
+                        relay_table_key,
                         sub.state.timer_expires_at - pkt_time,
                     )
 
@@ -109,13 +110,20 @@ def apply_in_band_signalling_store(
                     or dst_id_b != tgid_b
                     or dst_id_b == bytes_3(4000)
                 ):
-                    if sub.is_active():
+                    # OPTIONS static (OFF) legs stay armed when parrot/special TG ends (9990–9999).
+                    if (
+                        sub.policy == ActivationPolicy.STATIC
+                        and dst_id_b != tgid_b
+                        and is_special_tg(str(dst_group))
+                    ):
+                        pass
+                    elif sub.is_active():
                         sub.state.phase = SubscriptionPhase.IDLE
                         changed = True
                         logger.info(
                             "(%s) [5] Bridge: %s, connection changed to state: %s",
                             system_name,
-                            bridge_key,
+                            relay_table_key,
                             False,
                         )
                         if to_type == "ON":
@@ -123,7 +131,7 @@ def apply_in_band_signalling_store(
                             logger.info(
                                 "(%s) [6] Bridge: %s set to \"OFF\" with an on timer rule: timeout timer cancelled",
                                 system_name,
-                                bridge_key,
+                                relay_table_key,
                             )
                 if not sub.is_active() and to_type == "OFF" and timeout_sec:
                     sub.state.timer_expires_at = pkt_time + timeout_sec
@@ -131,7 +139,7 @@ def apply_in_band_signalling_store(
                     logger.info(
                         "(%s) [7] Bridge: %s, timeout timer reset to: %s",
                         system_name,
-                        bridge_key,
+                        relay_table_key,
                         sub.state.timer_expires_at - pkt_time,
                     )
                 if sub.is_active() and to_type == "ON" and dst_in_triggers(dst_id_b, dst_group, off_list):
@@ -140,7 +148,7 @@ def apply_in_band_signalling_store(
                     logger.info(
                         "(%s) [8] Bridge: %s set to ON with and \"OFF\" timer rule: timeout timer cancelled",
                         system_name,
-                        bridge_key,
+                        relay_table_key,
                     )
         elif dst_id_b == bytes_3(4000) and slot == entry_ts:
             is_static_tg = False
@@ -155,7 +163,7 @@ def apply_in_band_signalling_store(
                 if dst_group in static_tgs:
                     is_static_tg = True
 
-            is_reflector = bridge_key[:1] == "#"
+            is_reflector = relay_table_key[:1] == "#"
             if (
                 dst_in_triggers(dst_id_b, dst_group, off_list)
                 or dst_id_b == bytes_3(4000)
@@ -167,7 +175,7 @@ def apply_in_band_signalling_store(
                     logger.info(
                         "(%s) [5b] Bridge: %s, connection changed to state: %s (TG 4000 forced deactivation)",
                         system_name,
-                        bridge_key,
+                        relay_table_key,
                         False,
                     )
                     if to_type == "ON":
@@ -175,7 +183,7 @@ def apply_in_band_signalling_store(
                         logger.info(
                             "(%s) [6b] Bridge: %s set to \"OFF\" with an on timer rule: timeout timer cancelled",
                             system_name,
-                            bridge_key,
+                            relay_table_key,
                         )
             if not sub.is_active() and to_type == "OFF" and timeout_sec:
                 sub.state.timer_expires_at = pkt_time + timeout_sec
@@ -183,7 +191,7 @@ def apply_in_band_signalling_store(
                 logger.info(
                     "(%s) [7b] Bridge: %s, timeout timer reset to: %s",
                     system_name,
-                    bridge_key,
+                    relay_table_key,
                     sub.state.timer_expires_at - pkt_time,
                 )
             if sub.is_active() and to_type == "ON" and dst_in_triggers(dst_id_b, dst_group, off_list):
@@ -192,7 +200,7 @@ def apply_in_band_signalling_store(
                 logger.info(
                     "(%s) [8b] Bridge: %s set to ON with and \"OFF\" timer rule: timeout timer cancelled",
                     system_name,
-                    bridge_key,
+                    relay_table_key,
                 )
 
         if changed:

@@ -6,7 +6,7 @@ from typing import Any, Iterator
 
 from adn_server.application.voice_use_cases import VoiceUseCases
 from adn_server.domain import bytes_3, bytes_4
-from tests.harness.deterministic import DeterministicScenario, FakeHbpProtocol, active_bridge
+from tests.harness.deterministic import DeterministicScenario, FakeHbpProtocol, active_routing_table
 
 
 class FakeVoiceProvider:
@@ -51,8 +51,8 @@ def voice_master_scenario(tg: int = 91) -> tuple[DeterministicScenario, FakeMast
     config["SYSTEMS"]["MASTER-A"]["PEERS"] = {
         "1001": {"CALLSIGN": "TEST", "IP": "127.0.0.1", "PORT": 62032},
     }
-    bridges = active_bridge(tg, (("MASTER-A", 2),))
-    scenario = DeterministicScenario(config=config, bridges=bridges)
+    bridges = active_routing_table(tg, (("MASTER-A", 2),))
+    scenario = DeterministicScenario(config=config, routing_table=bridges)
     scenario.protocols["MASTER-A"] = master
     master.STATUS[2] = {
         "RX_TYPE": 2,
@@ -62,7 +62,7 @@ def voice_master_scenario(tg: int = 91) -> tuple[DeterministicScenario, FakeMast
     return scenario, master
 
 
-def reflector_bridge_entry(system: str = "MASTER-A", reflector: int = 310) -> dict[str, list[dict[str, Any]]]:
+def reflector_routing_entry(system: str = "MASTER-A", reflector: int = 310) -> dict[str, list[dict[str, Any]]]:
     return {
         "#{}".format(reflector): [
             {
@@ -97,7 +97,7 @@ def make_voice_uc(
         FakeVoiceProvider(),
         scenario.config,
         get_protocols=lambda: {"MASTER-A": master},
-        get_bridges=scenario.bridge.get_bridges,
+        routing_table_for_report=scenario.routing.routing_table_for_report,
         call_later=call_later,
         audio_path=audio_path,
     )

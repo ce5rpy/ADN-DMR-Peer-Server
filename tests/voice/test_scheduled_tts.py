@@ -127,7 +127,7 @@ def test_scheduled_tts_sync_exception_clears_running() -> None:
         FailingProvider(),
         scenario.config,
         get_protocols=lambda: {"MASTER-A": master},
-        get_bridges=scenario.bridge.get_bridges,
+        routing_table_for_report=scenario.routing.routing_table_for_report,
         call_later=call_later,
         audio_path="/tmp/audio",
     )

@@ -7,9 +7,9 @@ from tests.harness.deterministic import (
     FakeReportFactory,
     FakeReportSender,
     PacketSpec,
-    active_bridge,
+    active_routing_table,
     add_openbridge_system,
-    patch_bridge_wall_time,
+    patch_routing_wall_time,
 )
 from tests.harness.scenarios import obp_bridge_scenario
 
@@ -22,7 +22,7 @@ def test_obp_first_packet_bypasses_rate_control() -> None:
     scenario = obp_bridge_scenario("OBP-CL")
     base = PacketSpec(dst_id=52090, stream_id=0xAABBCCDD, slot=1)
 
-    with patch_bridge_wall_time(scenario.clock):
+    with patch_routing_wall_time(scenario.clock):
         ok = scenario.inject_obp("OBP-CL", DeterministicScenario.voice_head_spec(base))
         assert ok is not False
         obp_st = scenario.protocols["OBP-CL"].STATUS[bytes_4(base.stream_id)]
@@ -35,7 +35,7 @@ def test_obp_loop_loser_drops_second_obp_source() -> None:
     stream_id = 0x01020304
     base = PacketSpec(dst_id=52090, stream_id=stream_id, slot=1)
 
-    with patch_bridge_wall_time(scenario.clock):
+    with patch_routing_wall_time(scenario.clock):
         scenario.inject_obp("OBP-A", DeterministicScenario.voice_head_spec(base))
         scenario.inject_obp(
             "OBP-A",
@@ -51,17 +51,17 @@ def test_obp_loop_loser_drops_second_obp_source() -> None:
 
 def test_obp_loop_loser_sends_bcsq_once_when_enhanced() -> None:
     """Loop loser sends BCSQ once (not on every subsequent packet)."""
-    bridges = active_bridge(52090, (("OBP-A", 1), ("OBP-B", 1), ("MASTER-A", 2)))
+    bridges = active_routing_table(52090, (("OBP-A", 1), ("OBP-B", 1), ("MASTER-A", 2)))
     config = DeterministicScenario().config
     add_openbridge_system(config, "OBP-A")
     add_openbridge_system(config, "OBP-B", enhanced=True)
     config["SYSTEMS"]["MASTER-A"]["TS2_STATIC"] = "52090"
-    scenario = DeterministicScenario(config=config, bridges=bridges)
+    scenario = DeterministicScenario(config=config, routing_table=bridges)
 
     stream_id = 0x0D0E0F10
     base = PacketSpec(dst_id=52090, stream_id=stream_id, slot=1)
 
-    with patch_bridge_wall_time(scenario.clock):
+    with patch_routing_wall_time(scenario.clock):
         scenario.inject_obp("OBP-A", DeterministicScenario.voice_head_spec(base))
         scenario.inject_obp(
             "OBP-A",
@@ -90,12 +90,12 @@ def test_obp_vterm_sets_fin_and_drops_late_packets() -> None:
     scenario.config.setdefault("REPORTS", {})["REPORT"] = True
     scenario.report_factory = FakeReportFactory()
     scenario.reporting = ReportingUseCases(FakeReportSender(scenario.report_factory), scenario.config)
-    scenario.bridge._reporting = scenario.reporting
+    scenario.routing._reporting = scenario.reporting
 
     base = PacketSpec(dst_id=52090, stream_id=0x99887766, slot=1)
     sid = bytes_4(base.stream_id)
 
-    with patch_bridge_wall_time(scenario.clock):
+    with patch_routing_wall_time(scenario.clock):
         scenario.inject_obp("OBP-CL", DeterministicScenario.voice_head_spec(base))
         scenario.inject_obp(
             "OBP-CL",

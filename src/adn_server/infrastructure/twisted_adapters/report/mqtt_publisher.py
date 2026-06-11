@@ -27,8 +27,8 @@ except ImportError:  # pragma: no cover - exercised via create_report_mqtt_publi
 class NullReportMqttPublisher(ReportMqttPublisher):
     """No-op sink when MQTT is disabled."""
 
-    def start(self, wire: ReportWireEncoder, get_systems: Any, get_bridges: Any) -> None:
-        del wire, get_systems, get_bridges
+    def start(self, wire: ReportWireEncoder, get_systems: Any, routing_table_for_report: Any) -> None:
+        del wire, get_systems, routing_table_for_report
 
     def publish_frames(self, frames: tuple[bytes, ...]) -> None:
         del frames
@@ -54,9 +54,9 @@ class PahoReportMqttPublisher(ReportMqttPublisher):
         self,
         wire: ReportWireEncoder,
         get_systems: Callable[[], dict[str, Any]],
-        get_bridges: Callable[[], dict[str, Any]],
+        routing_table_for_report: Callable[[], dict[str, Any]],
     ) -> None:
-        del wire, get_bridges
+        del wire, routing_table_for_report
         if mqtt is None:
             logger.error("(REPORT) MQTT enabled but paho-mqtt is not installed; publisher disabled")
             return

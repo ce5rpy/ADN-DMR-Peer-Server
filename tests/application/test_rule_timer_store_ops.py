@@ -3,21 +3,21 @@
 from __future__ import annotations
 
 from adn_server.application.subscription.rule_timer_ops import apply_rule_timer_store
-from adn_server.application.subscription.store_sync import replace_store_from_bridges
+from adn_server.application.subscription.store_sync import replace_store_from_routing_table
 from adn_server.domain.subscription import SubscriptionPhase
 from adn_server.infrastructure.subscription_store import InMemorySubscriptionStore
-from tests.harness.deterministic import active_bridge
+from tests.harness.deterministic import active_routing_table
 
 
 def test_apply_rule_timer_store_deactivates_expired_on() -> None:
-    bridges = active_bridge(52090, (("MASTER-A", 1), ("MASTER-B", 2)))
+    bridges = active_routing_table(52090, (("MASTER-A", 1), ("MASTER-B", 2)))
     bridges["52090"][0]["TO_TYPE"] = "ON"
     bridges["52090"][0]["ACTIVE"] = True
     bridges["52090"][0]["TIMER"] = 100.0
     bridges["52090"][1]["TIMER"] = 300.0
 
     store = InMemorySubscriptionStore()
-    replace_store_from_bridges(store, bridges)
+    replace_store_from_routing_table(store, bridges)
     systems_cfg = {
         "MASTER-A": {"SINGLE_MODE": True},
         "MASTER-B": {"SINGLE_MODE": True},

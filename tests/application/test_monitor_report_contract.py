@@ -357,7 +357,7 @@ def test_report_wire_bridge_frames_emits_routing_table() -> None:
     assert frames[0][:1] == REPORT_OPCODES["ROUTING_TABLE_SND"]
     doc = json.loads(frames[0][1:].decode())
     assert doc["type"] == "routing_table"
-    assert doc["routes"][0]["bridge_key"] == "52090"
+    assert doc["routes"][0]["relay_table_key"] == "52090"
 
 
 def test_report_wire_emits_voice_event_only() -> None:

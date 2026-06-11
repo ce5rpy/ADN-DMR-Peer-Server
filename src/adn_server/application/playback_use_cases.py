@@ -40,9 +40,9 @@ logger = logging.getLogger(__name__)
 # Legacy playback.py: sleep(2) before playback, sleep(0.06) between packets.
 _PLAYBACK_DELAY_S = 2.0
 _PACKET_INTERVAL_S = 0.06
-# Match bridge stream_trimmer_loop RX idle (bridge_use_cases / legacy bridge_master).
+# Match bridge stream_trimmer_loop RX idle (routing_use_cases / legacy bridge_master).
 _RECORD_IDLE_S = 5.0
-# HBP ingress source timeout (bridge_master.py / bridge_use_cases dmrd_received ~2183).
+# HBP ingress source timeout (bridge_master.py / routing_use_cases dmrd_received ~2183).
 _SOURCE_MAX_S = 180.0
 
 

@@ -1,6 +1,6 @@
-"""In-process deterministic harness for BridgeUseCases.
+"""In-process deterministic harness for RoutingUseCases.
 
-Inject at ``BridgeUseCases.dmrd_received()`` and capture outbound
+Inject at ``RoutingUseCases.dmrd_received()`` and capture outbound
 ``send_to_system`` calls without UDP or Twisted.
 """
 
@@ -12,7 +12,7 @@ from dataclasses import dataclass, field
 from time import perf_counter
 from typing import Any
 
-from adn_server.application.bridge_use_cases import BridgeUseCases
+from adn_server.application.routing_use_cases import RoutingUseCases
 from adn_server.application.reporting_use_cases import ReportingUseCases
 from adn_server.domain.dmr.bptc import encode_emblc
 from adn_server.infrastructure.talker_alias_emblc import default_ta_emblc_encoder
@@ -23,8 +23,8 @@ from adn_server.domain.hbp_protocol import (
     HBPF_SLT_VTERM,
     HBPF_VOICE,
 )
-from adn_server.application.subscription.store_sync import replace_store_from_bridges
-from adn_server.infrastructure.bridge_router_impl import InMemoryBridgeRouter
+from adn_server.application.subscription.store_sync import replace_store_from_routing_table
+from adn_server.infrastructure.acl_router import InMemoryAclRouter
 from adn_server.infrastructure.subscription_store import InMemorySubscriptionStore
 from adn_server.infrastructure.hbp_constants import DMRD
 
@@ -198,17 +198,17 @@ class FakeReportSender:
     def set_systems(self, systems: dict[str, Any]) -> None:
         pass
 
-    def set_bridges(self, bridges: dict[str, Any]) -> None:
+    def set_routing_table(self, bridges: dict[str, Any]) -> None:
         pass
 
     def send_config(self, systems: dict[str, Any], *, incremental: bool = False) -> None:
         pass
 
-    def send_bridge(self, bridges: dict[str, Any], *, incremental: bool = False) -> None:
+    def send_routing_table(self, bridges: dict[str, Any], *, incremental: bool = False) -> None:
         pass
 
-    def send_bridge_event(self, event: str) -> None:
-        self._factory.send_bridge_event(event)
+    def send_routing_event(self, event: str) -> None:
+        self._factory.send_routing_event(event)
 
 
 class FakeReportFactory:
@@ -217,7 +217,7 @@ class FakeReportFactory:
     def __init__(self) -> None:
         self.events: list[str] = []
 
-    def send_bridge_event(self, msg: str) -> None:
+    def send_routing_event(self, msg: str) -> None:
         self.events.append(msg)
 
 
@@ -314,9 +314,9 @@ class CapturedBcsq:
 
 
 @contextmanager
-def patch_bridge_wall_time(clock: FakeClock):
-    """Patch ``bridge_use_cases.time.time`` to the harness clock (OBP path)."""
-    import adn_server.application.bridge_use_cases as buc
+def patch_routing_wall_time(clock: FakeClock):
+    """Patch ``routing_use_cases.time.time`` to the harness clock (OBP path)."""
+    import adn_server.application.routing_use_cases as buc
 
     original = buc.time.time
     buc.time.time = clock.time
@@ -326,7 +326,7 @@ def patch_bridge_wall_time(clock: FakeClock):
         buc.time.time = original
 
 
-def active_bridge(
+def active_routing_table(
     tg_id: int,
     entries: tuple[tuple[str, int], ...],
     timeout_minutes: int = 1,
@@ -353,12 +353,12 @@ def active_bridge(
 
 
 class DeterministicScenario:
-    """Wires BridgeUseCases with fake protocols and outbound capture."""
+    """Wires RoutingUseCases with fake protocols and outbound capture."""
 
     def __init__(
         self,
         config: dict[str, Any] | None = None,
-        bridges: dict[str, list[dict[str, Any]]] | None = None,
+        routing_table: dict[str, list[dict[str, Any]]] | None = None,
         *,
         enable_reporting: bool = False,
     ) -> None:
@@ -375,14 +375,16 @@ class DeterministicScenario:
             if self.report_factory
             else None
         )
-        self.router = InMemoryBridgeRouter()
-        self.router.set_bridges(copy.deepcopy(bridges or {}))
+        self.acl_router = InMemoryAclRouter()
         self.subscription_store = InMemorySubscriptionStore()
-        replace_store_from_bridges(self.subscription_store, self.router.get_bridges())
+        if routing_table:
+            replace_store_from_routing_table(
+                self.subscription_store, copy.deepcopy(routing_table)
+            )
         self.protocols: dict[str, FakeHbpProtocol | FakeObpProtocol] = {}
         self._wire_protocols_from_config()
-        self.bridge = BridgeUseCases(
-            self.router,
+        self.routing = RoutingUseCases(
+            self.acl_router,
             self.config,
             self.subscription_store,
             send_to_system=self._send_capture,
@@ -394,6 +396,10 @@ class DeterministicScenario:
             encode_emblc=encode_emblc,
             ta_emblc_encoder=default_ta_emblc_encoder,
         )
+
+    def seed_routing_table(self, routing_table: dict[str, list[dict[str, Any]]]) -> None:
+        """Replace subscription store contents from a legacy monitor-shaped routing table."""
+        replace_store_from_routing_table(self.subscription_store, routing_table)
 
     def _wire_protocols_from_config(self) -> None:
         self.protocols.clear()
@@ -508,7 +514,7 @@ class DeterministicScenario:
     ) -> bool | None:
         args = spec.decoded_hbp_args()
         pkt_time = self.clock.time() if ingress_pkt_time is None else ingress_pkt_time
-        ok = self.bridge.dmrd_received(system_name, ingress_pkt_time=pkt_time, **args)
+        ok = self.routing.dmrd_received(system_name, ingress_pkt_time=pkt_time, **args)
         if ok is not False:
             self._sync_hbp_slot(system_name, args)
         return ok
@@ -520,8 +526,8 @@ class DeterministicScenario:
     ) -> bool | None:
         """Inject a unit (private) call packet; patches bridge wall time to harness clock."""
         args = spec.decoded_hbp_args()
-        with patch_bridge_wall_time(self.clock):
-            ok = self.bridge.dmrd_received(system_name, **args)
+        with patch_routing_wall_time(self.clock):
+            ok = self.routing.dmrd_received(system_name, **args)
         if ok is not False:
             self._sync_hbp_slot(system_name, args)
         return ok
@@ -535,7 +541,7 @@ class DeterministicScenario:
         obp_source_server: bytes | None = None,
     ) -> bool | None:
         args = spec.decoded_hbp_args()
-        return self.bridge.dmrd_received(
+        return self.routing.dmrd_received(
             system_name,
             obp_use_parsed=True,
             obp_hops=obp_hops,

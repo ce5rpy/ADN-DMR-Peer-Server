@@ -7,7 +7,7 @@ One **topic per file** — run only what you need while developing or validating
 python3 -m pip install --no-user -e ".[dev]"
 python3 -m pytest tests/<path>/test_<name>.py -q          # single file
 python3 -m pytest tests/<path>/test_<name>.py::test_foo -q # single test
-python3 -m pytest tests/bridge/ -q                         # whole domain
+python3 -m pytest tests/routing/ -q                        # whole domain
 python3 -m pytest tests/ -q                                # full suite
 python3 -m pytest tests/ -q -m "not mqtt"                 # skip MQTT-heavy tests
 ```
@@ -18,23 +18,23 @@ Use the project interpreter, e.g. `/opt/.pyenv/versions/3.11.8/bin/python3`.
 
 | Directory | What it covers |
 |-----------|----------------|
-| `bridge/` | Static TG, startup bridges, unit data, CRC dedup, echo, private voice, config reload |
+| `routing/` | Static TG, startup subscriptions, unit data, CRC dedup, echo reset, private voice, config reload |
 | `hbp/` | HBP ingress, loop control, rate limit, timeout/collision, master maintenance |
 | `obp/` | OpenBridge loop, rate limit, unit-data loop |
 | `voice/` | Announcements, TTS schedule, broadcast queue, disconnected voice, in-band signalling |
-| `talker_alias/` | Encode/decode, passthrough, MMDVM wire, bridge inject (DeterministicScenario) |
+| `talker_alias/` | Encode/decode, passthrough, MMDVM wire, routing inject (DeterministicScenario) |
 | `parrot/` | Recording timers, playback loop, seq preservation, ingress path |
 | `replay/` | JSONL session replay |
 | `schemas/` | Report v2 JSON Schema validation (`jsonschema` dev dep) |
-| `application/` | Report payloads, monitor topology, proxy use cases, runtime context |
-| `infrastructure/` | Logging reload, bridge router, **HBP REPEAT + proxy fan-in integration**, MQTT |
+| `application/` | Report payloads, monitor topology, proxy use cases, subscription store/router |
+| `infrastructure/` | Logging reload, ACL router, **HBP REPEAT + proxy fan-in integration**, MQTT |
 | `smoke/` | Quick routing smoke |
 | `support/` | Shared stacks (`hbp_repeat_stack`, monitor sim) — not run as tests |
 | `harness/` | Shared fakes (`DeterministicScenario`, assertions) — not run as tests |
 
 ## Integration vs harness
 
-Most bridge/voice tests inject packets via **`DeterministicScenario`** (`bridge.dmrd_received` on fakes). That is fast but **skips** `udp_hbp` REPEAT rewrite and proxy UDP fan-in.
+Most routing/voice tests inject packets via **`DeterministicScenario`** (`routing.dmrd_received` on fakes). That is fast but **skips** `udp_hbp` REPEAT rewrite and proxy UDP fan-in.
 
 For regressions on those paths, use:
 
@@ -48,17 +48,19 @@ Mark new stack tests with `@pytest.mark.integration`.
 
 ## Files by domain
 
-### bridge/
+### routing/
 
 | File | Tests | Topic |
 |------|-------|-------|
 | `test_config_reload.py` | 1 | Merge system config on reload |
 | `test_crc_dedup.py` | 3 | HBP/OBP CRC dedup, seq=0 |
-| `test_echo_bridgereset.py` | 5 | Echo leg after BRIDGERESET / OPTIONS |
+| `test_echo_subscription_reset.py` | 5 | Echo leg after subscription reset / OPTIONS |
 | `test_options_config_loop.py` | 3 | OPTIONS paths (RPTO/startup; no 26s loop) |
+| `test_peer_options_override.py` | — | RPTO SINGLE/TIMER override, inject proxy |
 | `test_private_voice.py` | 3 | Private call routing |
-| `test_startup_bridges.py` | 4 | Startup BRIDGES + voice E2E |
+| `test_startup_subscriptions.py` | 4 | Startup subscriptions + voice E2E |
 | `test_static_tg_options.py` | 4 | Static TG from peer OPTIONS |
+| `test_subscription_router_dmrd.py` | — | `dmrd_received` via `SubscriptionRouter` |
 | `test_unit_data_ingress.py` | 4 | Unit headers, CSBK, reports |
 | `test_unit_data_routing.py` | 5 | SUB_MAP, hotspot, gateway, OBP fanout |
 
@@ -97,7 +99,7 @@ Mark new stack tests with `@pytest.mark.integration`.
 
 | File | Tests | Topic |
 |------|-------|-------|
-| `test_bridge_inject.py` | 3 | TA inject on bridge VHEAD (harness) |
+| `test_routing_inject.py` | 3 | TA inject on routing VHEAD (harness) |
 | `test_embed_ta.py` | 4 | Embedded LC modes |
 | `test_encode_decode.py` | 8 | Domain encode/decode |
 | `test_format.py` | 2 | Format from subscriber profile |
@@ -124,21 +126,35 @@ Mark new stack tests with `@pytest.mark.integration`.
 | `test_udp_fanin.py` | UDP fan-in routing |
 | `test_report_server_wire.py` | Report server wire opcodes |
 | `test_logging_reload.py` | Log level reload |
-| `test_bridge_router_index.py` | BRIDGES O(1) index vs legacy scan |
+| `test_acl_router.py` | ACL range checks (`acl_check` parity) |
 
 ### smoke/ · application/
 
 | File | Topic |
 |------|-------|
-| `smoke/test_bridge_routing.py` | Static TG forward smoke |
+| `smoke/test_routing.py` | Static TG forward smoke |
 | `application/test_monitor_topology.py` | Inject-only proxy monitor remap |
 | `application/test_runtime_context.py` | RuntimeContext holder, SIGHUP swap prep |
+| `application/test_subscription_router.py` | `SubscriptionRouter` vs legacy scan |
+| `application/test_routing_table_export.py` | Monitor export shim from store |
+
+## Harness API (post-rename)
+
+| Symbol | Role |
+|--------|------|
+| `DeterministicScenario` | Wires `RoutingUseCases` + `InMemorySubscriptionStore` + `InMemoryAclRouter` |
+| `scenario.routing` | Use-case facade (`dmrd_received`, timers, OPTIONS) |
+| `scenario.seed_routing_table()` | Seed store from legacy monitor-shaped dict |
+| `active_routing_table()` | Build minimal ACTIVE routing table for harness |
+| `patch_routing_wall_time()` | Patches wall clock on OBP/unit paths |
+
+Session replay JSONL meta accepts `routing_table` (preferred) or legacy `bridges`; `apply_startup_subscriptions` or legacy `apply_startup_bridges`.
 
 ## Examples (copy-paste)
 
 ```bash
-# After changing bridge unit-data routing
-python3 -m pytest tests/bridge/test_unit_data_routing.py -q
+# After changing unit-data routing
+python3 -m pytest tests/routing/test_unit_data_routing.py -q
 
 # After parrot seq fix
 python3 -m pytest tests/parrot/test_rekey_playback.py -q
@@ -150,7 +166,7 @@ python3 -m pytest tests/infrastructure/test_hbp_repeat_talker_alias.py -q
 python3 -m pytest tests/hbp/test_hbp_loop_control.py tests/hbp/test_hbp_rate_limit.py -q
 
 # One test by name
-python3 -m pytest tests/bridge/test_startup_bridges.py::test_startup_bridge_routes_voice_after_apply -q
+python3 -m pytest tests/routing/test_startup_subscriptions.py::test_startup_bridge_routes_voice_after_apply -q
 ```
 
 ## Policy

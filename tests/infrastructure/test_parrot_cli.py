@@ -94,7 +94,7 @@ class _FakeReportFactory:
     def set_systems(self, *_a, **_k):
         pass
 
-    def set_bridges(self, *_a, **_k):
+    def set_routing_table(self, *_a, **_k):
         pass
 
     def set_config(self, *_a, **_k):

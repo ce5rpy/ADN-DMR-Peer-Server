@@ -9,19 +9,19 @@ from adn_server.infrastructure.talker_alias_emblc import default_ta_emblc_encode
 
 from .deterministic import (
     DeterministicScenario,
-    active_bridge,
+    active_routing_table,
     add_openbridge_system,
 )
 
 
 def obp_bridge_scenario(*obp_names: str, tg: int = 52090) -> DeterministicScenario:
     entries = [(name, 1) for name in obp_names] + [("MASTER-A", 2)]
-    bridges = active_bridge(tg, tuple(entries))
+    bridges = active_routing_table(tg, tuple(entries))
     config = DeterministicScenario().config
     for name in obp_names:
         add_openbridge_system(config, name)
     config["SYSTEMS"]["MASTER-A"]["TS2_STATIC"] = str(tg)
-    return DeterministicScenario(config=config, bridges=bridges)
+    return DeterministicScenario(config=config, routing_table=bridges)
 
 
 def talker_alias_config() -> dict[str, Any]:

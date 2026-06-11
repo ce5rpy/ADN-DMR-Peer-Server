@@ -1,4 +1,4 @@
-"""HBP MASTER + BridgeUseCases stack for REPEAT / talker-alias integration tests."""
+"""HBP MASTER + RoutingUseCases stack for REPEAT / talker-alias integration tests."""
 
 from __future__ import annotations
 
@@ -6,10 +6,10 @@ import copy
 from dataclasses import dataclass, field
 from typing import Any
 
-from adn_server.application.bridge_use_cases import BridgeUseCases
+from adn_server.application.routing_use_cases import RoutingUseCases
 from adn_server.application.reporting_use_cases import ReportingUseCases
 from adn_server.domain.dmr.bptc import encode_emblc
-from adn_server.infrastructure.bridge_router_impl import InMemoryBridgeRouter
+from adn_server.infrastructure.acl_router import InMemoryAclRouter
 from adn_server.infrastructure.subscription_store import InMemorySubscriptionStore
 from adn_server.infrastructure.config_normalizer import (
     apply_talker_alias_defaults,
@@ -48,7 +48,7 @@ class HbpRepeatStack:
     system_name: str
     config: dict[str, Any]
     hbp: HBPProtocol
-    bridge: BridgeUseCases
+    bridge: RoutingUseCases
     transport: RecordingTransport
     dmra_capture: list[tuple[list[bytes], bytes | None]] = field(default_factory=list)
 
@@ -86,7 +86,7 @@ def build_hbp_repeat_stack(
     talker_alias: bool = True,
     system_name: str = "MASTER-A",
 ) -> HbpRepeatStack:
-    """Real HBPProtocol with BridgeUseCases TA callbacks (not FakeHbpProtocol)."""
+    """Real HBPProtocol with RoutingUseCases TA callbacks (not FakeHbpProtocol)."""
     config = copy.deepcopy(talker_alias_config())
     if not talker_alias:
         config["GLOBAL"]["TALKER_ALIAS"] = False
@@ -113,8 +113,8 @@ def build_hbp_repeat_stack(
         return hbp.get_dmra_blocks(stream_id)
 
     report_factory = FakeReportFactory()
-    bridge = BridgeUseCases(
-        InMemoryBridgeRouter(),
+    bridge = RoutingUseCases(
+        InMemoryAclRouter(),
         config,
         InMemorySubscriptionStore(),
         send_to_system=lambda *_a, **_k: None,

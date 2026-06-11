@@ -51,7 +51,7 @@ class BoundedReportQueue:
         sent = 0
         budget = self.max_drain_per_tick
         while self._events and budget > 0:
-            sender.send_bridge_event(self._events.popleft())
+            sender.send_routing_event(self._events.popleft())
             sent += 1
             budget -= 1
         if self._pending_config is not None:
@@ -63,8 +63,8 @@ class BoundedReportQueue:
         if self._pending_bridge is not None:
             bridges, incremental = self._pending_bridge
             self._pending_bridge = None
-            sender.set_bridges(bridges)
-            sender.send_bridge(bridges, incremental=incremental)
+            sender.set_routing_table(bridges)
+            sender.send_routing_table(bridges, incremental=incremental)
             sent += 1
         if self.dropped_events and sent:
             logger.debug("(REPORT) queue drained %s item(s); dropped_events=%s", sent, self.dropped_events)
@@ -81,18 +81,18 @@ class QueuedReportSender(ReportSender):
     def set_systems(self, systems: dict[str, Any]) -> None:
         self._inner.set_systems(systems)
 
-    def set_bridges(self, bridges: dict[str, Any]) -> None:
-        self._inner.set_bridges(bridges)
+    def set_routing_table(self, bridges: dict[str, Any]) -> None:
+        self._inner.set_routing_table(bridges)
 
     def send_config(self, systems: dict[str, Any], *, incremental: bool = False) -> None:
         self._inner.set_systems(systems)
         self._queue.enqueue_config(systems, incremental=incremental)
 
-    def send_bridge(self, bridges: dict[str, Any], *, incremental: bool = False) -> None:
-        self._inner.set_bridges(bridges)
+    def send_routing_table(self, bridges: dict[str, Any], *, incremental: bool = False) -> None:
+        self._inner.set_routing_table(bridges)
         self._queue.enqueue_bridge(bridges, incremental=incremental)
 
-    def send_bridge_event(self, event: str) -> None:
+    def send_routing_event(self, event: str) -> None:
         self._queue.enqueue_event(event)
 
     @property

@@ -21,11 +21,11 @@
 #   Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301  USA
 ###############################################################################
 
-from .bridge_use_cases import BridgeUseCases
+from .routing_use_cases import RoutingUseCases
 from .ident_use_cases import IdentUseCases
 from .ports import (
     AliasLoader,
-    BridgeRouter,
+    AclRouter,
     ConfigLoader,
     KeysStore,
     ReportSender,
@@ -42,10 +42,10 @@ __all__ = [
     "SubMapStore",
     "KeysStore",
     "ReportSender",
-    "BridgeRouter",
+    "AclRouter",
     "VoiceProvider",
     "SecurityDownloader",
-    "BridgeUseCases",
+    "RoutingUseCases",
     "IdentUseCases",
     "VoiceUseCases",
     "ReportingUseCases",

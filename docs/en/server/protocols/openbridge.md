@@ -13,7 +13,7 @@ On the wire, extended OpenBridge uses the **`DMRE`** opcode. The **embedded prot
 - **`DMRD`** version 1 — HMAC-SHA1 authenticated payload (compatibility mode); or
 - **`DMRE`** — extended frame with **BLAKE2b** MAC, embedded version, timestamps, **hops**, source server/repeater IDs, etc. (**DMRE v5** = embedded version 5, recommended above).
 
-This stack implements the **OPENBRIDGE** peer mode in **`udp_hbp.py`** and bridge routing in **`BridgeUseCases`**.
+This stack implements the **OPENBRIDGE** peer mode in **`udp_hbp.py`** and voice routing in **`RoutingUseCases`** (`application/routing/`, `application/subscription/`).
 
 ## Ingress (DMRE)
 

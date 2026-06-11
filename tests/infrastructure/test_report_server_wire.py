@@ -30,7 +30,7 @@ def test_connect_sends_hello_topology_and_routing() -> None:
             "MASTER-A": {"MODE": "MASTER", "ENABLED": True, "IP": "10.0.0.1", "PORT": 62030},
         }
     )
-    factory.set_bridges(
+    factory.set_routing_table(
         {
             "52090": [
                 {"SYSTEM": "MASTER-A", "TS": 2, "TGID": 52090, "ACTIVE": True, "TO_TYPE": "ON"},
@@ -54,7 +54,7 @@ def test_bridge_event_emits_voice_event_json() -> None:
     factory = ReportServerFactory(_report_config())
     client = _CapturingClient()
     factory.clients.append(client)
-    factory.send_bridge_event("GROUP VOICE,START,RX,MASTER-A,2155905152,1001,3120001,2,52090")
+    factory.send_routing_event("GROUP VOICE,START,RX,MASTER-A,2155905152,1001,3120001,2,52090")
     assert len(client.messages) == 1
     assert client.messages[0][:1] == REPORT_OPCODES["VOICE_EVENT_SND"]
     voice = json.loads(client.messages[0][1:].decode())
@@ -65,7 +65,7 @@ def test_bridge_event_emits_voice_event_json() -> None:
 
 def test_incremental_bridge_update_sends_delta() -> None:
     factory = ReportServerFactory(_report_config())
-    factory.set_bridges(
+    factory.set_routing_table(
         {
             "52090": [
                 {"SYSTEM": "MASTER-A", "TS": 2, "TGID": 52090, "ACTIVE": True, "TO_TYPE": "ON"},
@@ -74,15 +74,15 @@ def test_incremental_bridge_update_sends_delta() -> None:
     )
     client = _CapturingClient()
     factory.clients.append(client)
-    factory.send_bridge(incremental=False)
-    factory.set_bridges(
+    factory.send_routing_table(incremental=False)
+    factory.set_routing_table(
         {
             "52090": [
                 {"SYSTEM": "MASTER-A", "TS": 2, "TGID": 52090, "ACTIVE": False, "TO_TYPE": "ON"},
             ],
         }
     )
-    factory.send_bridge(incremental=True)
+    factory.send_routing_table(incremental=True)
     assert len(client.messages) == 2
     assert client.messages[0][:1] == REPORT_OPCODES["ROUTING_TABLE_SND"]
     assert client.messages[1][:1] == REPORT_OPCODES["DELTA_SND"]
@@ -133,7 +133,7 @@ def test_inject_proxy_topology_expanded_for_monitor() -> None:
     assert 730039101 in peer_keys
 
 
-def test_send_bridge_event_remaps_inject_proxy_system_name() -> None:
+def test_send_routing_event_remaps_inject_proxy_system_name() -> None:
     peer = bytes_4(730039101)
     config = {
         "REPORTS": {"REPORT": True, "REPORT_CLIENTS": ["*"]},
@@ -160,7 +160,7 @@ def test_send_bridge_event_remaps_inject_proxy_system_name() -> None:
     factory.set_peer_slot_map(lambda: {peer: 4})
     client = _CapturingClient()
     factory.clients.append(client)
-    factory.send_bridge_event(
+    factory.send_routing_event(
         "GROUP VOICE,START,TX,SYSTEM,2693411696,9990,7300392,2,9990"
     )
     assert len(client.messages) == 1

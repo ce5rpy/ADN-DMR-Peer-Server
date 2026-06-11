@@ -17,8 +17,8 @@ class _RecordingMqtt:
         self.stopped = False
         self.started = False
 
-    def start(self, wire: Any, get_systems: Any, get_bridges: Any) -> None:
-        del wire, get_systems, get_bridges
+    def start(self, wire: Any, get_systems: Any, routing_table_for_report: Any) -> None:
+        del wire, get_systems, routing_table_for_report
         self.started = True
 
     def publish_frames(self, frames: tuple[bytes, ...]) -> None:

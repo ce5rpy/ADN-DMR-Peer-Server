@@ -11,7 +11,7 @@ from twisted.internet import reactor, task
 
 from adn_server.application.playback_use_cases import PlaybackUseCases
 from adn_server.infrastructure import reopen_file_handlers
-from adn_server.infrastructure.bridge_router_impl import InMemoryBridgeRouter
+from adn_server.infrastructure.acl_router import InMemoryAclRouter
 from adn_server.infrastructure.config_normalizer import (
     ensure_system_runtime_config,
     normalize_obp_config,
@@ -36,7 +36,7 @@ def run_parrot(config: dict[str, Any], *, logger: logging.Logger) -> None:
     g["SERVER_ID"] = (int(sid) & 0xFFFFFFFF).to_bytes(4, "big") if not isinstance(sid, bytes) else sid
 
     protocols: dict[str, Any] = {}
-    router = InMemoryBridgeRouter()
+    router = InMemoryAclRouter()
     report_factory = ReportServerFactory(config)
     systems_cfg = config.get("SYSTEMS", {})
     report_factory.set_systems(systems_cfg)

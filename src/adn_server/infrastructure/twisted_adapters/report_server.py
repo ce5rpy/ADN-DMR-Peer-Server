@@ -107,7 +107,7 @@ class ReportServerFactory(Factory):
     def set_systems(self, systems: dict[str, Any]) -> None:
         self._systems = systems
 
-    def set_bridges(self, bridges: dict[str, Any]) -> None:
+    def set_routing_table(self, bridges: dict[str, Any]) -> None:
         self._bridges = bridges
 
     def set_peer_slot_map(self, provider: Callable[[], dict[bytes, int]] | None) -> None:
@@ -152,13 +152,13 @@ class ReportServerFactory(Factory):
         if self._mqtt is not None:
             self._mqtt.publish_dashboard(systems)
 
-    def send_bridge(self, *, incremental: bool = False) -> None:
+    def send_routing_table(self, *, incremental: bool = False) -> None:
         frames = self._wire.bridge_frames(self._bridges, full_snapshot=not incremental)
         self._broadcast_frames(frames)
         if self._mqtt is not None:
             self._mqtt.publish_dashboard(self._systems_for_report())
 
-    def send_bridge_event(self, event: str) -> None:
+    def send_routing_event(self, event: str) -> None:
         peer_slots = self._peer_slot_map() if self._peer_slot_map is not None else None
         events = remap_inject_proxy_voice_events(
             event, self._config, self._systems, peer_slots, self._bridges

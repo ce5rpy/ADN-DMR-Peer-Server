@@ -31,13 +31,13 @@ def _tgid_match(entry_tgid: Any, dst_id_b: bytes, dst_int: int) -> bool:
 def ensure_obp_source_for_tg_store(
     store: SubscriptionStore,
     system_name: str,
-    bridge_key: str,
+    relay_table_key: str,
     dst_id_b: bytes,
     dst_int: int,
     now: float,
 ) -> None:
     """Ensure OBP has ACTIVE TS1 source row in main and #reflector tables."""
-    for key in (bridge_key, "#" + bridge_key):
+    for key in (relay_table_key, "#" + relay_table_key):
         if not any(sub.table_key() == key for sub in store.snapshot()):
             continue
         channel_tgid = dst_int
@@ -65,7 +65,7 @@ def ensure_obp_source_for_tg_store(
                     role=SubscriptionRole.ECHO,
                     policy=ActivationPolicy.INBAND,
                     state=SubscriptionState(phase=SubscriptionPhase.ACTIVE, timer_expires_at=now),
-                    bridge_key=key if key.startswith("#") else None,
+                    relay_table_key=key if key.startswith("#") else None,
                     timeout_seconds=None,
                     triggers=InbandTriggers(),
                 )

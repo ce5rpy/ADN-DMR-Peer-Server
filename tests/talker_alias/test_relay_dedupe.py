@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
-from adn_server.application.bridge_use_cases import BridgeUseCases
+from adn_server.application.routing_use_cases import RoutingUseCases
 from adn_server.domain import bytes_3, bytes_4
-from adn_server.infrastructure.bridge_router_impl import InMemoryBridgeRouter
+from adn_server.infrastructure.acl_router import InMemoryAclRouter
 from adn_server.infrastructure.subscription_store import InMemorySubscriptionStore
 from adn_server.infrastructure.talker_alias_emblc import default_ta_emblc_encoder
 from adn_server.domain.dmr.bptc import encode_emblc
@@ -36,8 +36,8 @@ def test_on_dmra_fragment_stored_relays_passthrough_once() -> None:
         sent.append(target_system)
         return 1
 
-    bridge = BridgeUseCases(
-        InMemoryBridgeRouter(),
+    bridge = RoutingUseCases(
+        InMemoryAclRouter(),
         config,
         InMemorySubscriptionStore(),
         send_dmra_to_system=_send_dmra,

@@ -4,16 +4,16 @@ from __future__ import annotations
 
 import pytest
 from tests.harness.assertions import assert_capture_unchanged
-from tests.harness.deterministic import DeterministicScenario, PacketSpec, active_bridge
+from tests.harness.deterministic import DeterministicScenario, PacketSpec, active_routing_table
 
-import adn_server.application.bridge_use_cases as buc
+import adn_server.application.routing_use_cases as buc
 
 
 @pytest.mark.behavior
 def test_hbp_rate_limit_drops_excessive_ingress_rate() -> None:
     """Regression: excessive ingress rate triggers drop; post-drop forwards stall."""
-    bridges = active_bridge(91, (("MASTER-A", 2), ("MASTER-B", 2)))
-    scenario = DeterministicScenario(bridges=bridges)
+    bridges = active_routing_table(91, (("MASTER-A", 2), ("MASTER-B", 2)))
+    scenario = DeterministicScenario(routing_table=bridges)
     base = PacketSpec(dst_id=91, stream_id=0x55667788)
     t0 = scenario.clock.time()
 
@@ -48,8 +48,8 @@ def test_hbp_rate_limit_drops_excessive_ingress_rate() -> None:
 
 def test_hbp_rate_limit_uses_ingress_time_not_wall_clock() -> None:
     """Rate control must use ingress_pkt_time even when wall clock is frozen."""
-    bridges = active_bridge(91, (("MASTER-A", 2), ("MASTER-B", 2)))
-    scenario = DeterministicScenario(bridges=bridges)
+    bridges = active_routing_table(91, (("MASTER-A", 2), ("MASTER-B", 2)))
+    scenario = DeterministicScenario(routing_table=bridges)
     base = PacketSpec(dst_id=91, stream_id=0x34343434)
     t0 = 1_700_000_200.0
 

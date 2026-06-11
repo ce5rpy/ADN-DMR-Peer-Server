@@ -4,15 +4,15 @@ from __future__ import annotations
 
 import pytest
 from tests.harness.assertions import assert_forwarded, assert_inject_ok
-from tests.harness.deterministic import DeterministicScenario, PacketSpec, active_bridge
+from tests.harness.deterministic import DeterministicScenario, PacketSpec, active_routing_table
 
 from adn_server.domain import bytes_3, bytes_4
 from adn_server.domain.hbp_protocol import HBPF_SLT_VHEAD
 
 
 def test_hbp_source_timeout_drops_after_180_seconds() -> None:
-    bridges = active_bridge(91, (("MASTER-A", 2), ("MASTER-B", 2)))
-    scenario = DeterministicScenario(bridges=bridges)
+    bridges = active_routing_table(91, (("MASTER-A", 2), ("MASTER-B", 2)))
+    scenario = DeterministicScenario(routing_table=bridges)
     base = PacketSpec(dst_id=91, stream_id=0x90909090)
     t0 = scenario.clock.time()
 
@@ -32,8 +32,8 @@ def test_hbp_source_timeout_drops_after_180_seconds() -> None:
 
 
 def test_hbp_stream_collision_drops_conflicting_new_stream() -> None:
-    bridges = active_bridge(91, (("MASTER-A", 2), ("MASTER-B", 2)))
-    scenario = DeterministicScenario(bridges=bridges)
+    bridges = active_routing_table(91, (("MASTER-A", 2), ("MASTER-B", 2)))
+    scenario = DeterministicScenario(routing_table=bridges)
     t0 = scenario.clock.time()
     slot = scenario.protocols["MASTER-A"].STATUS[2]
     slot.update(
@@ -61,8 +61,8 @@ def test_hbp_stream_collision_drops_conflicting_new_stream() -> None:
 @pytest.mark.behavior
 def test_hbp_collision_allows_same_subscriber_rekey() -> None:
     """Regression: same RF source may start a new stream while prior call is still open."""
-    bridges = active_bridge(91, (("MASTER-A", 2), ("MASTER-B", 2)))
-    scenario = DeterministicScenario(bridges=bridges)
+    bridges = active_routing_table(91, (("MASTER-A", 2), ("MASTER-B", 2)))
+    scenario = DeterministicScenario(routing_table=bridges)
     t0 = scenario.clock.time()
     rf_src = 3120001
     slot = scenario.protocols["MASTER-A"].STATUS[2]

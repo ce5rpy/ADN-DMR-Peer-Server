@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from tests.harness.deterministic import DeterministicScenario, PacketSpec, active_bridge, minimal_config
+from tests.harness.deterministic import DeterministicScenario, PacketSpec, active_routing_table, minimal_config
 from tests.harness.session_replay import (
     FIXTURES_DIR,
     IngressEvent,
@@ -24,7 +24,7 @@ _HBP_FIXTURE = FIXTURES_DIR / "hbp_group_voice_short.jsonl"
 def test_load_session_parses_meta_and_ingress() -> None:
     session = load_session(_HBP_FIXTURE)
     assert session.meta.name == "hbp_group_voice_short"
-    assert session.meta.apply_startup_bridges is True
+    assert session.meta.apply_startup_subscriptions is True
     assert len(session.events) == 2
     assert session.meta.expect.forwards["MASTER-B"] == 2
 
@@ -41,10 +41,10 @@ def test_replay_matches_inline_harness() -> None:
     config = minimal_config(("MASTER-A", "MASTER-B"))
     config["SYSTEMS"]["MASTER-A"]["TS2_STATIC"] = "52090"
     config["SYSTEMS"]["MASTER-A"]["DEFAULT_UA_TIMER"] = 10
-    bridges = active_bridge(52090, (("MASTER-A", 2), ("MASTER-B", 2)))
+    bridges = active_routing_table(52090, (("MASTER-A", 2), ("MASTER-B", 2)))
 
-    inline = DeterministicScenario(config=config, bridges=bridges)
-    inline.bridge.apply_startup_bridges()
+    inline = DeterministicScenario(config=config, routing_table=bridges)
+    inline.routing.apply_startup_subscriptions()
     base = PacketSpec(dst_id=52090, stream_id=0x80808080, slot=2)
     inline.inject_hbp("MASTER-A", DeterministicScenario.voice_head_spec(base))
     inline.inject_hbp(
@@ -60,11 +60,11 @@ def test_replay_matches_inline_harness() -> None:
 @pytest.mark.behavior
 def test_capture_roundtrip(tmp_path) -> None:
     """SessionCapture writes JSONL that SessionReplayer can load."""
-    bridges = bridges_to_json(active_bridge(91, (("MASTER-A", 2), ("MASTER-B", 2))))
+    bridges = bridges_to_json(active_routing_table(91, (("MASTER-A", 2), ("MASTER-B", 2))))
     meta = SessionMeta(
         name="roundtrip",
-        bridges=bridges,
-        apply_startup_bridges=False,
+        routing_table=bridges,
+        apply_startup_subscriptions=False,
         expect=SessionExpect(forwards={"MASTER-B": 1}, dst_id=91),
     )
     cap = SessionCapture(meta=meta)
@@ -91,14 +91,14 @@ def test_capture_startup_voice_session() -> None:
     config = minimal_config(("MASTER-A", "MASTER-B"))
     config["SYSTEMS"]["MASTER-A"]["TS2_STATIC"] = "52090"
     config["SYSTEMS"]["MASTER-A"]["DEFAULT_UA_TIMER"] = 10
-    bridges = bridges_to_json(active_bridge(52090, (("MASTER-A", 2), ("MASTER-B", 2))))
+    bridges = bridges_to_json(active_routing_table(52090, (("MASTER-A", 2), ("MASTER-B", 2))))
     base = {"dst_id": 52090, "stream_id": 0x80808080, "slot": 2, "peer_id": 1001, "rf_src": 3120001}
     cap = SessionCapture(
         meta=SessionMeta(
             name="capture_startup_voice",
             config=config,
-            bridges=bridges,
-            apply_startup_bridges=True,
+            routing_table=bridges,
+            apply_startup_subscriptions=True,
             expect=SessionExpect(forwards={"MASTER-B": 2}, dst_id=52090),
         )
     )

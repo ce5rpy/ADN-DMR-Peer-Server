@@ -6,7 +6,7 @@ All notable changes to **adn-server** are documented here. Versioning follows [S
 
 ### Added
 
-- SIGHUP reload reapplies YAML static TGs via `apply_startup_bridges()` when SYSTEMS change.
+- SIGHUP reload reapplies YAML static TGs via `apply_startup_subscriptions()` when SYSTEMS change.
 - Store-native timer loops (`rule_timer`, `stat_trimmer`, `bridge_debug`, `bridge_reset`) and in-band signalling.
 - Store-native bridge table (OPTIONS, static TG, reflectors, UA) and OBP source ensure.
 - `InbandTriggers` (ON/OFF/RESET) on `Subscription` with import/export round-trip.
@@ -15,7 +15,7 @@ All notable changes to **adn-server** are documented here. Versioning follows [S
 ### Changed
 
 - `SubscriptionStore` is required at runtime; bridge timers, OPTIONS, and table paths mutate the store only.
-- `BRIDGES` is an export shim for monitor/report (`export_bridges`); no direct dict mutation in hot paths.
+- `BRIDGES` is an export shim for monitor/report (`export_routing_table`); no direct dict mutation in hot paths.
 - `_export_store_to_router()` publishes store mutations without router→store overwrite (timer/in-band paths).
 
 ### Fixed
@@ -27,7 +27,7 @@ All notable changes to **adn-server** are documented here. Versioning follows [S
 ### Removed
 
 - Periodic 26s `options_config_loop` (V2-P2-016): OPTIONS/static TGs covered by RPTO, startup/reload, and dmrd fallback.
-- Runtime `replace_store_from_bridges` calls in bridge timers and OPTIONS paths (store-native slice 6).
+- Runtime `replace_store_from_routing_table` calls in bridge timers and OPTIONS paths (store-native slice 6).
 
 ## [2.0.0-alpha.2] - 2026-06-11
 
@@ -41,7 +41,7 @@ Subscription runtime (phase 2b/2c) closed for production Chile.
 ### Changed
 
 - Removed YAML flags `USE_SUBSCRIPTION_ROUTER` and `USE_SUBSCRIPTION_STORE_AUTHORITY`; rollback via git tags only.
-- `get_bridges()` mirrors router state into the store before export (report/monitor shim).
+- `routing_table_for_report()` mirrors router state into the store before export (report/monitor shim).
 
 ### Fixed
 

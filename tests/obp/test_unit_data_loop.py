@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 from tests.harness.assertions import assert_not_forwarded
-from tests.harness.deterministic import DeterministicScenario, PacketSpec, patch_bridge_wall_time
+from tests.harness.deterministic import DeterministicScenario, PacketSpec, patch_routing_wall_time
 from tests.harness.scenarios import obp_bridge_scenario
 
 from adn_server.domain import bytes_4
@@ -18,7 +18,7 @@ def test_obp_unit_data_loop_loser_when_hbp_owns_stream() -> None:
     scenario.seed_hbp_slot_stream("MASTER-A", 2, stream_id, tgid=52090)
     base = PacketSpec(call_type="unit", dst_id=1000001, stream_id=stream_id, slot=1)
 
-    with patch_bridge_wall_time(scenario.clock):
+    with patch_routing_wall_time(scenario.clock):
         scenario.inject_obp("OBP-CL", DeterministicScenario.unit_data_header_spec(base))
 
     assert_not_forwarded(scenario, "MASTER-B")
@@ -33,7 +33,7 @@ def test_obp_unit_data_loop_loser_for_second_obp_source() -> None:
     stream_id = 0x72727272
     base = PacketSpec(call_type="unit", dst_id=1000001, stream_id=stream_id, slot=1)
 
-    with patch_bridge_wall_time(scenario.clock):
+    with patch_routing_wall_time(scenario.clock):
         scenario.inject_obp("OBP-A", DeterministicScenario.unit_data_header_spec(base))
         scenario.inject_obp("OBP-B", DeterministicScenario.unit_data_header_spec(base))
 

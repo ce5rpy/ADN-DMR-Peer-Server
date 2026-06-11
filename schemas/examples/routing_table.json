@@ -4,7 +4,7 @@
   "ts": 1717555260.5,
   "routes": [
     {
-      "bridge_key": "52090",
+      "relay_table_key": "52090",
       "legs": [
         {
           "system": "MASTER-A",
@@ -24,7 +24,7 @@
       ]
     },
     {
-      "bridge_key": "#310",
+      "relay_table_key": "#310",
       "legs": [
         {
           "system": "MASTER-A",

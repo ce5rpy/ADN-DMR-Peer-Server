@@ -9,7 +9,7 @@
     "ts": 1717555261.0,
     "routes": [
       {
-        "bridge_key": "52090",
+        "relay_table_key": "52090",
         "legs": [
           {
             "system": "MASTER-A",

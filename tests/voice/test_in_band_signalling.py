@@ -4,86 +4,86 @@ from __future__ import annotations
 
 import copy
 
-from tests.harness.deterministic import DeterministicScenario, active_bridge
-from tests.harness.voice_helpers import reflector_bridge_entry
+from tests.harness.deterministic import DeterministicScenario, active_routing_table
+from tests.harness.voice_helpers import reflector_routing_entry
 
 from adn_server.domain import bytes_3
 
 
-def _user_bridge(active: bool = True) -> dict:
-    return active_bridge(52090, (("MASTER-A", 2),))
+def _user_routing_table(active: bool = True) -> dict:
+    return active_routing_table(52090, (("MASTER-A", 2),))
 
 
 def test_reflector_bridge_ignored_when_vterm_not_on_tg9() -> None:
-    bridges = _user_bridge()
-    bridges.update(reflector_bridge_entry())
-    scenario = DeterministicScenario(bridges=bridges)
-    leg = scenario.bridge.get_bridges()["#310"][0]
+    bridges = _user_routing_table()
+    bridges.update(reflector_routing_entry())
+    scenario = DeterministicScenario(routing_table=bridges)
+    leg = scenario.routing.routing_table_for_report()["#310"][0]
     timer_before = leg["TIMER"]
 
-    scenario.bridge.apply_in_band_signalling("MASTER-A", 2, bytes_3(52090), pkt_time=2000.0)
+    scenario.routing.apply_in_band_signalling("MASTER-A", 2, bytes_3(52090), pkt_time=2000.0)
 
-    assert scenario.bridge.get_bridges()["#310"][0]["TIMER"] == timer_before
-    assert scenario.bridge.get_bridges()["#310"][0]["ACTIVE"] is True
+    assert scenario.routing.routing_table_for_report()["#310"][0]["TIMER"] == timer_before
+    assert scenario.routing.routing_table_for_report()["#310"][0]["ACTIVE"] is True
 
 
 def test_reflector_bridge_processes_vterm_on_tg9() -> None:
-    bridges = _user_bridge()
-    bridges.update(reflector_bridge_entry())
-    scenario = DeterministicScenario(bridges=bridges)
+    bridges = _user_routing_table()
+    bridges.update(reflector_routing_entry())
+    scenario = DeterministicScenario(routing_table=bridges)
 
-    scenario.bridge.apply_in_band_signalling("MASTER-A", 2, bytes_3(9), pkt_time=2000.0)
+    scenario.routing.apply_in_band_signalling("MASTER-A", 2, bytes_3(9), pkt_time=2000.0)
 
-    leg = scenario.bridge.get_bridges()["#310"][0]
+    leg = scenario.routing.routing_table_for_report()["#310"][0]
     assert leg["ACTIVE"] is True
     assert leg["TIMER"] == 2000.0 + leg["TIMEOUT"]
 
 
 def test_single_mode_deactivates_on_non_source_tg() -> None:
-    bridges = _user_bridge()
-    scenario = DeterministicScenario(bridges=bridges)
+    bridges = _user_routing_table()
+    scenario = DeterministicScenario(routing_table=bridges)
     scenario.config["SYSTEMS"]["MASTER-A"]["SINGLE_MODE"] = True
-    assert scenario.bridge.get_bridges()["52090"][0]["ACTIVE"] is True
+    assert scenario.routing.routing_table_for_report()["52090"][0]["ACTIVE"] is True
 
-    scenario.bridge.apply_in_band_signalling("MASTER-A", 2, bytes_3(91), pkt_time=3000.0)
+    scenario.routing.apply_in_band_signalling("MASTER-A", 2, bytes_3(91), pkt_time=3000.0)
 
-    assert scenario.bridge.get_bridges()["52090"][0]["ACTIVE"] is False
+    assert scenario.routing.routing_table_for_report()["52090"][0]["ACTIVE"] is False
 
 
 def test_non_single_mode_keeps_bridge_on_arbitrary_vterm_tg() -> None:
-    bridges = _user_bridge()
-    scenario = DeterministicScenario(bridges=bridges)
+    bridges = _user_routing_table()
+    scenario = DeterministicScenario(routing_table=bridges)
     scenario.config["SYSTEMS"]["MASTER-A"]["SINGLE_MODE"] = False
 
-    scenario.bridge.apply_in_band_signalling("MASTER-A", 2, bytes_3(91), pkt_time=3000.0)
+    scenario.routing.apply_in_band_signalling("MASTER-A", 2, bytes_3(91), pkt_time=3000.0)
 
-    assert scenario.bridge.get_bridges()["52090"][0]["ACTIVE"] is True
+    assert scenario.routing.routing_table_for_report()["52090"][0]["ACTIVE"] is True
 
 
 def test_non_single_mode_deactivates_on_tg4000() -> None:
-    bridges = copy.deepcopy(_user_bridge())
-    scenario = DeterministicScenario(bridges=bridges)
+    bridges = copy.deepcopy(_user_routing_table())
+    scenario = DeterministicScenario(routing_table=bridges)
     scenario.config["SYSTEMS"]["MASTER-A"]["SINGLE_MODE"] = False
 
-    scenario.bridge.apply_in_band_signalling("MASTER-A", 2, bytes_3(4000), pkt_time=3000.0)
+    scenario.routing.apply_in_band_signalling("MASTER-A", 2, bytes_3(4000), pkt_time=3000.0)
 
-    assert scenario.bridge.get_bridges()["52090"][0]["ACTIVE"] is False
+    assert scenario.routing.routing_table_for_report()["52090"][0]["ACTIVE"] is False
 
 
 def test_in_band_signalling_pushes_routing_snapshot() -> None:
     """Monitor UA chips need routing refresh after VTERM in-band mutates BRIDGES."""
-    scenario = DeterministicScenario(bridges=_user_bridge())
+    scenario = DeterministicScenario(routing_table=_user_routing_table())
     scenario.config["REPORTS"]["REPORT"] = True
     sent: list[bool] = []
 
     class _Rec:
-        def send_bridge(self, bridges, *, incremental: bool = False) -> None:
+        def send_routing_table(self, bridges, *, incremental: bool = False) -> None:
             sent.append(incremental)
 
-        def send_bridge_event(self, _event: str) -> None:
+        def send_routing_event(self, _event: str) -> None:
             pass
 
-    scenario.bridge._reporting = _Rec()  # noqa: SLF001
-    scenario.bridge.apply_in_band_signalling("MASTER-A", 2, bytes_3(52090), pkt_time=2000.0)
+    scenario.routing._reporting = _Rec()  # noqa: SLF001
+    scenario.routing.apply_in_band_signalling("MASTER-A", 2, bytes_3(52090), pkt_time=2000.0)
 
     assert sent == [True]

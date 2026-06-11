@@ -192,9 +192,9 @@
           "items": {
             "type": "object",
             "additionalProperties": false,
-            "required": ["bridge_key", "legs"],
+            "required": ["relay_table_key", "legs"],
             "properties": {
-              "bridge_key": {
+              "relay_table_key": {
                 "type": "string",
                 "description": "Talkgroup id string or reflector key (#xxx)."
               },

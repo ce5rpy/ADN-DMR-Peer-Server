@@ -5,7 +5,7 @@ from __future__ import annotations
 
 from adn_server.domain import HBPF_DATA_SYNC, HBPF_SLT_VHEAD, bytes_3, bytes_4, int_id
 
-from adn_server.application.bridge.helpers import (
+from adn_server.application.routing.helpers import (
     clear_peer_ua_sessions,
     tg4000_reset_on_vhead,
     clear_peer_rx_status_slots,
@@ -210,7 +210,7 @@ def test_cross_peer_static_tx_does_not_reach_locked_peer() -> None:
     )
 
 
-def test_active_bridge_does_not_fan_out_without_static_tg() -> None:
+def test_active_routing_table_does_not_fan_out_without_static_tg() -> None:
     """Regression: ACTIVE BRIDGES leg must not deliver to peers missing TG in OPTIONS."""
     peer_without = {"OPTIONS": b"TS2=91;"}
     peer_with = {"OPTIONS": b"TS2=7305;"}

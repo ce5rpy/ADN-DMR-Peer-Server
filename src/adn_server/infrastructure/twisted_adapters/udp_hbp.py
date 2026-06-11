@@ -40,7 +40,7 @@ from ...domain.dmr.const import LC_OPT
 from twisted.internet import reactor, task
 from twisted.internet.protocol import DatagramProtocol
 
-from ...application.bridge.helpers import (
+from ...application.routing.helpers import (
     clear_peer_rx_status_slots,
     clear_peer_ua_sessions,
     is_special_tg,
@@ -173,28 +173,30 @@ class HBPProtocol(DatagramProtocol):
         on_handle_recording: Callable[..., None] | None = None,
         on_in_band_signalling: Callable[[str, int, bytes, float], None] | None = None,
         on_options_received: Callable[..., None] | None = None,
-        on_deactivate_dynamic_bridges: Callable[[str], None] | None = None,
+        on_deactivate_dynamic_relays: Callable[[str], None] | None = None,
         on_obp_bcsq_received: Callable[[str, bytes, bytes], None] | None = None,
         on_talker_alias_local_repeat: Callable[[str, bytes, bytes, bytes], None] | None = None,
         on_talker_alias_repeat_prepare: Callable[[str, bytes, bytes, bytes, int, bytes], None] | None = None,
         on_talker_alias_repeat_burst: Callable[[str, int, bytes, int, bytes], bytes] | None = None,
         on_talker_alias_stream_end: Callable[[str, bytes], None] | None = None,
         on_dmra_fragment_stored: Callable[[str, bytes, bytes, bytes], None] | None = None,
-        get_bridges: Callable[[], dict[str, Any]] | None = None,
+        routing_table_for_report: Callable[[], dict[str, Any]] | None = None,
+        get_subscription_store: Callable[[], Any] | None = None,
         mesh_registry: MeshCodecRegistry | None = None,
     ) -> None:
         self._CONFIG = config
         self._system = system_name
         self._report = report_factory
         self._router = router
-        self._get_bridges = get_bridges
+        self._routing_table_for_report = routing_table_for_report
+        self._get_subscription_store = get_subscription_store
         self._dmrd_received = dmrd_received
         self._get_user_password = get_user_password_callback if get_user_password_callback is not None else get_user_password
         self._on_play_file_request = on_play_file_request
         self._on_handle_recording = on_handle_recording
         self._on_in_band_signalling = on_in_band_signalling
         self._on_options_received = on_options_received
-        self._on_deactivate_dynamic_bridges = on_deactivate_dynamic_bridges
+        self._on_deactivate_dynamic_relays = on_deactivate_dynamic_relays
         self._on_obp_bcsq_received = on_obp_bcsq_received
         self._on_talker_alias_local_repeat = on_talker_alias_local_repeat
         self._on_talker_alias_repeat_prepare = on_talker_alias_repeat_prepare
@@ -353,12 +355,12 @@ class HBPProtocol(DatagramProtocol):
                 self._system, _kind, slot, int_id(peer_id),
             )
             return
-        if self._on_deactivate_dynamic_bridges:
+        if self._on_deactivate_dynamic_relays:
             logger.info(
                 "(%s) %s 4000 received on TS %s — deactivating all dynamic bridges",
                 self._system, _kind, slot,
             )
-            self._on_deactivate_dynamic_bridges(self._system)
+            self._on_deactivate_dynamic_relays(self._system)
 
     def _handle_tg4000_packet(
         self,
@@ -406,14 +408,15 @@ class HBPProtocol(DatagramProtocol):
         connected = sum(
             1 for peer in self._peers.values() if peer.get("CONNECTION") == "YES"
         )
-        bridges = self._get_bridges() if self._get_bridges else None
+        store = self._get_subscription_store() if self._get_subscription_store else None
         return peer_should_receive_group_voice(
             self._peers[peer_id],
             slot,
             tgid,
             peer_id=peer_id,
             system=self._system,
-            bridges=bridges,
+            bridges=None,
+            subscription_store=store,
             connected_count=connected,
             sys_cfg=self._config,
         )
@@ -910,7 +913,7 @@ class HBPProtocol(DatagramProtocol):
                 # Legacy parity (bridge_master.py:3270-3310, routerHBP.dmrd_received):
                 # the HBP source path only writes per-slot state. The full LC is stored
                 # in STATUS[_slot]['RX_LC'] (decoded from the voice-header LC), and
-                # bridge_use_cases.py:2080 reads exactly that. Never write STATUS[stream_id]
+                # routing_use_cases.py:2080 reads exactly that. Never write STATUS[stream_id]
                 # for HBP — that pattern is only legal for routerOBP (flat dict).
                 dmrpkt = _data[20:53] if len(_data) >= 53 else b""
                 if _slot in self.STATUS:
@@ -1292,7 +1295,7 @@ class HBPProtocol(DatagramProtocol):
                     )
                 # Legacy parity (bridge_master.py:3270-3310, routerHBP.dmrd_received):
                 # PEER source path only writes per-slot state. Full LC stored in
-                # STATUS[_slot]['RX_LC'] (decoded voice-header LC). bridge_use_cases
+                # STATUS[_slot]['RX_LC'] (decoded voice-header LC). routing_use_cases
                 # reads STATUS[_slot]['RX_LC'] for HBP sources. Never write
                 # STATUS[stream_id] for HBP — that pattern is only legal for routerOBP.
                 dmrpkt = _data[20:53] if len(_data) >= 53 else b""
@@ -1600,7 +1603,7 @@ class HBPProtocol(DatagramProtocol):
                     self.store_ta_from_voice_burst(
                         _peer_id, _rf_src, _stream_id, _dtype_vseq, _data[20:53],
                     )
-                # Group/vcsbk stream state, LC, duplicates: bridge_use_cases._obp_group_voice_router_obp (legacy routerOBP.dmrd_received)
+                # Group/vcsbk stream state, LC, duplicates: routing_use_cases._obp_group_voice_router_obp (legacy routerOBP.dmrd_received)
                 if self._dmrd_received:
                     # Legacy hblink DMRD v1: SERVER_ID + default rptr/hops/ber/rssi (`hblink.py` ~338–345, ~416)
                     _global = self._CONFIG.get("GLOBAL", {})
@@ -1895,14 +1898,15 @@ def HBPProtocolFactory(
     on_handle_recording: Callable[..., None] | None = None,
     on_in_band_signalling: Callable[[str, int, bytes, float], None] | None = None,
     on_options_received: Callable[..., None] | None = None,
-    on_deactivate_dynamic_bridges: Callable[[str], None] | None = None,
+    on_deactivate_dynamic_relays: Callable[[str], None] | None = None,
     on_obp_bcsq_received: Callable[[str, bytes, bytes], None] | None = None,
     on_talker_alias_local_repeat: Callable[[str, bytes, bytes, bytes], None] | None = None,
     on_talker_alias_repeat_prepare: Callable[[str, bytes, bytes, bytes, int, bytes], None] | None = None,
     on_talker_alias_repeat_burst: Callable[[str, int, bytes, int, bytes], bytes] | None = None,
     on_talker_alias_stream_end: Callable[[str, bytes], None] | None = None,
     on_dmra_fragment_stored: Callable[[str, bytes, bytes, bytes], None] | None = None,
-    get_bridges: Callable[[], dict[str, Any]] | None = None,
+    routing_table_for_report: Callable[[], dict[str, Any]] | None = None,
+    get_subscription_store: Callable[[], Any] | None = None,
     mesh_registry: MeshCodecRegistry | None = None,
 ) -> HBPProtocol:
     """Create HBP protocol instance (legacy: one HBSYSTEM per system)."""
@@ -1917,13 +1921,14 @@ def HBPProtocolFactory(
         on_handle_recording=on_handle_recording,
         on_in_band_signalling=on_in_band_signalling,
         on_options_received=on_options_received,
-        on_deactivate_dynamic_bridges=on_deactivate_dynamic_bridges,
+        on_deactivate_dynamic_relays=on_deactivate_dynamic_relays,
         on_obp_bcsq_received=on_obp_bcsq_received,
         on_talker_alias_local_repeat=on_talker_alias_local_repeat,
         on_talker_alias_repeat_prepare=on_talker_alias_repeat_prepare,
         on_talker_alias_repeat_burst=on_talker_alias_repeat_burst,
         on_talker_alias_stream_end=on_talker_alias_stream_end,
         on_dmra_fragment_stored=on_dmra_fragment_stored,
-        get_bridges=get_bridges,
+        routing_table_for_report=routing_table_for_report,
+        get_subscription_store=get_subscription_store,
         mesh_registry=mesh_registry,
     )

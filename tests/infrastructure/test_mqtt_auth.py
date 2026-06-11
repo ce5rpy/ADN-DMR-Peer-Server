@@ -55,7 +55,7 @@ def test_start_applies_username_password(monkeypatch):
         fake,
     )
     pub = PahoReportMqttPublisher(_settings())
-    pub.start(wire=object(), get_systems=lambda: {}, get_bridges=lambda: {})
+    pub.start(wire=object(), get_systems=lambda: {}, routing_table_for_report=lambda: {})
     assert pub._client is not None
     assert pub._client.auth == ("ops", "secret")
 
@@ -68,6 +68,6 @@ def test_start_tls_with_cafile(monkeypatch):
     )
     broker = MqttBroker(host="secure", port=8883, use_tls=True, display_url="mqtts://secure:8883")
     pub = PahoReportMqttPublisher(_settings(broker=broker, cafile="/etc/ssl/certs/ca.pem"))
-    pub.start(wire=object(), get_systems=lambda: {}, get_bridges=lambda: {})
+    pub.start(wire=object(), get_systems=lambda: {}, routing_table_for_report=lambda: {})
     assert pub._client is not None
     assert pub._client.tls == {"ca_certs": "/etc/ssl/certs/ca.pem"}

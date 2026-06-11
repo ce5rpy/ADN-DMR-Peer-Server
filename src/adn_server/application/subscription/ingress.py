@@ -20,7 +20,7 @@ def build_voice_ingress(
     call_type: str,
     stream_id: bytes = b"",
 ) -> VoiceIngress | None:
-    """Map ``BridgeUseCases.dmrd_received`` args to a routable ingress, or ``None`` if not bridged."""
+    """Map ``RoutingUseCases.dmrd_received`` args to a routable ingress, or ``None`` if not bridged."""
     if call_type not in _BRIDGE_CALL_TYPES:
         return None
     match_slot = 1 if int(slot) == 1 else 2

@@ -16,8 +16,8 @@ class RecordingMqtt(ReportMqttPublisher):
         self.dashboard_calls = 0
         self.started = False
 
-    def start(self, wire: Any, get_systems: Any, get_bridges: Any) -> None:
-        del wire, get_systems, get_bridges
+    def start(self, wire: Any, get_systems: Any, routing_table_for_report: Any) -> None:
+        del wire, get_systems, routing_table_for_report
         self.started = True
 
     def publish_frames(self, frames: tuple[bytes, ...]) -> None:
@@ -41,20 +41,20 @@ def test_send_config_publishes_state_not_tcp_wire():
     assert mqtt.dashboard_calls == 1
 
 
-def test_send_bridge_does_not_mirror_tcp_wire_to_mqtt():
+def test_send_routing_table_does_not_mirror_tcp_wire_to_mqtt():
     mqtt = RecordingMqtt()
     factory = ReportServerFactory({"REPORTS": {}}, mqtt=mqtt)
-    factory.set_bridges({"73010": {"ACTIVE": True}})
-    factory.send_bridge()
+    factory.set_routing_table({"73010": {"ACTIVE": True}})
+    factory.send_routing_table()
     assert mqtt.frames == []
 
 
-def test_send_bridge_event_publishes_voice_event_to_mqtt():
+def test_send_routing_event_publishes_voice_event_to_mqtt():
     mqtt = RecordingMqtt()
     factory = ReportServerFactory({"REPORTS": {"PROTOCOL": "v2"}}, mqtt=mqtt)
     factory.set_systems({})
-    factory.set_bridges({})
-    factory.send_bridge_event("GROUP VOICE,START,RX,MASTER-A,2155905152,1001,3120001,2,52090")
+    factory.set_routing_table({})
+    factory.send_routing_event("GROUP VOICE,START,RX,MASTER-A,2155905152,1001,3120001,2,52090")
     assert len(mqtt.frames) == 1
     frame = mqtt.frames[0][0]
     assert frame[:1] == REPORT_OPCODES["VOICE_EVENT_SND"]

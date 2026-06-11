@@ -6,15 +6,15 @@ from tests.harness.assertions import assert_inject_ok
 from tests.harness.deterministic import (
     DeterministicScenario,
     PacketSpec,
-    active_bridge,
+    active_routing_table,
     add_openbridge_system,
 )
 
 
 def test_hbp_ingress_sets_rx_start_on_new_stream() -> None:
     """New HBP group stream records RX_START from ingress_pkt_time."""
-    bridges = active_bridge(91, (("MASTER-A", 2), ("MASTER-B", 2)))
-    scenario = DeterministicScenario(bridges=bridges)
+    bridges = active_routing_table(91, (("MASTER-A", 2), ("MASTER-B", 2)))
+    scenario = DeterministicScenario(routing_table=bridges)
     base = PacketSpec(dst_id=91, stream_id=0x12121212)
     t0 = 1_700_000_100.0
 
@@ -31,8 +31,8 @@ def test_hbp_ingress_sets_rx_start_on_new_stream() -> None:
 
 def test_hbp_rate_drop_prevents_bridge_forward() -> None:
     """After ingress RATE DROP, no further packets are bridged."""
-    bridges = active_bridge(91, (("MASTER-A", 2), ("MASTER-B", 2)))
-    scenario = DeterministicScenario(bridges=bridges)
+    bridges = active_routing_table(91, (("MASTER-A", 2), ("MASTER-B", 2)))
+    scenario = DeterministicScenario(routing_table=bridges)
     base = PacketSpec(dst_id=91, stream_id=0x56565656)
     t0 = scenario.clock.time()
 
@@ -65,11 +65,11 @@ def test_hbp_rate_drop_prevents_bridge_forward() -> None:
 
 def test_hbp_loop_loser_when_obp_already_has_stream() -> None:
     """Regression: HBP loses loop when OBP already owns stream_id; no bridge forward."""
-    bridges = active_bridge(52090, (("OBP-CL", 1), ("MASTER-A", 2)))
+    bridges = active_routing_table(52090, (("OBP-CL", 1), ("MASTER-A", 2)))
     config = DeterministicScenario().config
     add_openbridge_system(config, "OBP-CL")
     config["SYSTEMS"]["MASTER-A"]["TS2_STATIC"] = "52090"
-    scenario = DeterministicScenario(config=config, bridges=bridges)
+    scenario = DeterministicScenario(config=config, routing_table=bridges)
 
     stream_id = 0x77778888
     scenario.seed_obp_stream("OBP-CL", stream_id, tgid=52090)

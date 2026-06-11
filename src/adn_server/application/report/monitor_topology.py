@@ -11,7 +11,7 @@ from __future__ import annotations
 import copy
 from typing import Any
 
-from adn_server.application.bridge.helpers import peer_should_receive_group_voice
+from adn_server.application.routing.helpers import peer_should_receive_group_voice
 from adn_server.application.proxy.deployment import is_proxy_inject_only, proxy_target_system
 from adn_server.domain.value_objects import bytes_4, int_id
 

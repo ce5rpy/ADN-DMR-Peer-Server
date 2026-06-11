@@ -123,7 +123,7 @@ class ReportMqttPublisher(ABC):
         self,
         wire: ReportWireEncoder,
         get_systems: Any,
-        get_bridges: Any,
+        routing_table_for_report: Any,
     ) -> None:
         """Connect to broker and publish bootstrap snapshots (hello + full topology + routing)."""
         ...
@@ -153,7 +153,7 @@ class ReportSender(ABC):
         ...
 
     @abstractmethod
-    def set_bridges(self, bridges: dict[str, Any]) -> None:
+    def set_routing_table(self, bridges: dict[str, Any]) -> None:
         """Update cached BRIDGES snapshot used by the wire encoder."""
         ...
 
@@ -163,38 +163,18 @@ class ReportSender(ABC):
         ...
 
     @abstractmethod
-    def send_bridge(self, bridges: dict[str, Any], *, incremental: bool = False) -> None:
+    def send_routing_table(self, bridges: dict[str, Any], *, incremental: bool = False) -> None:
         """Send BRIDGE_SND (pickle bridges) or routing_table / delta JSON."""
         ...
 
     @abstractmethod
-    def send_bridge_event(self, event: str) -> None:
+    def send_routing_event(self, event: str) -> None:
         """Send BRDG_EVENT (opcode + event string)."""
         ...
 
 
-class BridgeRouter(ABC):
-    """Query and update BRIDGES (conference bridge state). Used by rule_timer, make_single_bridge, etc."""
-
-    @abstractmethod
-    def get_bridges(self) -> dict[str, list[dict[str, Any]]]:
-        """Return current BRIDGES dict (key = TGID or #reflector)."""
-        ...
-
-    @abstractmethod
-    def set_bridges(self, bridges: dict[str, list[dict[str, Any]]]) -> None:
-        """Replace BRIDGES (e.g. after rule_timer or make_single_bridge)."""
-        ...
-
-    @abstractmethod
-    def rebuild_source_index(self) -> None:
-        """Rebuild index of ACTIVE source rows by (system, TS, dst_tgid)."""
-        ...
-
-    @abstractmethod
-    def bridge_tables_with_active_source(self, system: str, ts: int, dst_tgid: int) -> list[str]:
-        """Return bridge table names with matching ACTIVE source (legacy full-scan parity)."""
-        ...
+class AclRouter(ABC):
+    """ACL range checks for registration and voice ingress (legacy acl_check)."""
 
     @abstractmethod
     def acl_check(self, id_bytes_or_int: bytes | int, acl: tuple[bool, list[tuple[int, int]]]) -> bool:
