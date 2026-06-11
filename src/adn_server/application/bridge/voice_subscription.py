@@ -40,9 +40,7 @@ class VoiceSubscriptionMixin:
         """Mirror BRIDGES into the store before subscription lookups."""
         if self._subscription_store is None:
             return
-        if self._use_subscription_store_authority():
-            return
-        self._sync_subscription_store()
+        self._sync_store_for_voice_lookup()
 
     def _build_dmrd_voice_ingress(
         self,

@@ -6,7 +6,13 @@ import pytest
 
 from adn_server.application.subscription.store_sync import replace_store_from_bridges
 from tests.harness.assertions import assert_forwarded
-from tests.harness.deterministic import DeterministicScenario, PacketSpec, active_bridge, minimal_config
+from tests.harness.deterministic import (
+    DeterministicScenario,
+    PacketSpec,
+    active_bridge,
+    add_openbridge_system,
+    minimal_config,
+)
 
 
 @pytest.mark.behavior
@@ -85,3 +91,25 @@ def test_subscription_router_with_store_authority_parity() -> None:
 
     assert_forwarded(scenario, "MASTER-B", count=2, dst_id=52090)
     assert scenario.bridge.get_bridges()["52090"][0]["ACTIVE"] is True
+
+
+@pytest.mark.behavior
+def test_obp_to_system_with_store_authority_and_router() -> None:
+    """OBP RX must forward after _ensure_obp_source when store authority skips stale mirror."""
+    config = minimal_config(("SYSTEM",))
+    config["GLOBAL"]["USE_SUBSCRIPTION_ROUTER"] = True
+    config["GLOBAL"]["USE_SUBSCRIPTION_STORE_AUTHORITY"] = True
+    add_openbridge_system(config, "OBP-CL")
+    config["SYSTEMS"]["SYSTEM"]["TS2_STATIC"] = "7305"
+    bridges = active_bridge(7305, (("OBP-CL", 1), ("SYSTEM", 2)))
+    scenario = DeterministicScenario(config=config, bridges=bridges)
+    scenario.bridge._finalize_bridges_state()
+
+    base = PacketSpec(dst_id=7305, stream_id=0x28060549, slot=1)
+    scenario.inject_obp("OBP-CL", DeterministicScenario.voice_head_spec(base))
+    scenario.inject_obp(
+        "OBP-CL",
+        DeterministicScenario.voice_burst_spec(base, seq=1, dtype_vseq=1),
+    )
+
+    assert_forwarded(scenario, "SYSTEM", count=2, dst_id=7305)

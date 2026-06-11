@@ -35,12 +35,16 @@ class StoreAuthorityMixin:
             return view.generate()
         return self._router.get_bridges()
 
+    def _sync_store_for_voice_lookup(self) -> None:
+        """Import router BRIDGES into the store (e.g. OBP ``_ensure_obp_source_for_tg``) before resolve."""
+        replace_store_from_bridges(self._subscription_store, self._router.get_bridges())
+        if self._use_subscription_store_authority():
+            self._router.set_bridges(export_bridges(self._subscription_store))
+        self._router.rebuild_source_index()
+
     def _finalize_bridges_state(self) -> None:
         """Import BRIDGES mutations into the store; export back when store is authority."""
         if self._subscription_store is None:
             self._router.rebuild_source_index()
             return
-        replace_store_from_bridges(self._subscription_store, self._router.get_bridges())
-        if self._use_subscription_store_authority():
-            self._router.set_bridges(export_bridges(self._subscription_store))
-        self._router.rebuild_source_index()
+        self._sync_store_for_voice_lookup()
