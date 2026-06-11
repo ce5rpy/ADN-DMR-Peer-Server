@@ -90,3 +90,28 @@ def test_obp_to_system_forwards_after_obp_source_sync() -> None:
     )
 
     assert_forwarded(scenario, "SYSTEM", count=2, dst_id=7305)
+
+
+@pytest.mark.behavior
+def test_obp_forwards_when_router_shim_stale_but_store_active() -> None:
+    """OBP must not re-import a stale BRIDGES shim over the subscription store."""
+    config = minimal_config(("SYSTEM",))
+    add_openbridge_system(config, "OBP-CL")
+    config["SYSTEMS"]["SYSTEM"]["TS2_STATIC"] = "7305"
+    scenario = DeterministicScenario(config=config, bridges={})
+    scenario.bridge.apply_startup_bridges()
+
+    bridges = scenario.router.get_bridges()
+    for leg in bridges.get("7305", []):
+        if leg["SYSTEM"] == "SYSTEM":
+            leg["ACTIVE"] = False
+    scenario.router.set_bridges(bridges)
+
+    base = PacketSpec(dst_id=7305, stream_id=0xABCDEF01, slot=1)
+    scenario.inject_obp("OBP-CL", DeterministicScenario.voice_head_spec(base))
+    scenario.inject_obp(
+        "OBP-CL",
+        DeterministicScenario.voice_burst_spec(base, seq=1, dtype_vseq=1),
+    )
+
+    assert_forwarded(scenario, "SYSTEM", count=2, dst_id=7305)
