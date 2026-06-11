@@ -189,6 +189,7 @@ class BridgeTableMixin:
             else:
                 bridgetemp.append(bridgesystem)
         bridges[key] = list(bridgetemp)
+        self._finalize_bridges_state()
 
     def reset_static_tg(self, tg: int, ts: int, _tmout: float, system: str) -> None:
         """Legacy reset_static_tg: set system/ts entry to ACTIVE False, TO_TYPE ON."""
@@ -504,8 +505,8 @@ class BridgeTableMixin:
     def _apply_master_runtime_options(self, system_name: str, _options: dict[str, Any]) -> None:
         """Apply SINGLE/TIMER/VOICE/LANG from peer OPTIONS over YAML defaults (legacy options_config).
 
-        When ``USE_SUBSCRIPTION_STORE_AUTHORITY`` is off, BRIDGES mutates first and the store
-        mirrors via ``_finalize_bridges_state``. When on, exported BRIDGES is the store shim.
+        BRIDGES mutates first; ``_finalize_bridges_state`` mirrors into the subscription store
+        and re-exports the legacy shim for report/debug.
         """
         systems_cfg = self._config.get("SYSTEMS", {})
         sys_cfg = systems_cfg.get(system_name, {})

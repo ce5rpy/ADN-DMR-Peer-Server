@@ -24,13 +24,12 @@ def test_rule_timer_syncs_subscription_store() -> None:
     assert master_a.state.phase == SubscriptionPhase.IDLE
 
 
-def test_finalize_exports_when_store_authority_enabled() -> None:
+def test_finalize_exports_from_subscription_store() -> None:
     bridges = active_bridge(730, (("MASTER-A", 2),))
     bridges["730"][0]["ACTIVE"] = True
     bridges["730"][0]["TO_TYPE"] = "ON"
 
     scenario = DeterministicScenario(bridges=bridges)
-    scenario.config["GLOBAL"]["USE_SUBSCRIPTION_STORE_AUTHORITY"] = True
     scenario.bridge._finalize_bridges_state()
 
     exported = scenario.bridge.get_bridges()

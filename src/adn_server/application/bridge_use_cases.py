@@ -391,7 +391,7 @@ class BridgeUseCases(
             source_lc = b"\x00\x00\x20" + dst_id_b + rf_src
         # Legacy bridge_master routerOBP: _sysIgnore accumulates across each to_target(BRIDGES[_bridge])
         # pass; dedupe (SYSTEM, TS) for OpenBridge targets so the same leg is not sent twice per packet.
-        # When USE_SUBSCRIPTION_ROUTER is on, resolve() already applies OBP dedup — skip sys_ignore_obp.
+        # SubscriptionRouter.resolve() already applies OBP dedup — skip sys_ignore_obp when using leg filter.
         forward_tables, forward_leg_key_set = self._voice_forward_plan(
             system_name=system_name,
             peer_id=peer_id,

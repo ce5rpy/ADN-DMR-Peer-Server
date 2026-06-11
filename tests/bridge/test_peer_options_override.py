@@ -20,10 +20,8 @@ from adn_server.domain import bytes_3, bytes_4
 def _proxy_system_scenario(
     *,
     single_mode_yaml: bool = False,
-    use_subscription_router: bool = False,
 ) -> DeterministicScenario:
     config = DeterministicScenario().config
-    config["GLOBAL"]["USE_SUBSCRIPTION_ROUTER"] = use_subscription_router
     sys_cfg = config["SYSTEMS"]["MASTER-A"]
     sys_cfg["SINGLE_MODE"] = single_mode_yaml
     sys_cfg["DEFAULT_UA_TIMER"] = 60
@@ -46,12 +44,8 @@ def _proxy_system_scenario(
     return scenario
 
 
-@pytest.mark.parametrize("use_subscription_router", [False, True])
-def test_rpto_single_and_timer_override_yaml(use_subscription_router: bool) -> None:
-    scenario = _proxy_system_scenario(
-        single_mode_yaml=False,
-        use_subscription_router=use_subscription_router,
-    )
+def test_rpto_single_and_timer_override_yaml() -> None:
+    scenario = _proxy_system_scenario(single_mode_yaml=False)
 
     scenario.bridge.options_config_for_system(
         "MASTER-A",
@@ -64,14 +58,8 @@ def test_rpto_single_and_timer_override_yaml(use_subscription_router: bool) -> N
     assert scenario.bridge.get_bridges()["52090"][0]["TIMEOUT"] == 300.0
 
 
-@pytest.mark.parametrize("use_subscription_router", [False, True])
-def test_options_loop_reads_connected_peer_without_yaml_options(
-    use_subscription_router: bool,
-) -> None:
-    scenario = _proxy_system_scenario(
-        single_mode_yaml=False,
-        use_subscription_router=use_subscription_router,
-    )
+def test_options_loop_reads_connected_peer_without_yaml_options() -> None:
+    scenario = _proxy_system_scenario(single_mode_yaml=False)
     bridges = active_bridge(730444, (("MASTER-A", 2), ("MASTER-B", 2)))
     scenario.router.set_bridges(bridges)
 
@@ -80,14 +68,8 @@ def test_options_loop_reads_connected_peer_without_yaml_options(
     assert scenario.config["SYSTEMS"]["MASTER-A"]["SINGLE_MODE"] is True
 
 
-@pytest.mark.parametrize("use_subscription_router", [False, True])
-def test_single_mode_deactivates_other_static_tg_after_rpto(
-    use_subscription_router: bool,
-) -> None:
-    scenario = _proxy_system_scenario(
-        single_mode_yaml=False,
-        use_subscription_router=use_subscription_router,
-    )
+def test_single_mode_deactivates_other_static_tg_after_rpto() -> None:
+    scenario = _proxy_system_scenario(single_mode_yaml=False)
     bridges = {
         "730444": [
             {
@@ -153,16 +135,15 @@ def test_single_mode_deactivates_other_static_tg_after_rpto(
     assert scenario.bridge.get_bridges()["730444"][0]["ACTIVE"] is True
     assert scenario.bridge.get_bridges()["52090"][0]["ACTIVE"] is False
 
-    if use_subscription_router:
-        scenario.bridge._sync_subscription_store()
-        legs = SubscriptionRouter(scenario.subscription_store).resolve(
-            VoiceIngress(
-                source_system="MASTER-B",
-                slot=2,
-                dst_tgid=TgId(52090),
-            )
+    scenario.bridge._sync_subscription_store()
+    legs = SubscriptionRouter(scenario.subscription_store).resolve(
+        VoiceIngress(
+            source_system="MASTER-B",
+            slot=2,
+            dst_tgid=TgId(52090),
         )
-        assert all(leg.target_system != "MASTER-A" for leg in legs)
+    )
+    assert all(leg.target_system != "MASTER-A" for leg in legs)
 
 
 def test_ua_bridge_creation_pushes_routing_snapshot() -> None:
@@ -207,7 +188,6 @@ def test_ua_bridge_uses_transmitting_peer_timer_minutes() -> None:
 def test_peer_timer_does_not_override_other_peer_static_tg_timeout() -> None:
     """Each hotspot TIMER applies only to that peer's static TGs (no max() across peers)."""
     config = DeterministicScenario().config
-    config["GLOBAL"]["USE_SUBSCRIPTION_ROUTER"] = False
     config["SYSTEMS"]["MASTER-A"]["DEFAULT_UA_TIMER"] = 60
     scenario = DeterministicScenario(config=config, bridges={})
     scenario.bridge._get_protocols = lambda: scenario.protocols  # noqa: SLF001

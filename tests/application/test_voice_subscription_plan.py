@@ -13,17 +13,13 @@ from tests.application.test_subscription_router import _row
 from tests.harness.deterministic import minimal_config
 
 
-def _bridge(
-    bridges: dict,
-    *,
-    use_subscription_router: bool,
-) -> BridgeUseCases:
+def _bridge(bridges: dict, *, with_store: bool) -> BridgeUseCases:
     config = minimal_config(("MASTER-A", "MASTER-B"))
-    config["GLOBAL"]["USE_SUBSCRIPTION_ROUTER"] = use_subscription_router
     router = InMemoryBridgeRouter()
     router.set_bridges(bridges)
-    store = InMemorySubscriptionStore()
-    replace_store_from_bridges(store, bridges)
+    store = InMemorySubscriptionStore() if with_store else None
+    if store is not None:
+        replace_store_from_bridges(store, bridges)
     return BridgeUseCases(
         router,
         config,
@@ -33,14 +29,15 @@ def _bridge(
     )
 
 
-def test_forward_plan_disabled_uses_legacy_tables():
+def test_forward_plan_without_store_uses_router_tables_only():
+    """Harness without a store falls back to BRIDGES index (unit-test shortcut)."""
     bridges = {
         "730444": [
             _row(system="MASTER-A", ts=1, tgid=730444, active=True),
             _row(system="MASTER-B", ts=1, tgid=730444, active=True),
         ]
     }
-    bridge = _bridge(bridges, use_subscription_router=False)
+    bridge = _bridge(bridges, with_store=False)
     tables, leg_keys = bridge._voice_forward_plan(
         system_name="MASTER-A",
         peer_id=b"\x00\x00\x03\xe9",
@@ -57,7 +54,7 @@ def test_forward_plan_disabled_uses_legacy_tables():
     assert leg_keys is None
 
 
-def test_forward_plan_enabled_returns_leg_filter():
+def test_forward_plan_with_store_returns_leg_filter():
     bridges = {
         "730444": [
             _row(system="MASTER-A", ts=1, tgid=730444, active=True),
@@ -65,7 +62,7 @@ def test_forward_plan_enabled_returns_leg_filter():
             _row(system="OBP-CL", ts=1, tgid=730444, active=False),
         ]
     }
-    bridge = _bridge(bridges, use_subscription_router=True)
+    bridge = _bridge(bridges, with_store=True)
     tables, leg_keys = bridge._voice_forward_plan(
         system_name="MASTER-A",
         peer_id=b"\x00\x00\x03\xe9",
