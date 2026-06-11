@@ -6,7 +6,12 @@ All notable changes to **adn-server** are documented here. Versioning follows [S
 
 ### Added
 
-- (none)
+- P2-015 (in progress): store-native `rule_timer_loop` via `apply_rule_timer_store`.
+- `to_target` iterates `ForwardLeg` from `SubscriptionRouter.resolve()` instead of re-scanning BRIDGES rows.
+
+### Changed
+
+- `_export_store_to_router()` publishes store mutations without router→store overwrite (timer path).
 
 ## [2.0.0-alpha.2] - 2026-06-11
 

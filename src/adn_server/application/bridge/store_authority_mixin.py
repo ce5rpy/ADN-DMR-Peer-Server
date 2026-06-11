@@ -37,6 +37,14 @@ class StoreAuthorityMixin:
         self._router.set_bridges(export_bridges(self._subscription_store))
         self._router.rebuild_source_index()
 
+    def _export_store_to_router(self) -> None:
+        """Push subscription store snapshot to the legacy BRIDGES shim (no router→store import)."""
+        if self._subscription_store is None:
+            self._router.rebuild_source_index()
+            return
+        self._router.set_bridges(export_bridges(self._subscription_store))
+        self._router.rebuild_source_index()
+
     def _finalize_bridges_state(self) -> None:
         """Import BRIDGES mutations into the store; export back as legacy shim."""
         if self._subscription_store is None:

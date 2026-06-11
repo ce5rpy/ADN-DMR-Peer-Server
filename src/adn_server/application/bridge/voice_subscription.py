@@ -12,7 +12,7 @@ from typing import Any
 
 from ..subscription.ingress import build_voice_ingress
 from ..subscription.router import SubscriptionRouter
-from ...domain.voice_routing import VoiceIngress
+from ...domain.voice_routing import ForwardLeg, VoiceIngress
 
 logger = logging.getLogger(__name__)
 
@@ -97,8 +97,8 @@ class VoiceSubscriptionMixin:
         bridge_match_slot: int,
         dst_int: int,
         ingress_required: bool = True,
-    ) -> tuple[tuple[str, ...], frozenset[tuple[str, int, int]] | None]:
-        """Return bridge tables and optional forward-leg filter (``None`` = no subscription store)."""
+    ) -> tuple[tuple[str, ...], tuple[ForwardLeg, ...] | None]:
+        """Return bridge tables and optional resolved forward legs (``None`` = no subscription store)."""
         if self._subscription_store is None:
             return (
                 tuple(self._router.bridge_tables_with_active_source(system_name, bridge_match_slot, dst_int)),
@@ -125,10 +125,5 @@ class VoiceSubscriptionMixin:
             source_is_obp=source_is_obp,
         )
         if ingress is None:
-            return tables, frozenset()
-        legs = router.resolve(ingress)
-        leg_keys = frozenset(
-            (leg.target_system, int(leg.slot), int(leg.target_tgid))
-            for leg in legs
-        )
-        return tables, leg_keys
+            return tables, ()
+        return tables, router.resolve(ingress)

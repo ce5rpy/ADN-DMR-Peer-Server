@@ -392,7 +392,7 @@ class BridgeUseCases(
         # Legacy bridge_master routerOBP: _sysIgnore accumulates across each to_target(BRIDGES[_bridge])
         # pass; dedupe (SYSTEM, TS) for OpenBridge targets so the same leg is not sent twice per packet.
         # SubscriptionRouter.resolve() already applies OBP dedup — skip sys_ignore_obp when using leg filter.
-        forward_tables, forward_leg_key_set = self._voice_forward_plan(
+        forward_tables, forward_legs = self._voice_forward_plan(
             system_name=system_name,
             peer_id=peer_id,
             rf_src=rf_src,
@@ -404,27 +404,35 @@ class BridgeUseCases(
             bridge_match_slot=bridge_match_slot,
             dst_int=dst_int,
         )
-        use_subscription_legs = forward_leg_key_set is not None
+        use_subscription_legs = forward_legs is not None
         sys_ignore_obp: set[tuple[str, int]] = set()
         forwarded = []
-        for _bridge_table_name in forward_tables:
-            # Legacy: routerOBP/routerHBP to_target — if BRIDGES[_bridge] was removed mid-routing, skip
-            if _bridge_table_name not in bridges:
-                continue
-            _bridge_rows = bridges[_bridge_table_name]
-            for entry in _bridge_rows:
-                if entry.get("SYSTEM") == system_name:
+        if use_subscription_legs:
+            _leg_iter: list[tuple[str, dict[str, Any]]] = [
+                (
+                    forward_tables[0] if forward_tables else str(dst_int),
+                    {
+                        "SYSTEM": leg.target_system,
+                        "TS": int(leg.slot),
+                        "TGID": bytes_3(int(leg.target_tgid)),
+                        "ACTIVE": True,
+                    },
+                )
+                for leg in forward_legs
+            ]
+        else:
+            _leg_iter = []
+            for _bridge_table_name in forward_tables:
+                if _bridge_table_name not in bridges:
                     continue
-                if not entry.get("ACTIVE", False):
-                    continue
-                if forward_leg_key_set is not None:
-                    entry_key = (
-                        entry["SYSTEM"],
-                        int(entry.get("TS") or 1),
-                        int_id(entry.get("TGID") or b"\x00\x00\x00"),
-                    )
-                    if entry_key not in forward_leg_key_set:
+                for entry in bridges[_bridge_table_name]:
+                    if entry.get("SYSTEM") == system_name:
                         continue
+                    if not entry.get("ACTIVE", False):
+                        continue
+                    _leg_iter.append((_bridge_table_name, entry))
+
+        for _bridge_table_name, entry in _leg_iter:
                 if not systems_cfg.get(entry["SYSTEM"], {}).get("ENABLED", True):
                     continue
                 _target_system = systems_cfg.get(entry["SYSTEM"], {})

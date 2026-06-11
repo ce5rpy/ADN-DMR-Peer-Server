@@ -5,6 +5,8 @@ from __future__ import annotations
 from adn_server.application.bridge_use_cases import BridgeUseCases
 from adn_server.application.subscription.store_sync import replace_store_from_bridges
 from adn_server.domain import bytes_3
+from adn_server.domain.subscription import TgId
+from adn_server.domain.voice_routing import ForwardLeg
 from adn_server.domain.dmr.bptc import encode_emblc
 from adn_server.infrastructure.bridge_router_impl import InMemoryBridgeRouter
 from adn_server.infrastructure.subscription_store import InMemorySubscriptionStore
@@ -38,7 +40,7 @@ def test_forward_plan_without_store_uses_router_tables_only():
         ]
     }
     bridge = _bridge(bridges, with_store=False)
-    tables, leg_keys = bridge._voice_forward_plan(
+    tables, legs = bridge._voice_forward_plan(
         system_name="MASTER-A",
         peer_id=b"\x00\x00\x03\xe9",
         rf_src=b"\x00\x2f\x8b\x01",
@@ -51,7 +53,7 @@ def test_forward_plan_without_store_uses_router_tables_only():
         dst_int=730444,
     )
     assert tables == ("730444",)
-    assert leg_keys is None
+    assert legs is None
 
 
 def test_forward_plan_with_store_returns_leg_filter():
@@ -63,7 +65,7 @@ def test_forward_plan_with_store_returns_leg_filter():
         ]
     }
     bridge = _bridge(bridges, with_store=True)
-    tables, leg_keys = bridge._voice_forward_plan(
+    tables, legs = bridge._voice_forward_plan(
         system_name="MASTER-A",
         peer_id=b"\x00\x00\x03\xe9",
         rf_src=b"\x00\x2f\x8b\x01",
@@ -76,4 +78,4 @@ def test_forward_plan_with_store_returns_leg_filter():
         dst_int=730444,
     )
     assert tables == ("730444",)
-    assert leg_keys == frozenset({("MASTER-B", 1, 730444)})
+    assert legs == (ForwardLeg(target_system="MASTER-B", slot=1, target_tgid=TgId(730444)),)

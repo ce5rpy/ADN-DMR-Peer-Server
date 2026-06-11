@@ -21,6 +21,20 @@ class BridgeTimerMixin:
 
     def rule_timer_loop(self) -> None:
         """Run one iteration of rule_timer_loop (legacy 52s LoopingCall). Activate/deactivate by timeout."""
+        if self._subscription_store is not None:
+            from ..subscription.rule_timer_ops import apply_rule_timer_store
+            from ..subscription.store_sync import replace_store_from_bridges
+
+            replace_store_from_bridges(self._subscription_store, self._router.get_bridges())
+            apply_rule_timer_store(
+                self._subscription_store,
+                self._config.get("SYSTEMS", {}),
+                time.time(),
+                on_bridge_deactivated=self._on_bridge_deactivated,
+            )
+            self._export_store_to_router()
+            return
+
         bridges = self._router.get_bridges()
         systems_cfg = self._config.get("SYSTEMS", {})
         now = time.time()

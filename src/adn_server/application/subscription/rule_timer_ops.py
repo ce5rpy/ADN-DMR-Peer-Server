@@ -1,0 +1,154 @@
+"""Store-native rule_timer_loop (P2-015); mirrors legacy BRIDGES row semantics."""
+
+from __future__ import annotations
+
+import logging
+from collections import defaultdict
+from collections.abc import Callable
+from typing import Any
+
+from adn_server.application.ports import SubscriptionStore
+from adn_server.application.subscription.bridges_export import _legacy_to_type
+from adn_server.application.bridge.helpers import is_special_tg
+from adn_server.domain.subscription import Subscription, SubscriptionPhase
+
+logger = logging.getLogger(__name__)
+
+
+def apply_rule_timer_store(
+    store: SubscriptionStore,
+    systems_cfg: dict[str, Any],
+    now: float,
+    *,
+    on_bridge_deactivated: Callable[[str], None] | None = None,
+) -> None:
+    """One rule_timer tick: mutate subscriptions in place; prune unused bridge tables."""
+    by_table: dict[str, list[Subscription]] = defaultdict(list)
+    for sub in store.snapshot():
+        by_table[sub.table_key()].append(sub)
+
+    remove_tables: list[str] = []
+    debug_msgs: list[str] = []
+
+    for bridge_key, entries in list(by_table.items()):
+        bridge_used = False
+        special_tg = is_special_tg(bridge_key)
+
+        for sub in entries:
+            system_name = sub.system.value
+            sys_config = systems_cfg.get(system_name, {})
+            is_single_mode = sys_config.get("SINGLE_MODE", False)
+            to_type = _legacy_to_type(sub)
+            active = sub.is_active()
+            timer = float(sub.state.timer_expires_at or 0.0)
+            is_dynamic = bridge_key[0:1] != "#" and to_type != "STAT"
+            is_obp = sys_config.get("MODE") == "OPENBRIDGE"
+
+            if not is_single_mode and is_dynamic and not is_obp and not special_tg:
+                if to_type == "ON":
+                    if active:
+                        bridge_used = True
+                        debug_msgs.append(
+                            "(ROUTER) Conference Bridge ACTIVE (INFINITE TIMER): System: %s Bridge: %s, TS: %s, TGID: %s"
+                            % (system_name, bridge_key, sub.channel.slot, int(sub.target_tgid))
+                        )
+                    else:
+                        debug_msgs.append(
+                            "(ROUTER) Conference Bridge INACTIVE (no change): System: %s Bridge: %s, TS: %s, TGID: %s"
+                            % (system_name, bridge_key, sub.channel.slot, int(sub.target_tgid))
+                        )
+                elif to_type == "OFF":
+                    if not active:
+                        sub.state.phase = SubscriptionPhase.ACTIVE
+                        store.upsert(sub)
+                        bridge_used = True
+                        logger.info(
+                            "(ROUTER) Conference Bridge ACTIVATED (NO TIMEOUT): System: %s, Bridge: %s, TS: %s, TGID: %s",
+                            system_name,
+                            bridge_key,
+                            sub.channel.slot,
+                            int(sub.target_tgid),
+                        )
+                    else:
+                        bridge_used = True
+                        debug_msgs.append(
+                            "(ROUTER) Conference Bridge ACTIVE (no change): System: %s Bridge: %s, TS: %s, TGID: %s"
+                            % (system_name, bridge_key, sub.channel.slot, int(sub.target_tgid))
+                        )
+            else:
+                if to_type == "ON":
+                    if active:
+                        bridge_used = True
+                        if timer < now:
+                            sub.state.phase = SubscriptionPhase.IDLE
+                            store.upsert(sub)
+                            if on_bridge_deactivated and bridge_key[:1] == "#":
+                                on_bridge_deactivated(system_name)
+                            logger.info(
+                                "(ROUTER) Conference Bridge TIMEOUT: DEACTIVATE System: %s, Bridge: %s, TS: %s, TGID: %s",
+                                system_name,
+                                bridge_key,
+                                sub.channel.slot,
+                                int(sub.target_tgid),
+                            )
+                        else:
+                            logger.info(
+                                "(ROUTER) Conference Bridge ACTIVE (ON timer running): System: %s Bridge: %s, TS: %s, TGID: %s, Timeout in: %.2fs,",
+                                system_name,
+                                bridge_key,
+                                sub.channel.slot,
+                                int(sub.target_tgid),
+                                timer - now,
+                            )
+                    else:
+                        debug_msgs.append(
+                            "(ROUTER) Conference Bridge INACTIVE (no change): System: %s Bridge: %s, TS: %s, TGID: %s"
+                            % (system_name, bridge_key, sub.channel.slot, int(sub.target_tgid))
+                        )
+                elif to_type == "OFF":
+                    if not active:
+                        if timer < now:
+                            sub.state.phase = SubscriptionPhase.ACTIVE
+                            store.upsert(sub)
+                            bridge_used = True
+                            logger.info(
+                                "(ROUTER) Conference Bridge TIMEOUT: ACTIVATE System: %s, Bridge: %s, TS: %s, TGID: %s",
+                                system_name,
+                                bridge_key,
+                                sub.channel.slot,
+                                int(sub.target_tgid),
+                            )
+                        else:
+                            bridge_used = True
+                            logger.info(
+                                "(ROUTER) Conference Bridge INACTIVE (OFF timer running): System: %s Bridge: %s, TS: %s, TGID: %s, Timeout in: %.2fs,",
+                                system_name,
+                                bridge_key,
+                                sub.channel.slot,
+                                int(sub.target_tgid),
+                                timer - now,
+                            )
+                    elif active:
+                        bridge_used = True
+                        debug_msgs.append(
+                            "(ROUTER) Conference Bridge ACTIVE (no change): System: %s Bridge: %s, TS: %s, TGID: %s"
+                            % (system_name, bridge_key, sub.channel.slot, int(sub.target_tgid))
+                        )
+                else:
+                    if not is_obp or (is_obp and (to_type == "STAT" or active)):
+                        bridge_used = True
+                    debug_msgs.append(
+                        "(ROUTER) Conference Bridge NO ACTION: System: %s, Bridge: %s, TS: %s, TGID: %s"
+                        % (system_name, bridge_key, sub.channel.slot, int(sub.target_tgid))
+                    )
+
+        if not bridge_used:
+            remove_tables.append(bridge_key)
+
+    if debug_msgs:
+        logger.debug("\n".join(debug_msgs))
+
+    for key in remove_tables:
+        for sub in by_table.get(key, ()):
+            store.remove(sub.subscription_id)
+        logger.debug("(ROUTER) Unused conference bridge %s removed", key)
