@@ -42,6 +42,22 @@ class BridgeObpForwardMixin:
             return
         if not (79 <= dst_int < 9990 or dst_int > 9999):
             return
+        if self._subscription_store is not None:
+            from ..subscription.obp_source_ops import ensure_obp_source_for_tg_store
+            from ..subscription.store_sync import replace_store_from_bridges
+
+            replace_store_from_bridges(self._subscription_store, self._router.get_bridges())
+            ensure_obp_source_for_tg_store(
+                self._subscription_store,
+                system_name,
+                bridge_key,
+                dst_id_b,
+                dst_int,
+                time.time(),
+            )
+            self._export_store_to_router()
+            return
+
         bridges = self._router.get_bridges()
         now = time.time()
 

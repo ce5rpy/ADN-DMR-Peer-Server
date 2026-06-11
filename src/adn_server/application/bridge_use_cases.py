@@ -129,8 +129,11 @@ class BridgeUseCases(
             pass
 
     def _sync_subscription_store(self) -> None:
-        """Mirror BRIDGES into the subscription store after OPTIONS/static mutations."""
-        self._finalize_bridges_state()
+        """Export subscription store to BRIDGES shim after OPTIONS/static batch mutations."""
+        if self._subscription_store is not None:
+            self._export_store_to_router()
+        else:
+            self._finalize_bridges_state()
 
     def get_bridges(self) -> dict[str, list[dict[str, Any]]]:
         """Return current BRIDGES (export shim when store authority is enabled)."""

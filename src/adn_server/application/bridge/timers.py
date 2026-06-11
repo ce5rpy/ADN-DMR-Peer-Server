@@ -134,6 +134,19 @@ class BridgeTimerMixin:
     def bridge_debug_loop(self) -> None:
         """Legacy bridgeDebug (bridge_master.py 487-543): remove invalid bridges, fix >1 active dial per MASTER."""
         logger.debug("(BRIDGEDEBUG) Running bridge debug")
+        if self._subscription_store is not None:
+            from ..subscription.bridge_debug_ops import apply_bridge_debug_store
+            from ..subscription.store_sync import replace_store_from_bridges
+
+            replace_store_from_bridges(self._subscription_store, self._router.get_bridges())
+            apply_bridge_debug_store(
+                self._subscription_store,
+                self._config.get("SYSTEMS", {}),
+                time.time(),
+            )
+            self._export_store_to_router()
+            return
+
         bridges = self._router.get_bridges()
         systems_cfg = self._config.get("SYSTEMS", {})
         now = time.time()
@@ -595,6 +608,35 @@ class BridgeTimerMixin:
     def bridge_reset_loop(self) -> None:
         """Bridge reset iteration (legacy bridge_reset, 6s). Clear _reset and remove_bridge_system."""
         systems_cfg = self._config.get("SYSTEMS", {})
+        if self._subscription_store is not None:
+            from ..subscription.bridge_reset_ops import (
+                deactivate_system_legs_store,
+                restore_prohibited_static_legs_store,
+            )
+            from ..subscription.store_sync import replace_store_from_bridges
+
+            replace_store_from_bridges(self._subscription_store, self._router.get_bridges())
+            now = time.time()
+            for system_name in list(systems_cfg.keys()):
+                sys_cfg = systems_cfg.get(system_name, {})
+                if not sys_cfg.get("_reset"):
+                    continue
+                logger.info("(BRIDGERESET) Bridge reset for %s - no peers", system_name)
+                deactivate_system_legs_store(self._subscription_store, system_name, now)
+                sys_cfg.pop("_opt_key", None)
+                sys_cfg.pop("_options_static_apply_fp", None)
+                restore_prohibited_static_legs_store(
+                    self._subscription_store,
+                    system_name,
+                    sys_cfg,
+                    self.acl_check,
+                    now,
+                )
+                sys_cfg["_reset"] = False
+                sys_cfg["_resetlog"] = False
+            self._export_store_to_router()
+            return
+
         for system_name in list(systems_cfg.keys()):
             sys_cfg = systems_cfg.get(system_name, {})
             if sys_cfg.get("_reset"):
@@ -615,10 +657,21 @@ class BridgeTimerMixin:
 
     def _restore_prohibited_static_bridge_legs(self, system_name: str) -> None:
         """After BRIDGERESET / peer RPTO: restore static TGs in prohibited_tgs (parity with _make_echo_bridges)."""
-        prohibited_tgs = (0, 1, 2, 3, 4, 5, 9, 9990, 9991, 9992, 9993, 9994, 9995, 9996, 9997, 9998, 9999)
         sys_cfg = self._config.get("SYSTEMS", {}).get(system_name, {})
         if sys_cfg.get("MODE") != "MASTER" or not sys_cfg.get("ENABLED", True):
             return
+        if self._subscription_store is not None:
+            from ..subscription.bridge_reset_ops import restore_prohibited_static_legs_store
+
+            restore_prohibited_static_legs_store(
+                self._subscription_store,
+                system_name,
+                sys_cfg,
+                self.acl_check,
+                time.time(),
+            )
+            return
+        prohibited_tgs = (0, 1, 2, 3, 4, 5, 9, 9990, 9991, 9992, 9993, 9994, 9995, 9996, 9997, 9998, 9999)
         bridges = self._router.get_bridges()
         now = time.time()
         for ts, static_key, acl_key in (
@@ -691,6 +744,15 @@ class BridgeTimerMixin:
     def stat_trimmer_loop(self) -> None:
         """Trim STAT-only bridges with no ON/OFF in use (legacy statTrimmer, 303s)."""
         logger.debug("(ROUTER) STAT trimmer loop started")
+        if self._subscription_store is not None:
+            from ..subscription.stat_trimmer_ops import apply_stat_trimmer_store
+            from ..subscription.store_sync import replace_store_from_bridges
+
+            replace_store_from_bridges(self._subscription_store, self._router.get_bridges())
+            apply_stat_trimmer_store(self._subscription_store)
+            self._export_store_to_router()
+            return
+
         bridges = self._router.get_bridges()
         remove_bridges: deque = deque()
         for bridge_key, entries in list(bridges.items()):
