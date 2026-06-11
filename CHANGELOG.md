@@ -6,7 +6,35 @@ All notable changes to **adn-server** are documented here. Versioning follows [S
 
 ### Added
 
+- (none)
+
+## [2.0.0-alpha.2] - 2026-06-11
+
+Subscription runtime (phase 2b/2c) closed for production Chile.
+
+### Added
+
+- Subscription store always wired at runtime; `SubscriptionRouter` is the voice resolve path.
+- `MeshCodecRegistry` on OpenBridge ingress/egress (phase 2c).
+
+### Changed
+
+- Removed YAML flags `USE_SUBSCRIPTION_ROUTER` and `USE_SUBSCRIPTION_STORE_AUTHORITY` (P2-014); rollback via git tags only.
+- `get_bridges()` mirrors router state into the store before export (report/monitor shim).
+
+### Fixed
+
+- OBP → HBP voice: sync store before subscription resolve (`c10f7f8`).
+- TG 4000: clear dynamics once per PTT, scoped to transmitting peer (inject-only).
+
+## [2.0.0-alpha.1] - 2026-06-10
+
+Phases 0–4 + 3b GA baseline (tag `v2.0.0-alpha1` alias retained).
+
+### Added
+
 - `adn-server.py --doctor` — validate config, UDP/TCP bind ports, PEER upstream and `MESH_PROTOCOL`.
+- Integrated proxy fan-in, self-service MySQL OPTIONS, monitor slim report wire.
 
 ### Changed
 
