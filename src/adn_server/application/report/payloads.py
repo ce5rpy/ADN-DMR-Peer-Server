@@ -250,6 +250,12 @@ def _topology_peer_row(
         single, timer = resolve_peer_single_and_timer(fields, yaml_cfg)
     else:
         single, timer = resolve_peer_single_and_timer({}, yaml_cfg)
+        ts1 = static_tg_list(yaml_cfg.get("TS1_STATIC"))
+        ts2 = static_tg_list(yaml_cfg.get("TS2_STATIC"))
+        if ts1:
+            row["ts1_static"] = ts1
+        if ts2:
+            row["ts2_static"] = ts2
     row["single_mode"] = single
     row["ua_timer_min"] = timer
     row["ua_sessions"] = export_peer_ua_sessions(yaml_cfg, peer_key)

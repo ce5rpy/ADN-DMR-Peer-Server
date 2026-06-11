@@ -1,4 +1,4 @@
-"""P2-015: store-native in-band signalling."""
+"""Store-native in-band signalling."""
 
 from __future__ import annotations
 

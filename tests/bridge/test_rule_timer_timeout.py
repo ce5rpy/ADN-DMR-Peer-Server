@@ -1,4 +1,4 @@
-"""Bridge rule_timer timeout behaviour (V2-P0-006 reactor-safe mutations)."""
+"""Bridge rule_timer timeout behaviour (reactor-thread mutations)."""
 
 from __future__ import annotations
 

@@ -1,4 +1,4 @@
-"""Store-native bridge_debug_loop (P2-015)."""
+"""Store-native bridge_debug_loop."""
 
 from __future__ import annotations
 

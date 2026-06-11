@@ -1,4 +1,4 @@
-"""Voice forward plan helpers (P2-009)."""
+"""Voice forward plan helpers."""
 
 from __future__ import annotations
 
@@ -15,48 +15,22 @@ from tests.application.test_subscription_router import _row
 from tests.harness.deterministic import minimal_config
 
 
-def _bridge(bridges: dict, *, with_store: bool) -> BridgeUseCases:
+def _bridge(bridges: dict) -> BridgeUseCases:
     config = minimal_config(("MASTER-A", "MASTER-B"))
     router = InMemoryBridgeRouter()
     router.set_bridges(bridges)
-    store = InMemorySubscriptionStore() if with_store else None
-    if store is not None:
-        replace_store_from_bridges(store, bridges)
+    store = InMemorySubscriptionStore()
+    replace_store_from_bridges(store, bridges)
     return BridgeUseCases(
         router,
         config,
+        store,
         encode_emblc=encode_emblc,
         ta_emblc_encoder=default_ta_emblc_encoder,
-        subscription_store=store,
     )
 
 
-def test_forward_plan_without_store_uses_router_tables_only():
-    """Harness without a store falls back to BRIDGES index (unit-test shortcut)."""
-    bridges = {
-        "730444": [
-            _row(system="MASTER-A", ts=1, tgid=730444, active=True),
-            _row(system="MASTER-B", ts=1, tgid=730444, active=True),
-        ]
-    }
-    bridge = _bridge(bridges, with_store=False)
-    tables, legs = bridge._voice_forward_plan(
-        system_name="MASTER-A",
-        peer_id=b"\x00\x00\x03\xe9",
-        rf_src=b"\x00\x2f\x8b\x01",
-        dst_id=bytes_3(730444),
-        slot=1,
-        call_type="group",
-        stream_id=b"\x01\x02\x03\x04",
-        source_is_obp=False,
-        bridge_match_slot=1,
-        dst_int=730444,
-    )
-    assert tables == ("730444",)
-    assert legs is None
-
-
-def test_forward_plan_with_store_returns_leg_filter():
+def test_forward_plan_returns_leg_filter() -> None:
     bridges = {
         "730444": [
             _row(system="MASTER-A", ts=1, tgid=730444, active=True),
@@ -64,7 +38,7 @@ def test_forward_plan_with_store_returns_leg_filter():
             _row(system="OBP-CL", ts=1, tgid=730444, active=False),
         ]
     }
-    bridge = _bridge(bridges, with_store=True)
+    bridge = _bridge(bridges)
     tables, legs = bridge._voice_forward_plan(
         system_name="MASTER-A",
         peer_id=b"\x00\x00\x03\xe9",

@@ -1,15 +1,10 @@
-"""Subscription router helpers for the voice hot path (P2-009 / P2-010).
-
-BRIDGES mutates ACTIVE/timers; ``_finalize_bridges_state`` keeps the store aligned
-after timer/OPTIONS paths. Voice resolve always uses ``SubscriptionRouter`` when a
-store is wired (production default).
-"""
+"""Subscription router helpers for the voice hot path."""
 
 from __future__ import annotations
 
 import logging
-from typing import Any
 
+from ..ports import SubscriptionStore
 from ..subscription.ingress import build_voice_ingress
 from ..subscription.router import SubscriptionRouter
 from ...domain.voice_routing import ForwardLeg, VoiceIngress
@@ -20,23 +15,15 @@ logger = logging.getLogger(__name__)
 class VoiceSubscriptionMixin:
     """Wire ``SubscriptionRouter`` into ``dmrd_received``."""
 
-    _subscription_store: Any
+    _subscription_store: SubscriptionStore
     _subscription_router: SubscriptionRouter | None
 
-    def _subscription_router_instance(self) -> SubscriptionRouter | None:
-        if self._subscription_store is None:
-            return None
+    def _subscription_router_instance(self) -> SubscriptionRouter:
         router = getattr(self, "_subscription_router", None)
         if router is None:
             router = SubscriptionRouter(self._subscription_store)
             self._subscription_router = router
         return router
-
-    def _sync_store_for_voice_router(self) -> None:
-        """Mirror BRIDGES into the store before subscription lookups."""
-        if self._subscription_store is None:
-            return
-        self._sync_store_for_voice_lookup()
 
     def _build_dmrd_voice_ingress(
         self,
@@ -97,23 +84,12 @@ class VoiceSubscriptionMixin:
         bridge_match_slot: int,
         dst_int: int,
         ingress_required: bool = True,
-    ) -> tuple[tuple[str, ...], tuple[ForwardLeg, ...] | None]:
-        """Return bridge tables and optional resolved forward legs (``None`` = no subscription store)."""
-        if self._subscription_store is None:
-            return (
-                tuple(self._router.bridge_tables_with_active_source(system_name, bridge_match_slot, dst_int)),
-                None,
-            )
-        self._sync_store_for_voice_router()
+    ) -> tuple[tuple[str, ...], tuple[ForwardLeg, ...]]:
+        """Return bridge tables and resolved forward legs from the subscription store."""
         router = self._subscription_router_instance()
-        if router is None:
-            return (
-                tuple(self._router.bridge_tables_with_active_source(system_name, bridge_match_slot, dst_int)),
-                None,
-            )
         tables = router.bridge_tables_with_active_source(system_name, bridge_match_slot, dst_int)
         if not ingress_required:
-            return tables, None
+            return tables, ()
         ingress = self._build_dmrd_voice_ingress(
             system_name=system_name,
             peer_id=peer_id,

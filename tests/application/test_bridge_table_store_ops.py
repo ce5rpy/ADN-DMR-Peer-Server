@@ -1,4 +1,4 @@
-"""P2-015 slice 4: store-native bridge table and OBP source ops."""
+"""Store-native bridge table and OBP source ops."""
 
 from __future__ import annotations
 

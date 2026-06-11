@@ -1,4 +1,4 @@
-# ADN DMR Peer Server - bridge helpers (V2-P0-004)
+# ADN DMR Peer Server - bridge helpers
 # Copyright (C) 2026  Rodrigo Pérez, CE5RPY <ce5rpy@qmd.cl>
 
 """Shared bridge routing helpers (no Twisted)."""
@@ -504,12 +504,13 @@ def peer_should_receive_group_voice(
     2. TG in this peer's OPTIONS static list → allow (when not blocked by SINGLE).
     3. ``SINGLE=1``: dynamic UA owned by this peer's exclusive session → allow.
     4. ``SINGLE=0``: dynamic UA this peer keyed (multi set) → allow.
-    5. Otherwise → deny (no fan-out).
+    5. Sole connected hotspot with an ACTIVE bridge leg for ``(slot, tgid)`` → allow.
+    6. Otherwise → deny (no fan-out).
 
-    A system-wide ACTIVE bridge leg must **not** fan out to every hotspot; that
-    was the regression when ``bridges`` were passed into this helper.
+    A system-wide ACTIVE bridge leg must **not** fan out to every hotspot when
+    several peers are online; that was the regression when ``bridges`` alone
+    decided fan-out for all connected hotspots.
     """
-    _ = (system, bridges)  # kept for call-site compatibility; not used for fan-out
     if peer_single_blocks_group_voice(peer, slot, tgid, sys_cfg, peer_id=peer_id, now=now):
         return False
     if peer_receives_group_tgid(peer, slot, tgid):
@@ -517,6 +518,10 @@ def peer_should_receive_group_voice(
     if _peer_owns_dynamic_ua(peer, slot, tgid, sys_cfg, peer_id=peer_id, now=now):
         return True
     if peer_owns_multi_dynamic_ua(peer, slot, tgid, sys_cfg, peer_id=peer_id):
+        return True
+    if connected_count == 1 and system and _system_has_active_bridge_leg(
+        bridges, system, slot, tgid
+    ):
         return True
     return False
 

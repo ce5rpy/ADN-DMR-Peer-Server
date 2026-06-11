@@ -1,4 +1,4 @@
-"""Store-native bridge table mutations (P2-015 slice 4): OPTIONS, static TG, UA, reflectors."""
+"""Store-native bridge table mutations: OPTIONS, static TG, UA, reflectors."""
 
 from __future__ import annotations
 
@@ -13,7 +13,6 @@ from adn_server.domain.subscription import (
     AudioChannel,
     InbandTriggers,
     Subscription,
-    SubscriptionId,
     SubscriptionPhase,
     SubscriptionRole,
     SubscriptionState,

@@ -10,6 +10,7 @@ from adn_server.application.bridge_use_cases import BridgeUseCases
 from adn_server.application.reporting_use_cases import ReportingUseCases
 from adn_server.domain.dmr.bptc import encode_emblc
 from adn_server.infrastructure.bridge_router_impl import InMemoryBridgeRouter
+from adn_server.infrastructure.subscription_store import InMemorySubscriptionStore
 from adn_server.infrastructure.config_normalizer import (
     apply_talker_alias_defaults,
     ensure_system_runtime_config,
@@ -115,6 +116,7 @@ def build_hbp_repeat_stack(
     bridge = BridgeUseCases(
         InMemoryBridgeRouter(),
         config,
+        InMemorySubscriptionStore(),
         send_to_system=lambda *_a, **_k: None,
         get_protocols=lambda: protocols,
         reporting=ReportingUseCases(FakeReportSender(report_factory), config),

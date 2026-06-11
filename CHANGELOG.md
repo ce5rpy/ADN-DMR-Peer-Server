@@ -6,13 +6,21 @@ All notable changes to **adn-server** are documented here. Versioning follows [S
 
 ### Added
 
-- P2-015 (in progress): store-native `rule_timer_loop` and `apply_in_band_signalling`.
+- Store-native timer loops (`rule_timer`, `stat_trimmer`, `bridge_debug`, `bridge_reset`) and in-band signalling.
+- Store-native bridge table (OPTIONS, static TG, reflectors, UA) and OBP source ensure.
 - `InbandTriggers` (ON/OFF/RESET) on `Subscription` with import/export round-trip.
 - `to_target` iterates `ForwardLeg` from `SubscriptionRouter.resolve()` instead of re-scanning BRIDGES rows.
 
 ### Changed
 
+- `SubscriptionStore` is required at runtime; bridge timers, OPTIONS, and table paths mutate the store only.
+- `BRIDGES` is an export shim for monitor/report (`export_bridges`); no direct dict mutation in hot paths.
 - `_export_store_to_router()` publishes store mutations without router→store overwrite (timer/in-band paths).
+
+### Fixed
+
+- Dashboard peers without RPTO inherit `TS1_STATIC` / `TS2_STATIC` from the MASTER YAML.
+- Inject-only monitor remap: sole connected hotspot receives dynamic UA downlink when a bridge leg is ACTIVE.
 
 ## [2.0.0-alpha.2] - 2026-06-11
 
@@ -25,7 +33,7 @@ Subscription runtime (phase 2b/2c) closed for production Chile.
 
 ### Changed
 
-- Removed YAML flags `USE_SUBSCRIPTION_ROUTER` and `USE_SUBSCRIPTION_STORE_AUTHORITY` (P2-014); rollback via git tags only.
+- Removed YAML flags `USE_SUBSCRIPTION_ROUTER` and `USE_SUBSCRIPTION_STORE_AUTHORITY`; rollback via git tags only.
 - `get_bridges()` mirrors router state into the store before export (report/monitor shim).
 
 ### Fixed

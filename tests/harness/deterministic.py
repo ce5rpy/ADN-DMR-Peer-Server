@@ -384,6 +384,7 @@ class DeterministicScenario:
         self.bridge = BridgeUseCases(
             self.router,
             self.config,
+            self.subscription_store,
             send_to_system=self._send_capture,
             get_protocols=lambda: self.protocols,
             reporting=self.reporting,
@@ -392,7 +393,6 @@ class DeterministicScenario:
             get_dmra_blocks=lambda _sys, _sid: None,
             encode_emblc=encode_emblc,
             ta_emblc_encoder=default_ta_emblc_encoder,
-            subscription_store=self.subscription_store,
         )
 
     def _wire_protocols_from_config(self) -> None:

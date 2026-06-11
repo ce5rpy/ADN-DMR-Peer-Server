@@ -316,6 +316,7 @@ def run_peer_server(
     bridge_use_cases = BridgeUseCases(
         bridge_router,
         config,
+        subscription_store,
         send_to_system=send_to_system,
         get_protocols=lambda: protocols,
         reporting=reporting_use_cases,
@@ -326,7 +327,6 @@ def run_peer_server(
         call_later=reactor.callLater,
         encode_emblc=encode_emblc,
         ta_emblc_encoder=default_ta_emblc_encoder,
-        subscription_store=subscription_store,
     )
     bridge_use_cases.apply_startup_bridges()
     get_bridges = bridge_use_cases.get_bridges
@@ -362,7 +362,7 @@ def run_peer_server(
     task.LoopingCall(reporting_loop).start(report_interval).addErrback(_looping_errback, logger)
 
     # LoopingCalls (legacy intervals). rule_timer / stat_trimmer mutate BRIDGES on reactor
-    # (V2-P0-006: no deferToThread — avoids races with dmrd_received on the same dict).
+    # Timer loops run on the reactor thread (no deferToThread — avoids races with dmrd_received).
     def _rule_timer_on_reactor() -> None:
         bridge_use_cases.rule_timer_loop()
         reporting_use_cases.send_bridge(get_bridges(), incremental=True)

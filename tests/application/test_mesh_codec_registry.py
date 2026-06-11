@@ -1,4 +1,4 @@
-"""MeshCodecRegistry: auto decode and encode codec selection (P2-005)."""
+"""MeshCodecRegistry: auto decode and encode codec selection."""
 
 from __future__ import annotations
 

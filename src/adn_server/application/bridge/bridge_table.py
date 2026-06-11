@@ -1,4 +1,4 @@
-# ADN DMR Peer Server - bridge table management (V2-P0-004)
+# ADN DMR Peer Server - bridge table management
 # Copyright (C) 2026  Rodrigo Pérez, CE5RPY <ce5rpy@qmd.cl>
 
 """BRIDGES table lifecycle: create, static TG, OPTIONS refresh (no Twisted)."""
@@ -8,7 +8,6 @@ from __future__ import annotations
 import logging
 import re
 import time
-from collections import deque
 from typing import Any
 
 from ...domain import bytes_3, bytes_4, int_id
@@ -32,45 +31,20 @@ class BridgeTableMixin:
         _tgid_b = _tgid if isinstance(_tgid, bytes) and len(_tgid) >= 3 else bytes_3(tgid_int)
         if _tgid_s in ("9990", "9991", "9992", "9993", "9994", "9995", "9996", "9997", "9998", "9999"):
             _tmout = 1.0 / 6.0
-        if self._subscription_store is not None:
-            from ..subscription.bridge_table_ops import make_single_bridge_store
-            from ..subscription.store_sync import replace_store_from_bridges
+        from ..subscription.bridge_table_ops import make_single_bridge_store
+        from ..subscription.store_sync import replace_store_from_bridges
 
-            replace_store_from_bridges(self._subscription_store, self._router.get_bridges())
-            make_single_bridge_store(
-                self._subscription_store,
-                tgid_int,
-                _sourcesystem,
-                _slot,
-                float(_tmout),
-                self._config.get("SYSTEMS", {}),
-                time.time(),
-            )
-            self._export_store_to_router()
-            return
-        timeout_sec = _tmout * 60.0
-        now = time.time()
-        bridges = self._router.get_bridges()
-        bridges[_tgid_s] = []
-        systems_cfg = self._config.get("SYSTEMS", {})
-        for _system in systems_cfg:
-            sys_cfg = systems_cfg.get(_system, {})
-            if sys_cfg.get("MODE") == "OPENBRIDGE":
-                if 79 <= tgid_int < 9990 or tgid_int > 9999:
-                    bridges[_tgid_s].append({"SYSTEM": _system, "TS": 1, "TGID": _tgid_b, "ACTIVE": True, "TIMEOUT": "", "TO_TYPE": "NONE", "OFF": [], "ON": [], "RESET": [], "TIMER": now})
-            else:
-                if _system == _sourcesystem:
-                    if _slot == 1:
-                        bridges[_tgid_s].append({"SYSTEM": _system, "TS": 1, "TGID": _tgid_b, "ACTIVE": True, "TIMEOUT": timeout_sec, "TO_TYPE": "ON", "OFF": [], "ON": [_tgid_b], "RESET": [], "TIMER": now + timeout_sec})
-                        bridges[_tgid_s].append({"SYSTEM": _system, "TS": 2, "TGID": _tgid_b, "ACTIVE": False, "TIMEOUT": timeout_sec, "TO_TYPE": "ON", "OFF": [], "ON": [_tgid_b], "RESET": [], "TIMER": now})
-                    else:
-                        bridges[_tgid_s].append({"SYSTEM": _system, "TS": 2, "TGID": _tgid_b, "ACTIVE": True, "TIMEOUT": timeout_sec, "TO_TYPE": "ON", "OFF": [], "ON": [_tgid_b], "RESET": [], "TIMER": now + timeout_sec})
-                        bridges[_tgid_s].append({"SYSTEM": _system, "TS": 1, "TGID": _tgid_b, "ACTIVE": False, "TIMEOUT": timeout_sec, "TO_TYPE": "ON", "OFF": [], "ON": [_tgid_b], "RESET": [], "TIMER": now})
-                else:
-                    # Other MASTER/PEER: ACTIVE False (legacy). ACTIVE True only via make_static_tg when a peer has this TG static.
-                    bridges[_tgid_s].append({"SYSTEM": _system, "TS": 1, "TGID": _tgid_b, "ACTIVE": False, "TIMEOUT": timeout_sec, "TO_TYPE": "ON", "OFF": [], "ON": [_tgid_b], "RESET": [], "TIMER": now})
-                    bridges[_tgid_s].append({"SYSTEM": _system, "TS": 2, "TGID": _tgid_b, "ACTIVE": False, "TIMEOUT": timeout_sec, "TO_TYPE": "ON", "OFF": [], "ON": [_tgid_b], "RESET": [], "TIMER": now})
-        self._finalize_bridges_state()
+        replace_store_from_bridges(self._subscription_store, self._router.get_bridges())
+        make_single_bridge_store(
+            self._subscription_store,
+            tgid_int,
+            _sourcesystem,
+            _slot,
+            float(_tmout),
+            self._config.get("SYSTEMS", {}),
+            time.time(),
+        )
+        self._export_store_to_router()
 
     def make_single_reflector(self, _tgid: bytes | int, _tmout: float, _sourcesystem: str) -> None:
         """Legacy make_single_reflector: create reflector bridge #tgid with MASTERs and OBP."""
@@ -79,349 +53,120 @@ class BridgeTableMixin:
         _tgid_b = _tgid if isinstance(_tgid, bytes) and len(_tgid) >= 3 else bytes_3(int(_tgid_s))
         if _tgid_s in ("9990", "9991", "9992", "9993", "9994", "9995", "9996", "9997", "9998", "9999"):
             _tmout = 1.0 / 6.0
-        if self._subscription_store is not None:
-            from ..subscription.bridge_table_ops import make_single_reflector_store
+        from ..subscription.bridge_table_ops import make_single_reflector_store
 
-            make_single_reflector_store(
-                self._subscription_store,
-                int(_tgid_s),
-                float(_tmout),
-                _sourcesystem,
-                self._config.get("SYSTEMS", {}),
-                time.time(),
-            )
-            return
-        now = time.time()
-        bridges = self._router.get_bridges()
-        bridges[_bridge] = []
-        systems_cfg = self._config.get("SYSTEMS", {})
-        for _system in systems_cfg:
-            if systems_cfg.get(_system, {}).get("MODE") == "MASTER":
-                def_ua = systems_cfg[_system].get("DEFAULT_UA_TIMER", 10) * 60.0
-                if _system == _sourcesystem:
-                    bridges[_bridge].append({"SYSTEM": _system, "TS": 2, "TGID": bytes_3(9), "ACTIVE": True, "TIMEOUT": _tmout * 60.0, "TO_TYPE": "ON", "OFF": [], "ON": [_tgid_b], "RESET": [], "TIMER": now + _tmout * 60.0})
-                else:
-                    bridges[_bridge].append({"SYSTEM": _system, "TS": 2, "TGID": bytes_3(9), "ACTIVE": False, "TIMEOUT": def_ua, "TO_TYPE": "ON", "OFF": [], "ON": [_tgid_b], "RESET": [], "TIMER": now})
-            if systems_cfg.get(_system, {}).get("MODE") == "OPENBRIDGE" and (79 <= int(_tgid_s) < 9990 or int(_tgid_s) > 9999):
-                bridges[_bridge].append({"SYSTEM": _system, "TS": 1, "TGID": _tgid_b, "ACTIVE": True, "TIMEOUT": "", "TO_TYPE": "NONE", "OFF": [], "ON": [], "RESET": [], "TIMER": now})
+        make_single_reflector_store(
+            self._subscription_store,
+            int(_tgid_s),
+            float(_tmout),
+            _sourcesystem,
+            self._config.get("SYSTEMS", {}),
+            time.time(),
+        )
 
     def make_default_reflector(self, reflector: int, _tmout: float, system: str) -> None:
         """Legacy make_default_reflector: ensure #reflector bridge exists and set system TS2 to ACTIVE/OFF."""
-        if self._subscription_store is not None:
-            from ..subscription.bridge_table_ops import make_default_reflector_store
+        from ..subscription.bridge_table_ops import make_default_reflector_store
 
-            make_default_reflector_store(
-                self._subscription_store,
-                reflector,
-                float(_tmout),
-                system,
-                self._config.get("SYSTEMS", {}),
-                time.time(),
-            )
-            return
-        bridge = "#" + str(reflector)
-        bridges = self._router.get_bridges()
-        if bridge not in bridges:
-            bridges[bridge] = []
-            self.make_single_reflector(bytes_3(reflector), _tmout, system)
-        bridgetemp = deque()
-        for bridgesystem in bridges.get(bridge, []):
-            if bridgesystem.get("SYSTEM") == system and bridgesystem.get("TS") == 2:
-                bridgetemp.append({"SYSTEM": system, "TS": 2, "TGID": bytes_3(9), "ACTIVE": True, "TIMEOUT": _tmout * 60.0, "TO_TYPE": "OFF", "OFF": [], "ON": [bytes_3(reflector)], "RESET": [], "TIMER": time.time() + _tmout * 60.0})
-            else:
-                bridgetemp.append(bridgesystem)
-        bridges[bridge] = list(bridgetemp)
-
-    def _ensure_master_legs_in_tg_bridge(self, tg: int, system: str, _tmout: float) -> None:
-        """If BRIDGES[tg] exists but this MASTER has no TS1/TS2 rows, append them.
-
-        Legacy parity: make_stat_bridge and OPTIONS UA re-add create TS1+TS2 per MASTER; if a bridge
-        was built earlier without this system, make_static_tg must insert missing legs before ACTIVE.
-        """
-        sys_cfg = self._config.get("SYSTEMS", {}).get(system, {})
-        if sys_cfg.get("MODE") != "MASTER":
-            return
-        bridge_key = str(tg)
-        if bridge_key[:1] == "#":
-            return
-        bridges = self._router.get_bridges()
-        entries = bridges.get(bridge_key)
-        if not entries:
-            return
-        tgid_b = bytes_3(tg)
-        if bridge_key in ("9990", "9991", "9992", "9993", "9994", "9995", "9996", "9997", "9998", "9999"):
-            tmout_eff = 1.0 / 6.0
-        else:
-            tmout_eff = float(_tmout)
-        if tmout_eff <= 0:
-            tmout_eff = 35791394.0
-        timeout_sec = tmout_eff * 60.0
-        now = time.time()
-        has_ts1 = any(e.get("SYSTEM") == system and e.get("TS") == 1 for e in entries)
-        has_ts2 = any(e.get("SYSTEM") == system and e.get("TS") == 2 for e in entries)
-        if not has_ts1:
-            entries.append(
-                {
-                    "SYSTEM": system,
-                    "TS": 1,
-                    "TGID": tgid_b,
-                    "ACTIVE": False,
-                    "TIMEOUT": timeout_sec,
-                    "TO_TYPE": "ON",
-                    "OFF": [],
-                    "ON": [tgid_b],
-                    "RESET": [],
-                    "TIMER": now + timeout_sec,
-                }
-            )
-        if not has_ts2:
-            entries.append(
-                {
-                    "SYSTEM": system,
-                    "TS": 2,
-                    "TGID": tgid_b,
-                    "ACTIVE": False,
-                    "TIMEOUT": timeout_sec,
-                    "TO_TYPE": "ON",
-                    "OFF": [],
-                    "ON": [tgid_b],
-                    "RESET": [],
-                    "TIMER": now + timeout_sec,
-                }
-            )
+        make_default_reflector_store(
+            self._subscription_store,
+            reflector,
+            float(_tmout),
+            system,
+            self._config.get("SYSTEMS", {}),
+            time.time(),
+        )
 
     def make_static_tg(self, tg: int, ts: int, _tmout: float, system: str) -> None:
         """Legacy make_static_tg: ensure bridge for tg exists and set system/ts to ACTIVE/OFF."""
-        if self._subscription_store is not None:
-            from ..subscription.bridge_table_ops import make_static_tg_store
+        from ..subscription.bridge_table_ops import make_static_tg_store
 
-            single_mode = bool(
-                self._config.get("SYSTEMS", {}).get(system, {}).get("SINGLE_MODE", False)
-            )
-            make_static_tg_store(
-                self._subscription_store,
-                tg,
-                ts,
-                float(_tmout),
-                system,
-                self._config.get("SYSTEMS", {}),
-                time.time(),
-                single_mode=single_mode,
-            )
-            return
-        bridges = self._router.get_bridges()
-        key = str(tg)
-        if key not in bridges or not bridges.get(key):
-            self.make_single_bridge(bytes_3(tg), system, ts, _tmout)
-        self._ensure_master_legs_in_tg_bridge(tg, system, _tmout)
-        bridges = self._router.get_bridges()
-        timeout_sec = _tmout * 60.0
-        now = time.time()
         single_mode = bool(
             self._config.get("SYSTEMS", {}).get(system, {}).get("SINGLE_MODE", False)
         )
-        bridgetemp = deque()
-        for bridgesystem in bridges.get(key, []):
-            if bridgesystem.get("SYSTEM") == system and bridgesystem.get("TS") == ts:
-                active = True
-                timer = now + timeout_sec
-                if single_mode and bridgesystem.get("ACTIVE") is False:
-                    # OPTIONS refresh must not undo in-band SINGLE deactivation ([5] on VTERM).
-                    active = False
-                    timer = float(bridgesystem.get("TIMER") or timer)
-                bridgetemp.append(
-                    {
-                        "SYSTEM": system,
-                        "TS": ts,
-                        "TGID": bytes_3(tg),
-                        "ACTIVE": active,
-                        "TIMEOUT": timeout_sec,
-                        "TO_TYPE": "OFF",
-                        "OFF": [],
-                        "ON": [bytes_3(tg)],
-                        "RESET": [],
-                        "TIMER": timer,
-                    }
-                )
-            else:
-                bridgetemp.append(bridgesystem)
-        bridges[key] = list(bridgetemp)
-        self._finalize_bridges_state()
+        make_static_tg_store(
+            self._subscription_store,
+            tg,
+            ts,
+            float(_tmout),
+            system,
+            self._config.get("SYSTEMS", {}),
+            time.time(),
+            single_mode=single_mode,
+        )
+        self._export_store_to_router()
 
     def reset_static_tg(self, tg: int, ts: int, _tmout: float, system: str) -> None:
         """Legacy reset_static_tg: set system/ts entry to ACTIVE False, TO_TYPE ON."""
-        if self._subscription_store is not None:
-            from ..subscription.bridge_table_ops import reset_static_tg_store
+        from ..subscription.bridge_table_ops import reset_static_tg_store
 
-            reset_static_tg_store(
-                self._subscription_store,
-                tg,
-                ts,
-                float(_tmout),
-                system,
-                time.time(),
-            )
-            return
-        bridges = self._router.get_bridges()
-        key = str(tg)
-        if key not in bridges:
-            return
-        bridgetemp = deque()
-        for bridgesystem in bridges.get(key, []):
-            if bridgesystem.get("SYSTEM") == system and bridgesystem.get("TS") == ts:
-                bridgetemp.append({"SYSTEM": system, "TS": ts, "TGID": bytes_3(tg), "ACTIVE": False, "TIMEOUT": _tmout * 60.0, "TO_TYPE": "ON", "OFF": [], "ON": [bytes_3(tg)], "RESET": [], "TIMER": time.time() + _tmout * 60.0})
-            else:
-                bridgetemp.append(bridgesystem)
-        bridges[key] = list(bridgetemp)
+        reset_static_tg_store(
+            self._subscription_store,
+            tg,
+            ts,
+            float(_tmout),
+            system,
+            time.time(),
+        )
 
     def reset_all_reflector_system(self, _tmout: float, system: str) -> None:
         """Legacy reset_all_reflector_system: set system's TS2 entry to inactive in every # bridge."""
-        if self._subscription_store is not None:
-            from ..subscription.bridge_table_ops import reset_all_reflector_system_store
+        from ..subscription.bridge_table_ops import reset_all_reflector_system_store
 
-            reset_all_reflector_system_store(
-                self._subscription_store,
-                float(_tmout),
-                system,
-                time.time(),
-            )
-            return
-        bridges = self._router.get_bridges()
-        timeout_sec = _tmout * 60.0
-        now = time.time()
-        for bridge in list(bridges.keys()):
-            if bridge not in bridges:
-                continue
-            if bridge[:1] != "#":
-                continue
-            bridgetemp = deque()
-            for bridgesystem in bridges.get(bridge, []):
-                if bridgesystem.get("SYSTEM") == system and bridgesystem.get("TS") == 2:
-                    tgid = bridgesystem.get("TGID", bytes_3(9))
-                    on_tgid = bytes_3(int(bridge[1:])) if bridge[1:] else bytes_3(9)
-                    bridgetemp.append({"SYSTEM": system, "TS": 2, "TGID": tgid, "ACTIVE": False, "TIMEOUT": timeout_sec, "TO_TYPE": "ON", "OFF": [], "ON": [on_tgid], "RESET": [], "TIMER": now + timeout_sec})
-                else:
-                    bridgetemp.append(bridgesystem)
-            bridges[bridge] = list(bridgetemp)
+        reset_all_reflector_system_store(
+            self._subscription_store,
+            float(_tmout),
+            system,
+            time.time(),
+        )
 
     def remove_bridge_system(self, system: str) -> None:
-        """Legacy remove_bridge_system: set all entries for system to ACTIVE False, TO_TYPE ON."""
-        bridges = self._router.get_bridges()
-        for _bridge in list(bridges.keys()):
-            if _bridge not in bridges:
-                continue
-            bridgetemp = deque()
-            for bridgesystem in bridges.get(_bridge, []):
-                if bridgesystem.get("SYSTEM") != system:
-                    bridgetemp.append(bridgesystem)
-                else:
-                    t = bridgesystem.get("TIMEOUT") or 600.0
-                    if isinstance(t, str):
-                        t = 600.0
-                    bridgetemp.append({"SYSTEM": system, "TS": bridgesystem.get("TS", 1), "TGID": bridgesystem.get("TGID", bytes_3(0)), "ACTIVE": False, "TIMEOUT": t, "TO_TYPE": "ON", "OFF": [], "ON": [bridgesystem.get("TGID", bytes_3(0))], "RESET": [], "TIMER": time.time() + t})
-            bridges[_bridge] = list(bridgetemp)
+        """Deactivate all legs for one system (legacy remove_bridge_system)."""
+        from ..subscription.bridge_reset_ops import deactivate_system_legs_store
+
+        deactivate_system_legs_store(self._subscription_store, system, time.time())
+        self._export_store_to_router()
 
     def make_stat_bridge(self, _tgid: bytes) -> None:
         """Legacy make_stat_bridge: on-the-fly relay bridges for OBP traffic when GEN_STAT_BRIDGES is True."""
         _tgid_s = str(int_id(_tgid))
-        if self._subscription_store is not None:
-            from ..subscription.bridge_table_ops import make_stat_bridge_store
-            from ..subscription.store_sync import replace_store_from_bridges
+        from ..subscription.bridge_table_ops import make_stat_bridge_store
+        from ..subscription.store_sync import replace_store_from_bridges
 
-            replace_store_from_bridges(self._subscription_store, self._router.get_bridges())
-            make_stat_bridge_store(
-                self._subscription_store,
-                _tgid,
-                self._config.get("SYSTEMS", {}),
-                time.time(),
-            )
-            self._export_store_to_router()
-            return
-        bridges = self._router.get_bridges()
-        bridges[_tgid_s] = []
-        systems_cfg = self._config.get("SYSTEMS", {})
-        now = time.time()
-        for _system in systems_cfg:
-            sys_cfg = systems_cfg.get(_system, {})
-            if sys_cfg.get("MODE") != "OPENBRIDGE":
-                if sys_cfg.get("MODE") == "MASTER":
-                    _tmout = float(sys_cfg.get("DEFAULT_UA_TIMER", 10))
-                    timeout_sec = _tmout * 60.0
-                    bridges[_tgid_s].append({"SYSTEM": _system, "TS": 1, "TGID": _tgid, "ACTIVE": False, "TIMEOUT": timeout_sec, "TO_TYPE": "ON", "OFF": [], "ON": [_tgid], "RESET": [], "TIMER": now})
-                    bridges[_tgid_s].append({"SYSTEM": _system, "TS": 2, "TGID": _tgid, "ACTIVE": False, "TIMEOUT": timeout_sec, "TO_TYPE": "ON", "OFF": [], "ON": [_tgid], "RESET": [], "TIMER": now})
-            else:
-                bridges[_tgid_s].append({"SYSTEM": _system, "TS": 1, "TGID": _tgid, "ACTIVE": True, "TIMEOUT": "", "TO_TYPE": "STAT", "OFF": [], "ON": [], "RESET": [], "TIMER": now})
+        replace_store_from_bridges(self._subscription_store, self._router.get_bridges())
+        make_stat_bridge_store(
+            self._subscription_store,
+            _tgid,
+            self._config.get("SYSTEMS", {}),
+            time.time(),
+        )
+        self._export_store_to_router()
 
     def deactivate_all_dynamic_bridges(self, system_name: str) -> None:
         """Legacy deactivate_all_dynamic_bridges: deactivate all non-STAT, non-reflector bridges for a system (TG 4000)."""
-        if self._subscription_store is not None:
-            from ..subscription.bridge_table_ops import deactivate_all_dynamic_bridges_store
-            from ..subscription.store_sync import replace_store_from_bridges
+        from ..subscription.bridge_table_ops import deactivate_all_dynamic_bridges_store
+        from ..subscription.store_sync import replace_store_from_bridges
 
-            replace_store_from_bridges(self._subscription_store, self._router.get_bridges())
-            deactivate_all_dynamic_bridges_store(self._subscription_store, system_name)
-            self._export_store_to_router()
-            return
-        bridges = self._router.get_bridges()
-        for _bridge in list(bridges):
-            if _bridge not in bridges:
-                continue
-            if _bridge[:1] == "#":
-                continue
-            for _sys_entry in bridges.get(_bridge, []):
-                if _sys_entry.get("SYSTEM") == system_name and _sys_entry.get("TO_TYPE") != "STAT":
-                    if _sys_entry.get("ACTIVE"):
-                        _sys_entry["ACTIVE"] = False
-                        logger.info(
-                            "(ROUTER) Deactivated dynamic bridge due to TG/ID 4000: System: %s, Bridge: %s, TS: %s, TGID: %s",
-                            system_name, _bridge, _sys_entry.get("TS"), int_id(_sys_entry.get("TGID", b"\x00\x00\x00")),
-                        )
-        self._finalize_bridges_state()
+        replace_store_from_bridges(self._subscription_store, self._router.get_bridges())
+        deactivate_all_dynamic_bridges_store(self._subscription_store, system_name)
+        self._export_store_to_router()
 
     def _readd_system_after_ua_timer_change(self, system: str, _tmout: float) -> None:
         """After remove_bridge_system, re-add system to bridges that no longer have ts1/ts2 (legacy 1624-1639)."""
-        if self._subscription_store is not None:
-            from ..subscription.bridge_table_ops import readd_system_after_ua_timer_change_store
+        from ..subscription.bridge_table_ops import readd_system_after_ua_timer_change_store
 
-            readd_system_after_ua_timer_change_store(
-                self._subscription_store,
-                system,
-                float(_tmout),
-                time.time(),
-            )
-            return
-        bridges = self._router.get_bridges()
-        timeout_sec = _tmout * 60.0
-        now = time.time()
-        for _bridge in list(bridges.keys()):
-            if _bridge not in bridges:
-                continue
-            has_ts1 = any(e.get("SYSTEM") == system and e.get("TS") == 1 for e in bridges.get(_bridge, []))
-            has_ts2 = any(e.get("SYSTEM") == system and e.get("TS") == 2 for e in bridges.get(_bridge, []))
-            if _bridge[:1] != "#":
-                if not has_ts1:
-                    try:
-                        bridges[_bridge].append({"SYSTEM": system, "TS": 1, "TGID": bytes_3(int(_bridge)), "ACTIVE": False, "TIMEOUT": timeout_sec, "TO_TYPE": "ON", "OFF": [], "ON": [bytes_3(int(_bridge))], "RESET": [], "TIMER": now + timeout_sec})
-                    except ValueError:
-                        pass
-                if not has_ts2:
-                    try:
-                        bridges[_bridge].append({"SYSTEM": system, "TS": 2, "TGID": bytes_3(int(_bridge)), "ACTIVE": False, "TIMEOUT": timeout_sec, "TO_TYPE": "ON", "OFF": [], "ON": [bytes_3(int(_bridge))], "RESET": [], "TIMER": now + timeout_sec})
-                    except ValueError:
-                        pass
-            else:
-                if not has_ts2:
-                    try:
-                        bridges[_bridge].append({"SYSTEM": system, "TS": 2, "TGID": bytes_3(9), "ACTIVE": False, "TIMEOUT": timeout_sec, "TO_TYPE": "ON", "OFF": [bytes_3(4000)], "ON": [], "RESET": [], "TIMER": now + timeout_sec})
-                    except ValueError:
-                        pass
+        readd_system_after_ua_timer_change_store(
+            self._subscription_store,
+            system,
+            float(_tmout),
+            time.time(),
+        )
 
     def apply_startup_bridges(self) -> None:
         """Legacy startup: set default reflectors and static TGs for each MASTER system."""
-        if self._subscription_store is not None:
-            from ..subscription.store_sync import replace_store_from_bridges
+        from ..subscription.store_sync import replace_store_from_bridges
 
-            replace_store_from_bridges(self._subscription_store, self._router.get_bridges())
+        replace_store_from_bridges(self._subscription_store, self._router.get_bridges())
         prohibited_tgs = (0, 1, 2, 3, 4, 5, 9, 9990, 9991, 9992, 9993, 9994, 9995, 9996, 9997, 9998, 9999)
         logger.debug("(ROUTER) Setting default reflectors")
         for system, sys_cfg in self._config.get("SYSTEMS", {}).items():
@@ -619,8 +364,7 @@ class BridgeTableMixin:
     def _apply_master_runtime_options(self, system_name: str, _options: dict[str, Any]) -> None:
         """Apply SINGLE/TIMER/VOICE/LANG from peer OPTIONS over YAML defaults (legacy options_config).
 
-        BRIDGES mutates first; ``_finalize_bridges_state`` mirrors into the subscription store
-        and re-exports the legacy shim for report/debug.
+        Runtime YAML/OPTIONS flags only; bridge legs are updated via the subscription store.
         """
         systems_cfg = self._config.get("SYSTEMS", {})
         sys_cfg = systems_cfg.get(system_name, {})
@@ -657,7 +401,7 @@ class BridgeTableMixin:
 
         ``peer_options`` from RPTO overrides YAML (inject-only proxy: OPTIONS live on each peer).
         """
-        if self._subscription_store is not None and not getattr(self, "_options_store_batch", False):
+        if not getattr(self, "_options_store_batch", False):
             from ..subscription.store_sync import replace_store_from_bridges
 
             replace_store_from_bridges(self._subscription_store, self._router.get_bridges())
@@ -973,7 +717,7 @@ class BridgeTableMixin:
 
     def options_config_loop(self) -> None:
         """Legacy options_config: parse OPTIONS from MASTER systems and update bridges (default reflector, static TGs)."""
-        batch_store = self._subscription_store is not None
+        batch_store = True
         if batch_store:
             from ..subscription.store_sync import replace_store_from_bridges
 

@@ -1,4 +1,4 @@
-"""Build VoiceIngress from DMRD parameters (P2-004)."""
+"""Build VoiceIngress from DMRD parameters."""
 
 from __future__ import annotations
 

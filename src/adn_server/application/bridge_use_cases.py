@@ -69,6 +69,7 @@ class BridgeUseCases(
         self,
         bridge_router: BridgeRouter,
         config: dict[str, Any],
+        subscription_store: SubscriptionStore,
         send_to_system: Any = None,
         get_protocols: Any = None,
         reporting: ReportingUseCases | None = None,
@@ -79,7 +80,6 @@ class BridgeUseCases(
         call_later: Any = None,
         encode_emblc: DmrEmbeddedLcEncoder | None = None,
         ta_emblc_encoder: TalkerAliasEmblcEncoder | None = None,
-        subscription_store: SubscriptionStore | None = None,
     ) -> None:
         self._router = bridge_router
         self._config = config
@@ -130,10 +130,7 @@ class BridgeUseCases(
 
     def _sync_subscription_store(self) -> None:
         """Export subscription store to BRIDGES shim after OPTIONS/static batch mutations."""
-        if self._subscription_store is not None:
-            self._export_store_to_router()
-        else:
-            self._finalize_bridges_state()
+        self._export_store_to_router()
 
     def get_bridges(self) -> dict[str, list[dict[str, Any]]]:
         """Return current BRIDGES (export shim when store authority is enabled)."""
@@ -394,7 +391,7 @@ class BridgeUseCases(
             source_lc = b"\x00\x00\x20" + dst_id_b + rf_src
         # Legacy bridge_master routerOBP: _sysIgnore accumulates across each to_target(BRIDGES[_bridge])
         # pass; dedupe (SYSTEM, TS) for OpenBridge targets so the same leg is not sent twice per packet.
-        # SubscriptionRouter.resolve() already applies OBP dedup — skip sys_ignore_obp when using leg filter.
+        # SubscriptionRouter.resolve() already applies OBP dedup on OpenBridge targets.
         forward_tables, forward_legs = self._voice_forward_plan(
             system_name=system_name,
             peer_id=peer_id,
@@ -407,33 +404,19 @@ class BridgeUseCases(
             bridge_match_slot=bridge_match_slot,
             dst_int=dst_int,
         )
-        use_subscription_legs = forward_legs is not None
-        sys_ignore_obp: set[tuple[str, int]] = set()
         forwarded = []
-        if use_subscription_legs:
-            _leg_iter: list[tuple[str, dict[str, Any]]] = [
-                (
-                    forward_tables[0] if forward_tables else str(dst_int),
-                    {
-                        "SYSTEM": leg.target_system,
-                        "TS": int(leg.slot),
-                        "TGID": bytes_3(int(leg.target_tgid)),
-                        "ACTIVE": True,
-                    },
-                )
-                for leg in forward_legs
-            ]
-        else:
-            _leg_iter = []
-            for _bridge_table_name in forward_tables:
-                if _bridge_table_name not in bridges:
-                    continue
-                for entry in bridges[_bridge_table_name]:
-                    if entry.get("SYSTEM") == system_name:
-                        continue
-                    if not entry.get("ACTIVE", False):
-                        continue
-                    _leg_iter.append((_bridge_table_name, entry))
+        _leg_iter: list[tuple[str, dict[str, Any]]] = [
+            (
+                forward_tables[0] if forward_tables else str(dst_int),
+                {
+                    "SYSTEM": leg.target_system,
+                    "TS": int(leg.slot),
+                    "TGID": bytes_3(int(leg.target_tgid)),
+                    "ACTIVE": True,
+                },
+            )
+            for leg in forward_legs
+        ]
 
         for _bridge_table_name, entry in _leg_iter:
                 if not systems_cfg.get(entry["SYSTEM"], {}).get("ENABLED", True):
@@ -448,11 +431,6 @@ class BridgeUseCases(
                     entry_ts_obp = entry.get("TS")
                     if entry_ts_obp is None:
                         entry_ts_obp = 1
-                    if not use_subscription_legs:
-                        _obp_key = (entry["SYSTEM"], int(entry_ts_obp))
-                        if _obp_key in sys_ignore_obp:
-                            continue
-                        sys_ignore_obp.add(_obp_key)
                     target_tgid = entry.get("TGID")
                     if isinstance(target_tgid, int):
                         target_tgid = bytes_3(target_tgid)

@@ -1,4 +1,4 @@
-"""SubscriptionStore sync from BRIDGES (V2-P2-008)."""
+"""SubscriptionStore sync from BRIDGES."""
 
 from __future__ import annotations
 

@@ -24,7 +24,7 @@ Use the project interpreter, e.g. `/opt/.pyenv/versions/3.11.8/bin/python3`.
 | `voice/` | Announcements, TTS schedule, broadcast queue, disconnected voice, in-band signalling |
 | `talker_alias/` | Encode/decode, passthrough, MMDVM wire, bridge inject (DeterministicScenario) |
 | `parrot/` | Recording timers, playback loop, seq preservation, ingress path |
-| `replay/` | JSONL session replay (V2-P0-007) |
+| `replay/` | JSONL session replay |
 | `schemas/` | Report v2 JSON Schema validation (`jsonschema` dev dep) |
 | `application/` | Report payloads, monitor topology, proxy use cases, runtime context |
 | `infrastructure/` | Logging reload, bridge router, **HBP REPEAT + proxy fan-in integration**, MQTT |

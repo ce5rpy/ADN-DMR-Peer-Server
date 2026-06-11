@@ -1,4 +1,4 @@
-"""JSONL session replay for deterministic bridge tests (V2-P0-007).
+"""JSONL session replay for deterministic bridge tests.
 
 Session file format (one JSON object per line):
 

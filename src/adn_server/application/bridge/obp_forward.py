@@ -1,4 +1,4 @@
-# ADN DMR Peer Server - bridge OBP forward path (V2-P0-004)
+# ADN DMR Peer Server - bridge OBP forward path
 # Copyright (C) 2026  Rodrigo Pérez, CE5RPY <ce5rpy@qmd.cl>
 
 """OpenBridge ingress routing and unit-data forward (no Twisted imports)."""
@@ -42,66 +42,18 @@ class BridgeObpForwardMixin:
             return
         if not (79 <= dst_int < 9990 or dst_int > 9999):
             return
-        if self._subscription_store is not None:
-            from ..subscription.obp_source_ops import ensure_obp_source_for_tg_store
-            from ..subscription.store_sync import replace_store_from_bridges
-
-            replace_store_from_bridges(self._subscription_store, self._router.get_bridges())
-            ensure_obp_source_for_tg_store(
-                self._subscription_store,
-                system_name,
-                bridge_key,
-                dst_id_b,
-                dst_int,
-                time.time(),
-            )
-            self._export_store_to_router()
-            return
-
-        bridges = self._router.get_bridges()
-        now = time.time()
-
-        def _tgid_match(entry: dict[str, Any]) -> bool:
-            tg = entry.get("TGID")
-            if tg == dst_id_b:
-                return True
-            try:
-                return int_id(tg or b"\x00\x00\x00") == dst_int
-            except (TypeError, ValueError):
-                return False
-
-        def _patch(entries: list[dict[str, Any]]) -> None:
-            for e in entries:
-                if e.get("SYSTEM") != system_name:
-                    continue
-                if e.get("TS") != 1:
-                    continue
-                if not _tgid_match(e):
-                    continue
-                if not e.get("ACTIVE"):
-                    e["ACTIVE"] = True
-                return
-            entries.append(
-                {
-                    "SYSTEM": system_name,
-                    "TS": 1,
-                    "TGID": dst_id_b,
-                    "ACTIVE": True,
-                    "TIMEOUT": "",
-                    "TO_TYPE": "NONE",
-                    "OFF": [],
-                    "ON": [],
-                    "RESET": [],
-                    "TIMER": now,
-                }
-            )
-
-        for key in (bridge_key, "#" + bridge_key):
-            if key not in bridges:
-                continue
-            _patch(bridges[key])
-
-
+        from ..subscription.obp_source_ops import ensure_obp_source_for_tg_store
+        from ..subscription.store_sync import replace_store_from_bridges
+        replace_store_from_bridges(self._subscription_store, self._router.get_bridges())
+        ensure_obp_source_for_tg_store(
+            self._subscription_store,
+            system_name,
+            bridge_key,
+            dst_id_b,
+            dst_int,
+            time.time(),
+        )
+        self._export_store_to_router()
     def _obp_wire_stream_dict(self, src_proto: Any, stream_id: bytes, st: dict[str, Any]) -> None:
         """Legacy routerOBP.STATUS is a single flat dict keyed by stream_id (bridge_master.py:1911).
         Write only there; trimmer iterates the same dict (parity)."""

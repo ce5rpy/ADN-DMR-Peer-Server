@@ -1,4 +1,4 @@
-"""Store-native bridge_reset_loop helpers (P2-015)."""
+"""Store-native bridge_reset_loop helpers."""
 
 from __future__ import annotations
 

@@ -1,6 +1,6 @@
 # Protocolo de informes v2 (JSON)
 
-**Estado:** borrador de esquema (V2-P1-001). La **codificación en wire** y la emisión en el servidor son **V2-P1-002**; el consumidor en monitor es **V2-P1-005**.
+**Estado:** borrador de esquema. La codificación en wire y la emisión en el servidor están en progreso; el consumidor monitor v2 es un entregable aparte.
 
 ## Objetivos
 
@@ -249,7 +249,7 @@ REPORTS:
 
 Sin `PROTOCOL` en **2.x** — wire siempre JSON (`wire.py`). Mapeo: **`application/report/`**.
 
-### Espejo MQTT opcional (V2-P1-006)
+### Espejo MQTT opcional
 
 Por defecto los informes salen **solo** por TCP netstring (adn-monitor y otros clientes TCP). MQTT queda **deshabilitado** salvo activación explícita.
 

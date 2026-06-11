@@ -1,4 +1,4 @@
-"""JSONL session replay tests (V2-P0-007)."""
+"""JSONL session replay tests."""
 
 from __future__ import annotations
 

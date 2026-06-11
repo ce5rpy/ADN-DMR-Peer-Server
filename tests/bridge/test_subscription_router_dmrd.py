@@ -1,4 +1,4 @@
-"""P2-009: dmrd_received routes voice via SubscriptionRouter."""
+"""dmrd_received routes voice via SubscriptionRouter."""
 
 from __future__ import annotations
 

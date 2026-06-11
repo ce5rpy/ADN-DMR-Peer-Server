@@ -1,4 +1,4 @@
-# ADN DMR Peer Server - bridge LC / Talker Alias (V2-P0-004)
+# ADN DMR Peer Server - bridge LC / Talker Alias
 # Copyright (C) 2026  Rodrigo Pérez, CE5RPY <ce5rpy@qmd.cl>
 
 """Embedded LC rewrite and Talker Alias bridge coordination (no Twisted)."""

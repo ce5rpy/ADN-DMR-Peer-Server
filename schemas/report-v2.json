@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://adn.systems/schemas/report-v2.json",
   "title": "ADN Monitor Report Protocol v2",
-  "description": "JSON payloads for the TCP report channel (netstring-framed). Legacy v1 uses pickle CONFIG_SND/BRIDGE_SND and CSV BRDG_EVENT; v2 replaces those with typed JSON. Wire opcodes are defined in docs/en/server/protocols/report-v2.md; implementation is V2-P1-002.",
+  "description": "JSON payloads for the TCP report channel (netstring-framed). Legacy v1 uses pickle CONFIG_SND/BRIDGE_SND and CSV BRDG_EVENT; v2 replaces those with typed JSON. Wire opcodes are defined in docs/en/server/protocols/report-v2.md.",
   "type": "object",
   "required": ["type"],
   "oneOf": [

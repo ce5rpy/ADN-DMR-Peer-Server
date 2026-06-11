@@ -1,6 +1,6 @@
 # Report protocol v2 (JSON)
 
-**Status:** schema draft (V2-P1-001). **Wire encoding** and server emission are **V2-P1-002**; monitor consumer is **V2-P1-005**.
+**Status:** schema draft. Wire encoding and server emission are in progress; monitor v2 consumer is a separate deliverable.
 
 ## Goals
 
@@ -252,7 +252,7 @@ REPORTS:
 
 No `PROTOCOL` switch on **2.x** — wire is always JSON (`infrastructure/twisted_adapters/report/wire.py`). Payload mapping: **`application/report/`**.
 
-### Optional MQTT mirror (V2-P1-006)
+### Optional MQTT mirror
 
 By default the server sends reports **only** over TCP netstring (adn-monitor and other TCP clients). MQTT is **disabled** unless you explicitly enable it.
 

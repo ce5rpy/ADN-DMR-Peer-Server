@@ -1,4 +1,4 @@
-"""Store-native rule_timer_loop (P2-015); mirrors legacy BRIDGES row semantics."""
+"""Store-native rule_timer_loop; mirrors legacy BRIDGES row semantics."""
 
 from __future__ import annotations
 

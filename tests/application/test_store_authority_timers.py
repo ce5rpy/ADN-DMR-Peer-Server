@@ -1,4 +1,4 @@
-"""P2-010: subscription store stays aligned after timer / bridge mutations."""
+"""Subscription store stays aligned after timer and bridge mutations."""
 
 from __future__ import annotations
 
@@ -26,10 +26,11 @@ def test_rule_timer_syncs_subscription_store() -> None:
 
 def test_finalize_exports_from_subscription_store() -> None:
     bridges = active_bridge(730, (("MASTER-A", 2),))
-    bridges["730"][0]["ACTIVE"] = True
-    bridges["730"][0]["TO_TYPE"] = "ON"
-
     scenario = DeterministicScenario(bridges=bridges)
+    sub = scenario.subscription_store.snapshot()[0]
+    sub.state.phase = SubscriptionPhase.ACTIVE
+    scenario.subscription_store.upsert(sub)
+
     scenario.bridge._finalize_bridges_state()
 
     exported = scenario.bridge.get_bridges()

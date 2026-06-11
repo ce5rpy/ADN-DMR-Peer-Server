@@ -1,4 +1,4 @@
-"""Store-native OBP source leg ensure (P2-015 slice 4)."""
+"""Store-native OBP source leg ensure."""
 
 from __future__ import annotations
 

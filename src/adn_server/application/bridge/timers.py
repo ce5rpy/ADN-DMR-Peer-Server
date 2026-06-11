@@ -1,4 +1,4 @@
-# ADN DMR Peer Server - bridge timer loops (V2-P0-004)
+# ADN DMR Peer Server - bridge timer loops
 # Copyright (C) 2026  Rodrigo Pérez, CE5RPY <ce5rpy@qmd.cl>
 
 """Legacy bridge timer / trimmer loops (no Twisted imports)."""
@@ -7,11 +7,9 @@ from __future__ import annotations
 
 import logging
 import time
-from collections import deque
 from typing import Any
 
-from ...domain import HBPF_SLT_VTERM, bytes_3, int_id
-from .helpers import is_special_tg
+from ...domain import HBPF_SLT_VTERM, int_id
 
 logger = logging.getLogger(__name__)
 
@@ -21,210 +19,28 @@ class BridgeTimerMixin:
 
     def rule_timer_loop(self) -> None:
         """Run one iteration of rule_timer_loop (legacy 52s LoopingCall). Activate/deactivate by timeout."""
-        if self._subscription_store is not None:
-            from ..subscription.rule_timer_ops import apply_rule_timer_store
-            from ..subscription.store_sync import replace_store_from_bridges
-
-            replace_store_from_bridges(self._subscription_store, self._router.get_bridges())
-            apply_rule_timer_store(
-                self._subscription_store,
-                self._config.get("SYSTEMS", {}),
-                time.time(),
-                on_bridge_deactivated=self._on_bridge_deactivated,
-            )
-            self._export_store_to_router()
-            return
-
-        bridges = self._router.get_bridges()
-        systems_cfg = self._config.get("SYSTEMS", {})
-        now = time.time()
-        remove_bridges: deque = deque()
-        _debug_msgs: list[str] = []
-
-        for bridge_key, entries in list(bridges.items()):
-            if bridge_key not in bridges:
-                continue
-            bridge_used = False
-            special_tg = is_special_tg(bridge_key)
-
-            for sys_entry in entries:
-                system_name = sys_entry.get("SYSTEM", "")
-                sys_config = systems_cfg.get(system_name, {})
-                is_single_mode = sys_config.get("SINGLE_MODE", False)
-                to_type = sys_entry.get("TO_TYPE", "")
-                active = sys_entry.get("ACTIVE", False)
-                timer = sys_entry.get("TIMER", 0.0)
-                is_dynamic = bridge_key[0:1] != "#" and to_type != "STAT"
-                is_obp = sys_config.get("MODE") == "OPENBRIDGE"
-
-                if not is_single_mode and is_dynamic and not is_obp and not special_tg:
-                    if to_type == "ON":
-                        if active:
-                            bridge_used = True
-                            _debug_msgs.append('(ROUTER) Conference Bridge ACTIVE (INFINITE TIMER): System: %s Bridge: %s, TS: %s, TGID: %s' % (system_name, bridge_key, sys_entry.get("TS"), int_id(sys_entry.get("TGID", b""))))
-                        else:
-                            _debug_msgs.append('(ROUTER) Conference Bridge INACTIVE (no change): System: %s Bridge: %s, TS: %s, TGID: %s' % (system_name, bridge_key, sys_entry.get("TS"), int_id(sys_entry.get("TGID", b""))))
-                    elif to_type == "OFF":
-                        if not active:
-                            sys_entry["ACTIVE"] = True
-                            bridge_used = True
-                            logger.info(
-                                "(ROUTER) Conference Bridge ACTIVATED (NO TIMEOUT): System: %s, Bridge: %s, TS: %s, TGID: %s",
-                                system_name, bridge_key, sys_entry.get("TS"), int_id(sys_entry.get("TGID", b""))
-                            )
-                        else:
-                            bridge_used = True
-                            _debug_msgs.append('(ROUTER) Conference Bridge ACTIVE (no change): System: %s Bridge: %s, TS: %s, TGID: %s' % (system_name, bridge_key, sys_entry.get("TS"), int_id(sys_entry.get("TGID", b""))))
-                else:
-                    if to_type == "ON":
-                        if active:
-                            bridge_used = True
-                            if timer < now:
-                                sys_entry["ACTIVE"] = False
-                                if self._on_bridge_deactivated and bridge_key[:1] == "#":
-                                    self._on_bridge_deactivated(system_name)
-                                logger.info(
-                                    "(ROUTER) Conference Bridge TIMEOUT: DEACTIVATE System: %s, Bridge: %s, TS: %s, TGID: %s",
-                                    system_name, bridge_key, sys_entry.get("TS"), int_id(sys_entry.get("TGID", b""))
-                                )
-                            else:
-                                logger.info(
-                                    "(ROUTER) Conference Bridge ACTIVE (ON timer running): System: %s Bridge: %s, TS: %s, TGID: %s, Timeout in: %.2fs,",
-                                    system_name, bridge_key, sys_entry.get("TS"), int_id(sys_entry.get("TGID", b"")), timer - now
-                                )
-                        elif not active:
-                            _debug_msgs.append('(ROUTER) Conference Bridge INACTIVE (no change): System: %s Bridge: %s, TS: %s, TGID: %s' % (system_name, bridge_key, sys_entry.get("TS"), int_id(sys_entry.get("TGID", b""))))
-                    elif to_type == "OFF":
-                        if not active:
-                            if timer < now:
-                                sys_entry["ACTIVE"] = True
-                                bridge_used = True
-                                logger.info(
-                                    "(ROUTER) Conference Bridge TIMEOUT: ACTIVATE System: %s, Bridge: %s, TS: %s, TGID: %s",
-                                    system_name, bridge_key, sys_entry.get("TS"), int_id(sys_entry.get("TGID", b""))
-                                )
-                            else:
-                                bridge_used = True
-                                logger.info(
-                                    "(ROUTER) Conference Bridge INACTIVE (OFF timer running): System: %s Bridge: %s, TS: %s, TGID: %s, Timeout in: %.2fs,",
-                                    system_name, bridge_key, sys_entry.get("TS"), int_id(sys_entry.get("TGID", b"")), timer - now
-                                )
-                        elif active:
-                            bridge_used = True
-                            _debug_msgs.append('(ROUTER) Conference Bridge ACTIVE (no change): System: %s Bridge: %s, TS: %s, TGID: %s' % (system_name, bridge_key, sys_entry.get("TS"), int_id(sys_entry.get("TGID", b""))))
-                    else:
-                        # OBP legs from make_single_bridge use TO_TYPE NONE (legacy parity); keep the
-                        # bridge table while the OBP source row is ACTIVE (do not trim as "unused").
-                        if not is_obp or (is_obp and (to_type == "STAT" or active)):
-                            bridge_used = True
-                        _debug_msgs.append('(ROUTER) Conference Bridge NO ACTION: System: %s, Bridge: %s, TS: %s, TGID: %s' % (system_name, bridge_key, sys_entry.get("TS"), int_id(sys_entry.get("TGID", b""))))
-
-            if not bridge_used:
-                remove_bridges.append(bridge_key)
-
-        if _debug_msgs:
-            logger.debug('\n'.join(_debug_msgs))
-
-        for key in remove_bridges:
-            del bridges[key]
-            logger.debug("(ROUTER) Unused conference bridge %s removed", key)
-
-        self._finalize_bridges_state()
-
+        from ..subscription.rule_timer_ops import apply_rule_timer_store
+        from ..subscription.store_sync import replace_store_from_bridges
+        replace_store_from_bridges(self._subscription_store, self._router.get_bridges())
+        apply_rule_timer_store(
+            self._subscription_store,
+            self._config.get("SYSTEMS", {}),
+            time.time(),
+            on_bridge_deactivated=self._on_bridge_deactivated,
+        )
+        self._export_store_to_router()
     def bridge_debug_loop(self) -> None:
         """Legacy bridgeDebug (bridge_master.py 487-543): remove invalid bridges, fix >1 active dial per MASTER."""
         logger.debug("(BRIDGEDEBUG) Running bridge debug")
-        if self._subscription_store is not None:
-            from ..subscription.bridge_debug_ops import apply_bridge_debug_store
-            from ..subscription.store_sync import replace_store_from_bridges
-
-            replace_store_from_bridges(self._subscription_store, self._router.get_bridges())
-            apply_bridge_debug_store(
-                self._subscription_store,
-                self._config.get("SYSTEMS", {}),
-                time.time(),
-            )
-            self._export_store_to_router()
-            return
-
-        bridges = self._router.get_bridges()
-        systems_cfg = self._config.get("SYSTEMS", {})
-        now = time.time()
-        statroll = 0
-
-        # Kill off any bridges that should not exist, ever (legacy: 0-9, #0-#9)
-        for b in ("0", "1", "2", "3", "4", "5", "6", "7", "8", "9"):
-            bridges.pop(b, None)
-            bridges.pop("#" + b, None)
-
-        for system in systems_cfg:
-            bridgeroll = 0
-            dialroll = 0
-            activeroll = 0
-            for _bridge, entries in list(bridges.items()):
-                if _bridge not in bridges:
-                    continue
-                for enabled_system in entries:
-                    if enabled_system.get("SYSTEM") == system:
-                        bridgeroll += 1
-                        if enabled_system.get("ACTIVE"):
-                            if _bridge and _bridge[:1] == "#":
-                                dialroll += 1
-                                activeroll += 1
-                            else:
-                                activeroll += 1
-                        if enabled_system.get("TO_TYPE") == "STAT":
-                            statroll += 1
-            if bridgeroll:
-                logger.debug(
-                    "(BRIDGEDEBUG) system %s has %s bridges of which %s are in an ACTIVE state",
-                    system, bridgeroll, activeroll,
-                )
-            if dialroll > 1 and systems_cfg.get(system, {}).get("MODE") == "MASTER":
-                logger.warning(
-                    "(BRIDGEDEBUG) system %s has more than one active dial bridge (%s) - fixing",
-                    system, dialroll,
-                )
-                _tmout = float(systems_cfg.get(system, {}).get("DEFAULT_UA_TIMER", 10))
-                times: dict[float, str] = {}
-                for _bridge, entries in list(bridges.items()):
-                    if _bridge not in bridges:
-                        continue
-                    for enabled_system in entries:
-                        if enabled_system.get("ACTIVE") and _bridge and _bridge[:1] == "#":
-                            t = enabled_system.get("TIMER")
-                            if isinstance(t, (int, float)):
-                                times[t] = _bridge
-                for _bridge in set(times.values()):
-                    if _bridge not in bridges:
-                        continue
-                    logger.warning("(BRIDGEDEBUG) deactivating system: %s for bridge: %s", system, _bridge)
-                    try:
-                        _setbridge = int(_bridge[1:]) if _bridge[:1] == "#" else int(_bridge)
-                    except ValueError:
-                        _setbridge = 9
-                    bridgetemp: list[dict[str, Any]] = []
-                    for bridgesystem in bridges.get(_bridge, []):
-                        if bridgesystem.get("SYSTEM") == system and bridgesystem.get("TS") == 2:
-                            bridgetemp.append({
-                                "SYSTEM": system,
-                                "TS": 2,
-                                "TGID": bytes_3(9),
-                                "ACTIVE": False,
-                                "TIMEOUT": _tmout * 60.0,
-                                "TO_TYPE": "ON",
-                                "OFF": [],
-                                "ON": [bytes_3(_setbridge)],
-                                "RESET": [],
-                                "TIMER": now + _tmout * 60.0,
-                            })
-                        else:
-                            bridgetemp.append(bridgesystem)
-                    bridges[_bridge] = bridgetemp
-
-        logger.info("(BRIDGEDEBUG) The server currently has %s STATic bridges", statroll)
-        self._finalize_bridges_state()
-
+        from ..subscription.bridge_debug_ops import apply_bridge_debug_store
+        from ..subscription.store_sync import replace_store_from_bridges
+        replace_store_from_bridges(self._subscription_store, self._router.get_bridges())
+        apply_bridge_debug_store(
+            self._subscription_store,
+            self._config.get("SYSTEMS", {}),
+            time.time(),
+        )
+        self._export_store_to_router()
     def apply_in_band_signalling(
         self, system_name: str, slot: int, dst_id: bytes, pkt_time: float
     ) -> None:
@@ -233,128 +49,19 @@ class BridgeTimerMixin:
         Reflector bridges (#xxx) are ONLY processed when dst TG is 9 (legacy ~3455).
         De-activation distinguishes SINGLE_MODE True/False (legacy ~3484-3548).
         """
-        if self._subscription_store is not None:
-            from ..subscription.in_band_signalling_ops import apply_in_band_signalling_store
-            from ..subscription.store_sync import replace_store_from_bridges
-
-            replace_store_from_bridges(self._subscription_store, self._router.get_bridges())
-            apply_in_band_signalling_store(
-                self._subscription_store,
-                system_name,
-                slot,
-                dst_id,
-                pkt_time,
-                self._config.get("SYSTEMS", {}),
-            )
-            self._export_store_to_router()
-            self._send_bridge_snapshot(incremental=True)
-            return
-
-        bridges = self._router.get_bridges()
-        systems_cfg = self._config.get("SYSTEMS", {})
-        _dst_group = int_id(dst_id)
-        dst_id_b = dst_id if isinstance(dst_id, bytes) and len(dst_id) >= 3 else bytes_3(_dst_group)
-
-        for _bridge, entries in list(bridges.items()):
-            if _bridge not in bridges:
-                continue
-            # Legacy bridge_master.py ~3455: reflector bridges only respond to TG9
-            if _bridge[:1] == "#" and _dst_group != 9:
-                continue
-            for _system in entries:
-                if _system.get("SYSTEM") != system_name:
-                    continue
-                _ts = _system.get("TS")
-                _tgid = _system.get("TGID")
-                tgid_match = _tgid == dst_id_b or (isinstance(_tgid, bytes) and isinstance(dst_id_b, bytes) and _tgid == dst_id_b)
-                if not tgid_match and _tgid is not None:
-                    try:
-                        tgid_match = int_id(_tgid) == _dst_group
-                    except (TypeError, ValueError):
-                        pass
-                # [1] TGID matches a rule source, reset its timer
-                if slot == _ts and tgid_match:
-                    to_type = _system.get("TO_TYPE", "")
-                    active = _system.get("ACTIVE", False)
-                    timeout = _system.get("TIMEOUT")
-                    timeout_sec = timeout if isinstance(timeout, (int, float)) else 0.0
-                    if (to_type == "ON" and active) or (to_type == "OFF" and not active):
-                        if timeout_sec:
-                            _system["TIMER"] = pkt_time + timeout_sec
-                            logger.info("(%s) [1] Transmission match for Bridge: %s. Reset timeout to %s", system_name, _bridge, _system["TIMER"])
-
-                # [2-4] TGID matches an ACTIVATION trigger (dst_id in ON or RESET)
-                on_list = _system.get("ON") or []
-                reset_list = _system.get("RESET") or []
-                if slot == _ts and (dst_id_b in on_list or dst_id_b in reset_list or any(int_id(x) == _dst_group for x in on_list) or any(int_id(x) == _dst_group for x in reset_list)):
-                    if dst_id_b in on_list or any(int_id(x) == _dst_group for x in on_list):
-                        if not _system.get("ACTIVE"):
-                            _system["ACTIVE"] = True
-                            _system["TIMER"] = pkt_time + (float(_system.get("TIMEOUT") or 0) or 0)
-                            logger.info("(%s) [2] Bridge: %s, connection changed to state: %s", system_name, _bridge, _system["ACTIVE"])
-                            if _system.get("TO_TYPE") == "OFF":
-                                _system["TIMER"] = pkt_time
-                                logger.info("(%s) [3] Bridge: %s set to \"OFF\" with an on timer rule: timeout timer cancelled", system_name, _bridge)
-                        if _system.get("ACTIVE") and _system.get("TO_TYPE") == "ON" and _system.get("TIMEOUT"):
-                            _system["TIMER"] = pkt_time + float(_system["TIMEOUT"])
-                            logger.info("(%s) [4] Bridge: %s, timeout timer reset to: %s", system_name, _bridge, _system["TIMER"] - pkt_time)
-
-                # [5-8] TGID matches a DE-ACTIVATION trigger
-                # Legacy bridge_master.py ~3484-3548: SINGLE_MODE True vs False
-                sys_cfg = systems_cfg.get(system_name, {})
-                is_single_mode = sys_cfg.get("MODE") == "MASTER" and sys_cfg.get("SINGLE_MODE", False)
-
-                if is_single_mode:
-                    # SINGLE_MODE=True: aggressive de-activation (legacy ~3484-3503)
-                    off_list = _system.get("OFF") or []
-                    if slot == _ts and (dst_id_b in off_list or dst_id_b in reset_list or dst_id_b == bytes_3(4000) or dst_id_b != _tgid):
-                        if dst_id_b in off_list or dst_id_b != _tgid or dst_id_b == bytes_3(4000):
-                            if _system.get("ACTIVE"):
-                                _system["ACTIVE"] = False
-                                logger.info("(%s) [5] Bridge: %s, connection changed to state: %s", system_name, _bridge, _system["ACTIVE"])
-                                if _system.get("TO_TYPE") == "ON":
-                                    _system["TIMER"] = pkt_time
-                                    logger.info("(%s) [6] Bridge: %s set to \"OFF\" with an on timer rule: timeout timer cancelled", system_name, _bridge)
-                        if not _system.get("ACTIVE") and _system.get("TO_TYPE") == "OFF" and _system.get("TIMEOUT"):
-                            _system["TIMER"] = pkt_time + float(_system["TIMEOUT"])
-                            logger.info("(%s) [7] Bridge: %s, timeout timer reset to: %s", system_name, _bridge, _system["TIMER"] - pkt_time)
-                        if _system.get("ACTIVE") and _system.get("TO_TYPE") == "ON" and dst_id_b in off_list:
-                            _system["TIMER"] = pkt_time
-                            logger.info("(%s) [8] Bridge: %s set to ON with and \"OFF\" timer rule: timeout timer cancelled", system_name, _bridge)
-                else:
-                    # SINGLE_MODE=False: only de-activate on TG 4000 (legacy ~3504-3548)
-                    if dst_id_b == bytes_3(4000) and slot == _ts:
-                        is_static_tg = False
-                        ts1_static = sys_cfg.get("TS1_STATIC") or ""
-                        ts2_static = sys_cfg.get("TS2_STATIC") or ""
-                        if ts1_static and slot == 1:
-                            static_tgs = [int(tg) for tg in ts1_static.split(",") if tg.strip()]
-                            if _dst_group in static_tgs:
-                                is_static_tg = True
-                        elif ts2_static and slot == 2:
-                            static_tgs = [int(tg) for tg in ts2_static.split(",") if tg.strip()]
-                            if _dst_group in static_tgs:
-                                is_static_tg = True
-
-                        is_reflector = _bridge[:1] == "#"
-                        off_list = _system.get("OFF") or []
-                        if dst_id_b in off_list or dst_id_b == bytes_3(4000) or (dst_id_b != _tgid and not is_static_tg and not is_reflector):
-                            if _system.get("ACTIVE"):
-                                _system["ACTIVE"] = False
-                                logger.info("(%s) [5b] Bridge: %s, connection changed to state: %s (TG 4000 forced deactivation)", system_name, _bridge, _system["ACTIVE"])
-                                if _system.get("TO_TYPE") == "ON":
-                                    _system["TIMER"] = pkt_time
-                                    logger.info("(%s) [6b] Bridge: %s set to \"OFF\" with an on timer rule: timeout timer cancelled", system_name, _bridge)
-                        if not _system.get("ACTIVE") and _system.get("TO_TYPE") == "OFF" and _system.get("TIMEOUT"):
-                            _system["TIMER"] = pkt_time + float(_system["TIMEOUT"])
-                            logger.info("(%s) [7b] Bridge: %s, timeout timer reset to: %s", system_name, _bridge, _system["TIMER"] - pkt_time)
-                        if _system.get("ACTIVE") and _system.get("TO_TYPE") == "ON" and dst_id_b in (off_list or []):
-                            _system["TIMER"] = pkt_time
-                            logger.info("(%s) [8b] Bridge: %s set to ON with and \"OFF\" timer rule: timeout timer cancelled", system_name, _bridge)
-
-        self._finalize_bridges_state()
+        from ..subscription.in_band_signalling_ops import apply_in_band_signalling_store
+        from ..subscription.store_sync import replace_store_from_bridges
+        replace_store_from_bridges(self._subscription_store, self._router.get_bridges())
+        apply_in_band_signalling_store(
+            self._subscription_store,
+            system_name,
+            slot,
+            dst_id,
+            pkt_time,
+            self._config.get("SYSTEMS", {}),
+        )
+        self._export_store_to_router()
         self._send_bridge_snapshot(incremental=True)
-
     def _obp_emit_end_tx_forward_leg(
         self,
         tgt_name: str,
@@ -608,164 +315,49 @@ class BridgeTimerMixin:
     def bridge_reset_loop(self) -> None:
         """Bridge reset iteration (legacy bridge_reset, 6s). Clear _reset and remove_bridge_system."""
         systems_cfg = self._config.get("SYSTEMS", {})
-        if self._subscription_store is not None:
-            from ..subscription.bridge_reset_ops import (
-                deactivate_system_legs_store,
-                restore_prohibited_static_legs_store,
-            )
-            from ..subscription.store_sync import replace_store_from_bridges
-
-            replace_store_from_bridges(self._subscription_store, self._router.get_bridges())
-            now = time.time()
-            for system_name in list(systems_cfg.keys()):
-                sys_cfg = systems_cfg.get(system_name, {})
-                if not sys_cfg.get("_reset"):
-                    continue
-                logger.info("(BRIDGERESET) Bridge reset for %s - no peers", system_name)
-                deactivate_system_legs_store(self._subscription_store, system_name, now)
-                sys_cfg.pop("_opt_key", None)
-                sys_cfg.pop("_options_static_apply_fp", None)
-                restore_prohibited_static_legs_store(
-                    self._subscription_store,
-                    system_name,
-                    sys_cfg,
-                    self.acl_check,
-                    now,
-                )
-                sys_cfg["_reset"] = False
-                sys_cfg["_resetlog"] = False
-            self._export_store_to_router()
-            return
-
+        from ..subscription.bridge_reset_ops import (
+            deactivate_system_legs_store,
+            restore_prohibited_static_legs_store,
+        )
+        from ..subscription.store_sync import replace_store_from_bridges
+        replace_store_from_bridges(self._subscription_store, self._router.get_bridges())
+        now = time.time()
         for system_name in list(systems_cfg.keys()):
             sys_cfg = systems_cfg.get(system_name, {})
-            if sys_cfg.get("_reset"):
-                logger.info("(BRIDGERESET) Bridge reset for %s - no peers", system_name)
-                self.remove_bridge_system(system_name)
-                try:
-                    del sys_cfg["_opt_key"]
-                except KeyError:
-                    pass
-                try:
-                    del sys_cfg["_options_static_apply_fp"]
-                except KeyError:
-                    pass
-                self._restore_prohibited_static_bridge_legs(system_name)
-                sys_cfg["_reset"] = False
-                sys_cfg["_resetlog"] = False
-        self._finalize_bridges_state()
-
-    def _restore_prohibited_static_bridge_legs(self, system_name: str) -> None:
-        """After BRIDGERESET / peer RPTO: restore static TGs in prohibited_tgs (parity with _make_echo_bridges)."""
-        sys_cfg = self._config.get("SYSTEMS", {}).get(system_name, {})
-        if sys_cfg.get("MODE") != "MASTER" or not sys_cfg.get("ENABLED", True):
-            return
-        if self._subscription_store is not None:
-            from ..subscription.bridge_reset_ops import restore_prohibited_static_legs_store
-
+            if not sys_cfg.get("_reset"):
+                continue
+            logger.info("(BRIDGERESET) Bridge reset for %s - no peers", system_name)
+            deactivate_system_legs_store(self._subscription_store, system_name, now)
+            sys_cfg.pop("_opt_key", None)
+            sys_cfg.pop("_options_static_apply_fp", None)
             restore_prohibited_static_legs_store(
                 self._subscription_store,
                 system_name,
                 sys_cfg,
                 self.acl_check,
-                time.time(),
+                now,
             )
+            sys_cfg["_reset"] = False
+            sys_cfg["_resetlog"] = False
+        self._export_store_to_router()
+    def _restore_prohibited_static_bridge_legs(self, system_name: str) -> None:
+        """After BRIDGERESET / peer RPTO: restore static TGs in prohibited_tgs (parity with _make_echo_bridges)."""
+        sys_cfg = self._config.get("SYSTEMS", {}).get(system_name, {})
+        if sys_cfg.get("MODE") != "MASTER" or not sys_cfg.get("ENABLED", True):
             return
-        prohibited_tgs = (0, 1, 2, 3, 4, 5, 9, 9990, 9991, 9992, 9993, 9994, 9995, 9996, 9997, 9998, 9999)
-        bridges = self._router.get_bridges()
-        now = time.time()
-        for ts, static_key, acl_key in (
-            (1, "TS1_STATIC", "TG1_ACL"),
-            (2, "TS2_STATIC", "TG2_ACL"),
-        ):
-            for tg_s in str(sys_cfg.get(static_key) or "").split(","):
-                tg_s = tg_s.strip()
-                if not tg_s:
-                    continue
-                try:
-                    tg = int(tg_s)
-                except ValueError:
-                    continue
-                if tg not in prohibited_tgs:
-                    continue
-                if sys_cfg.get("USE_ACL") and not self.acl_check(
-                    bytes_3(tg), sys_cfg.get(acl_key, (True, []))
-                ):
-                    continue
-                bridge_key = str(tg)
-                if bridge_key not in bridges:
-                    continue
-                timeout_sec = (1.0 / 6.0) * 60.0
-                leg: dict[str, Any] = {
-                    "SYSTEM": system_name,
-                    "TS": ts,
-                    "TGID": bytes_3(tg),
-                    "ACTIVE": True,
-                    "TIMEOUT": timeout_sec,
-                    "TO_TYPE": "NONE",
-                    "ON": [],
-                    "OFF": [],
-                    "RESET": [],
-                    "TIMER": now + timeout_sec,
-                }
-                for i, entry in enumerate(bridges[bridge_key]):
-                    if entry.get("SYSTEM") == system_name and entry.get("TS") == ts:
-                        if entry.get("ACTIVE") and entry.get("TO_TYPE") == "NONE":
-                            break
-                        bridges[bridge_key][i] = leg
-                        logger.info(
-                            "(ROUTER) Restored service bridge leg: %s bridge %s TS %s",
-                            system_name, bridge_key, ts,
-                        )
-                        break
-                else:
-                    bridges[bridge_key].append(leg)
-                    logger.info(
-                        "(ROUTER) Re-added service bridge leg: %s bridge %s TS %s",
-                        system_name, bridge_key, ts,
-                    )
-        self._finalize_bridges_state()
-
-    def _remove_bridge_system(self, system_name: str, bridges: dict[str, list[dict[str, Any]]]) -> None:
-        """Remove all bridge entries for system (legacy remove_bridge_system)."""
-        to_remove: list[str] = []
-        for bridge_key, entries in list(bridges.items()):
-            if bridge_key not in bridges:
-                continue
-            new_entries = [e for e in entries if e.get("SYSTEM") != system_name]
-            if len(new_entries) < len(entries):
-                if new_entries:
-                    bridges[bridge_key] = new_entries
-                else:
-                    to_remove.append(bridge_key)
-        for key in to_remove:
-            del bridges[key]
-
+        from ..subscription.bridge_reset_ops import restore_prohibited_static_legs_store
+        restore_prohibited_static_legs_store(
+            self._subscription_store,
+            system_name,
+            sys_cfg,
+            self.acl_check,
+            time.time(),
+        )
     def stat_trimmer_loop(self) -> None:
         """Trim STAT-only bridges with no ON/OFF in use (legacy statTrimmer, 303s)."""
         logger.debug("(ROUTER) STAT trimmer loop started")
-        if self._subscription_store is not None:
-            from ..subscription.stat_trimmer_ops import apply_stat_trimmer_store
-            from ..subscription.store_sync import replace_store_from_bridges
-
-            replace_store_from_bridges(self._subscription_store, self._router.get_bridges())
-            apply_stat_trimmer_store(self._subscription_store)
-            self._export_store_to_router()
-            return
-
-        bridges = self._router.get_bridges()
-        remove_bridges: deque = deque()
-        for bridge_key, entries in list(bridges.items()):
-            if bridge_key not in bridges:
-                continue
-            has_stat = any(e.get("TO_TYPE") == "STAT" for e in entries)
-            in_use = any(
-                (e.get("TO_TYPE") == "ON" and e.get("ACTIVE")) or e.get("TO_TYPE") == "OFF"
-                for e in entries
-            )
-            if has_stat and not in_use:
-                remove_bridges.append(bridge_key)
-        for key in remove_bridges:
-            del bridges[key]
-            logger.debug("(ROUTER) STAT bridge %s removed", key)
-        self._finalize_bridges_state()
+        from ..subscription.stat_trimmer_ops import apply_stat_trimmer_store
+        from ..subscription.store_sync import replace_store_from_bridges
+        replace_store_from_bridges(self._subscription_store, self._router.get_bridges())
+        apply_stat_trimmer_store(self._subscription_store)
+        self._export_store_to_router()

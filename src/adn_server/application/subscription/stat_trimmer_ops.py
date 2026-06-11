@@ -1,4 +1,4 @@
-"""Store-native stat_trimmer_loop (P2-015)."""
+"""Store-native stat_trimmer_loop."""
 
 from __future__ import annotations
 

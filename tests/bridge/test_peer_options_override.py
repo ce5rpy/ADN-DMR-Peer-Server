@@ -4,6 +4,7 @@ from __future__ import annotations
 
 
 from adn_server.application.subscription.router import SubscriptionRouter
+from adn_server.application.subscription.store_sync import replace_store_from_bridges
 from adn_server.domain.value_objects import TgId
 from adn_server.domain.voice_routing import VoiceIngress
 from tests.harness.deterministic import (
@@ -256,6 +257,7 @@ def test_make_static_tg_preserves_single_mode_deactivation_on_options_refresh() 
         ],
     }
     scenario.router.set_bridges(bridges)
+    replace_store_from_bridges(scenario.subscription_store, bridges)
 
     scenario.bridge.make_static_tg(730444, 2, 5.0, "MASTER-A")
     scenario.bridge.make_static_tg(7305, 2, 5.0, "MASTER-A")

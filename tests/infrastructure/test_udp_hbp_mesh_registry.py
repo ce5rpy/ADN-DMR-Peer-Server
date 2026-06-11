@@ -1,4 +1,4 @@
-"""P2-013: MeshCodecRegistry wired into HBPProtocol OPENBRIDGE ingress/egress."""
+"""MeshCodecRegistry wired into HBPProtocol OPENBRIDGE ingress/egress."""
 
 from __future__ import annotations
 

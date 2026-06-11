@@ -1,4 +1,4 @@
-# ADN DMR Peer Server - bridge HBP forward path (V2-P0-004)
+# ADN DMR Peer Server - bridge HBP forward path
 # Copyright (C) 2026  Rodrigo Pérez, CE5RPY <ce5rpy@qmd.cl>
 
 """HBP ingress packet control and unit-data forward (no Twisted imports)."""

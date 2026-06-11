@@ -1,4 +1,4 @@
-"""Store-native in-band VTERM signalling (P2-015)."""
+"""Store-native in-band VTERM signalling."""
 
 from __future__ import annotations
 

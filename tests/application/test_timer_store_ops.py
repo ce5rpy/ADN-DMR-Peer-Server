@@ -1,4 +1,4 @@
-"""P2-015: store-native stat_trimmer, bridge_debug, bridge_reset."""
+"""Store-native stat_trimmer, bridge_debug, and bridge_reset."""
 
 from __future__ import annotations
 

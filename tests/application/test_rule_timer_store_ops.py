@@ -1,4 +1,4 @@
-"""P2-015: store-native rule_timer_ops."""
+"""Store-native rule_timer_ops."""
 
 from __future__ import annotations
 

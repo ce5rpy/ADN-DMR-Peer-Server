@@ -36,7 +36,7 @@ json/*
 # Internal
 docs-priv/
 
-# Dev-only session captures (V2-P0-007); anonymize before promoting to fixtures/
+# Dev-only session captures; anonymize before promoting to fixtures/
 tests/fixtures/sessions/_capture/
 
 # Docs policy: keep source markdown + mkdocs configs in git; ignore generated assets

@@ -1,4 +1,4 @@
-"""OpenBridge / DMRE wire codecs and PeerTransport registry (V2-P0-005 / P2-005)."""
+"""OpenBridge / DMRE wire codecs and PeerTransport registry."""
 
 from adn_server.infrastructure.mesh.registry import MeshCodecRegistry
 from adn_server.infrastructure.mesh.transports import (
