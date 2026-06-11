@@ -50,6 +50,7 @@ from ...application.bridge.helpers import (
     peer_single_exclusive_tgid,
     register_peer_ua_session,
     seed_peer_ua_session_from_status,
+    tg4000_reset_on_vhead,
 )
 from ...application.proxy.deployment import is_proxy_inject_only
 from ...domain import bytes_4, int_id
@@ -278,6 +279,41 @@ class HBPProtocol(DatagramProtocol):
     def _inject_multi_peer_options_filter(self) -> bool:
         """Inject-only proxy: always filter downlink by each peer's own OPTIONS."""
         return is_proxy_inject_only(self._CONFIG, self._system)
+
+    def _apply_tg4000_reset(self, peer_id: bytes, slot: int, call_type: str) -> None:
+        """Clear per-peer UA dynamics; legacy bridge reset only outside inject-only."""
+        peer = self._peers.get(peer_id, {})
+        clear_peer_ua_sessions(peer, self._config, peer_id, slot=slot)
+        _kind = "Private call to ID" if call_type == "unit" else "Group call to TG"
+        if self._inject_multi_peer_options_filter():
+            self._push_config_to_monitor()
+            logger.info(
+                "(%s) %s 4000 received on TS %s — clearing dynamic TGs for peer %s",
+                self._system, _kind, slot, int_id(peer_id),
+            )
+            return
+        if self._on_deactivate_dynamic_bridges:
+            logger.info(
+                "(%s) %s 4000 received on TS %s — deactivating all dynamic bridges",
+                self._system, _kind, slot,
+            )
+            self._on_deactivate_dynamic_bridges(self._system)
+
+    def _handle_tg4000_packet(
+        self,
+        peer_id: bytes,
+        slot: int,
+        int_dst_id: int,
+        call_type: str,
+        frame_type: int,
+        dtype_vseq: int,
+    ) -> bool:
+        """Legacy early return for TG/ID 4000; reset once per PTT on voice header only."""
+        if int_dst_id != 4000:
+            return False
+        if tg4000_reset_on_vhead(int_dst_id, frame_type, dtype_vseq):
+            self._apply_tg4000_reset(peer_id, slot, call_type)
+        return True
 
     def _peer_should_receive_dmrd(self, peer_id: bytes, packet: bytes) -> bool:
         if not self._inject_multi_peer_options_filter():
@@ -780,11 +816,7 @@ class HBPProtocol(DatagramProtocol):
                         peer_id=_peer_id,
                         now=pkt_time,
                     )
-                    if _int_dst_id == 4000:
-                        clear_peer_ua_sessions(
-                            self._peers[_peer_id], self._config, _peer_id, slot=_slot,
-                        )
-                    else:
+                    if _int_dst_id != 4000:
                         register_peer_ua_session(
                             self._peers[_peer_id],
                             _peer_id,
@@ -793,8 +825,8 @@ class HBPProtocol(DatagramProtocol):
                             self._config,
                             now=pkt_time,
                         )
-                    if _int_dst_id != 4000 and _prev_single_tg != _int_dst_id:
-                        self._push_config_to_monitor()
+                        if _prev_single_tg != _int_dst_id:
+                            self._push_config_to_monitor()
                 if (
                     _call_type in ("group", "vcsbk")
                     and _frame_type != HBPF_DATA_SYNC
@@ -833,14 +865,10 @@ class HBPProtocol(DatagramProtocol):
                     for _peer in self._peers:
                         if _peer != _peer_id:
                             self.send_peer(_peer, _repeat_pkt)
-                # TG 4000: deactivate after REPEAT so peers see the packet (legacy order)
-                if _int_dst_id == 4000 and self._on_deactivate_dynamic_bridges:
-                    _kind = "Private call to ID" if _call_type == "unit" else "Group call to TG"
-                    logger.info(
-                        "(%s) %s 4000 received on TS %s — deactivating all dynamic bridges",
-                        self._system, _kind, _slot,
-                    )
-                    self._on_deactivate_dynamic_bridges(self._system)
+                # TG 4000: reset after REPEAT so peers see the packet (legacy order)
+                if self._handle_tg4000_packet(
+                    _peer_id, _slot, _int_dst_id, _call_type, _frame_type, _dtype_vseq,
+                ):
                     return
                 if _call_type == "group" and _frame_type == HBPF_DATA_SYNC and _dtype_vseq == HBPF_SLT_VHEAD:
                     logger.info(
@@ -1220,14 +1248,10 @@ class HBPProtocol(DatagramProtocol):
                 sub_map = self._CONFIG.get("_SUB_MAP")
                 if sub_map is not None:
                     sub_map[_rf_src] = (self._system, _slot, pkt_time)
-                # TG 4000: deactivate after ACL/SUB_MAP (legacy order — routerHBP.dmrd_received)
-                if _int_dst_id == 4000 and self._on_deactivate_dynamic_bridges:
-                    _kind = "Private call to ID" if _call_type == "unit" else "Group call to TG"
-                    logger.info(
-                        "(%s) %s 4000 received on TS %s — deactivating all dynamic bridges",
-                        self._system, _kind, _slot,
-                    )
-                    self._on_deactivate_dynamic_bridges(self._system)
+                # TG 4000: reset after ACL/SUB_MAP (legacy order — routerHBP.dmrd_received)
+                if self._handle_tg4000_packet(
+                    _peer_id, _slot, _int_dst_id, _call_type, _frame_type, _dtype_vseq,
+                ):
                     return
                 if _call_type == "group" and _frame_type == HBPF_DATA_SYNC and _dtype_vseq == HBPF_SLT_VHEAD:
                     logger.info(

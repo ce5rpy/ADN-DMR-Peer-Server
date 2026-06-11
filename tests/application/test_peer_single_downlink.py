@@ -3,10 +3,11 @@
 from __future__ import annotations
 
 
-from adn_server.domain import bytes_3, bytes_4, int_id
+from adn_server.domain import HBPF_DATA_SYNC, HBPF_SLT_VHEAD, bytes_3, bytes_4, int_id
 
 from adn_server.application.bridge.helpers import (
     clear_peer_ua_sessions,
+    tg4000_reset_on_vhead,
     clear_peer_rx_status_slots,
     peer_should_receive_group_voice,
     peer_single_blocks_group_voice,
@@ -95,6 +96,12 @@ def test_single_zero_allows_multiple_static_tgs() -> None:
     assert peer_should_receive_group_voice(
         peer, 2, 730, peer_id=peer_id, connected_count=8, sys_cfg=sys_cfg, now=now + 60
     )
+
+
+def test_tg4000_reset_only_on_voice_header() -> None:
+    assert tg4000_reset_on_vhead(4000, HBPF_DATA_SYNC, HBPF_SLT_VHEAD)
+    assert not tg4000_reset_on_vhead(4000, HBPF_DATA_SYNC, 2)
+    assert not tg4000_reset_on_vhead(730, HBPF_DATA_SYNC, HBPF_SLT_VHEAD)
 
 
 def test_tg4000_clears_single_session() -> None:

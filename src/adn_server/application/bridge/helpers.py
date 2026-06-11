@@ -8,11 +8,20 @@ from __future__ import annotations
 import time
 from typing import Any
 
-from ...domain import bytes_3, bytes_4, int_id
+from ...domain import HBPF_DATA_SYNC, HBPF_SLT_VHEAD, bytes_3, bytes_4, int_id
 
 # Embedded LC codeword sits at bits 116:148 inside the 48-bit EMB field (108:156).
 # Legacy bridge_master.py replaces dmrbits[116:148] on bursts B–E (dtype_vseq 1–4).
 EMB_LC_SLICE = slice(116, 148)
+
+
+def tg4000_reset_on_vhead(int_dst_id: int, frame_type: int, dtype_vseq: int) -> bool:
+    """True when TG/ID 4000 voice header should trigger a one-shot dynamic reset."""
+    return (
+        int_dst_id == 4000
+        and frame_type == HBPF_DATA_SYNC
+        and dtype_vseq == HBPF_SLT_VHEAD
+    )
 
 
 def obp_target_bcsq_quenches_stream(
