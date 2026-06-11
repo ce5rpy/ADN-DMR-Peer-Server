@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import pytest
 
 from adn_server.application.subscription.router import SubscriptionRouter
 from adn_server.domain.value_objects import TgId
