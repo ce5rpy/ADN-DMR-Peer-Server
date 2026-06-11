@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import Enum
 
 from .value_objects import Slot, TgId
@@ -69,6 +69,15 @@ class SubscriptionState:
 
 
 @dataclass(slots=True)
+class InbandTriggers:
+    """Legacy BRIDGES row ON / OFF / RESET trigger lists (VTERM in-band rules)."""
+
+    on: tuple[bytes, ...] = ()
+    off: tuple[bytes, ...] = ()
+    reset: tuple[bytes, ...] = ()
+
+
+@dataclass(slots=True)
 class Subscription:
     """One system participating in a channel with LC rewrite and activation rules."""
 
@@ -80,6 +89,7 @@ class Subscription:
     state: SubscriptionState
     bridge_key: str | None = None
     timeout_seconds: float | None = None
+    triggers: InbandTriggers = field(default_factory=InbandTriggers)
 
     @property
     def subscription_id(self) -> SubscriptionId:

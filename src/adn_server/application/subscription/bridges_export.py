@@ -39,7 +39,7 @@ def subscription_to_legacy_row(sub: Subscription, *, now: float | None = None) -
         "TO_TYPE": to_type,
         "ON": on_list,
         "OFF": off_list,
-        "RESET": [],
+        "RESET": list(sub.triggers.reset),
         "TIMER": timer,
     }
 
@@ -81,9 +81,9 @@ def _legacy_on_off(
     channel_b: bytes,
     to_type: str,
 ) -> tuple[list[bytes], list[bytes]]:
-    del sub
     if to_type == "STAT":
         return [], []
     if to_type == "NONE":
         return [], []
-    return [channel_b], []
+    on_list = list(sub.triggers.on) if sub.triggers.on else [channel_b]
+    return on_list, list(sub.triggers.off)

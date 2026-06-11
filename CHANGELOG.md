@@ -6,12 +6,13 @@ All notable changes to **adn-server** are documented here. Versioning follows [S
 
 ### Added
 
-- P2-015 (in progress): store-native `rule_timer_loop` via `apply_rule_timer_store`.
+- P2-015 (in progress): store-native `rule_timer_loop` and `apply_in_band_signalling`.
+- `InbandTriggers` (ON/OFF/RESET) on `Subscription` with import/export round-trip.
 - `to_target` iterates `ForwardLeg` from `SubscriptionRouter.resolve()` instead of re-scanning BRIDGES rows.
 
 ### Changed
 
-- `_export_store_to_router()` publishes store mutations without router→store overwrite (timer path).
+- `_export_store_to_router()` publishes store mutations without router→store overwrite (timer/in-band paths).
 
 ## [2.0.0-alpha.2] - 2026-06-11
 

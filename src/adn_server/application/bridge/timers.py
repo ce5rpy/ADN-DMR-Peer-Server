@@ -220,6 +220,23 @@ class BridgeTimerMixin:
         Reflector bridges (#xxx) are ONLY processed when dst TG is 9 (legacy ~3455).
         De-activation distinguishes SINGLE_MODE True/False (legacy ~3484-3548).
         """
+        if self._subscription_store is not None:
+            from ..subscription.in_band_signalling_ops import apply_in_band_signalling_store
+            from ..subscription.store_sync import replace_store_from_bridges
+
+            replace_store_from_bridges(self._subscription_store, self._router.get_bridges())
+            apply_in_band_signalling_store(
+                self._subscription_store,
+                system_name,
+                slot,
+                dst_id,
+                pkt_time,
+                self._config.get("SYSTEMS", {}),
+            )
+            self._export_store_to_router()
+            self._send_bridge_snapshot(incremental=True)
+            return
+
         bridges = self._router.get_bridges()
         systems_cfg = self._config.get("SYSTEMS", {})
         _dst_group = int_id(dst_id)

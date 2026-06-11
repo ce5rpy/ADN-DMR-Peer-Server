@@ -88,3 +88,27 @@ def test_import_hash_table_key_sets_bridge_key():
     }
     (sub,) = subscriptions_from_bridges(bridges)
     assert sub.bridge_key == "#730444"
+
+
+def test_import_preserves_on_off_reset_triggers():
+    tg = bytes_3(52090)
+    off_tg = bytes_3(91)
+    bridges = {
+        "52090": [
+            {
+                "SYSTEM": "MASTER-A",
+                "TS": 2,
+                "TGID": tg,
+                "ACTIVE": True,
+                "TIMEOUT": 60.0,
+                "TO_TYPE": "ON",
+                "ON": [tg],
+                "OFF": [off_tg],
+                "RESET": [bytes_3(4000)],
+            }
+        ]
+    }
+    (sub,) = subscriptions_from_bridges(bridges)
+    assert sub.triggers.on == (tg,)
+    assert sub.triggers.off == (off_tg,)
+    assert sub.triggers.reset == (bytes_3(4000),)

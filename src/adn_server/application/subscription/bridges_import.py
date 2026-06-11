@@ -8,6 +8,7 @@ from adn_server.domain import int_id
 from adn_server.domain.subscription import (
     ActivationPolicy,
     AudioChannel,
+    InbandTriggers,
     Subscription,
     SubscriptionPhase,
     SubscriptionRole,
@@ -15,6 +16,8 @@ from adn_server.domain.subscription import (
     SystemId,
     TgId,
 )
+
+from .trigger_bytes import trigger_bytes_tuple
 
 
 def subscriptions_from_bridges(bridges: dict[str, list[dict[str, Any]]]) -> list[Subscription]:
@@ -56,6 +59,11 @@ def _subscription_from_row(table_key: str, row: dict[str, Any]) -> Subscription:
         ),
         bridge_key=bridge_key,
         timeout_seconds=timeout_sec,
+        triggers=InbandTriggers(
+            on=trigger_bytes_tuple(row.get("ON")),
+            off=trigger_bytes_tuple(row.get("OFF")),
+            reset=trigger_bytes_tuple(row.get("RESET")),
+        ),
     )
 
 
