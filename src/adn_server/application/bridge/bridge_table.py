@@ -54,6 +54,7 @@ class BridgeTableMixin:
                     # Other MASTER/PEER: ACTIVE False (legacy). ACTIVE True only via make_static_tg when a peer has this TG static.
                     bridges[_tgid_s].append({"SYSTEM": _system, "TS": 1, "TGID": _tgid_b, "ACTIVE": False, "TIMEOUT": timeout_sec, "TO_TYPE": "ON", "OFF": [], "ON": [_tgid_b], "RESET": [], "TIMER": now})
                     bridges[_tgid_s].append({"SYSTEM": _system, "TS": 2, "TGID": _tgid_b, "ACTIVE": False, "TIMEOUT": timeout_sec, "TO_TYPE": "ON", "OFF": [], "ON": [_tgid_b], "RESET": [], "TIMER": now})
+        self._finalize_bridges_state()
 
     def make_single_reflector(self, _tgid: bytes | int, _tmout: float, _sourcesystem: str) -> None:
         """Legacy make_single_reflector: create reflector bridge #tgid with MASTERs and OBP."""
@@ -274,6 +275,7 @@ class BridgeTableMixin:
                             "(ROUTER) Deactivated dynamic bridge due to TG/ID 4000: System: %s, Bridge: %s, TS: %s, TGID: %s",
                             system_name, _bridge, _sys_entry.get("TS"), int_id(_sys_entry.get("TGID", b"\x00\x00\x00")),
                         )
+        self._finalize_bridges_state()
 
     def _readd_system_after_ua_timer_change(self, system: str, _tmout: float) -> None:
         """After remove_bridge_system, re-add system to bridges that no longer have ts1/ts2 (legacy 1624-1639)."""
@@ -502,8 +504,8 @@ class BridgeTableMixin:
     def _apply_master_runtime_options(self, system_name: str, _options: dict[str, Any]) -> None:
         """Apply SINGLE/TIMER/VOICE/LANG from peer OPTIONS over YAML defaults (legacy options_config).
 
-        Independent of ``GLOBAL.USE_SUBSCRIPTION_ROUTER``: BRIDGES remains authoritative for
-        ACTIVE/timer mutations; the store is refreshed via ``_sync_subscription_store`` on OPTIONS paths.
+        When ``USE_SUBSCRIPTION_STORE_AUTHORITY`` is off, BRIDGES mutates first and the store
+        mirrors via ``_finalize_bridges_state``. When on, exported BRIDGES is the store shim.
         """
         systems_cfg = self._config.get("SYSTEMS", {})
         sys_cfg = systems_cfg.get(system_name, {})

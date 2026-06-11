@@ -41,7 +41,6 @@ from ..domain.dmr import bptc
 
 from ..domain import HBPF_DATA_SYNC, HBPF_SLT_VHEAD, HBPF_SLT_VTERM, STREAM_TO, bytes_3, bytes_4, int_id
 from .ports import BridgeRouter, DmrEmbeddedLcEncoder, SubscriptionStore, TalkerAliasEmblcEncoder
-from .subscription.store_sync import replace_store_from_bridges
 from .talker_alias_use_cases import TalkerAliasUseCases
 from .bridge.helpers import obp_target_bcsq_quenches_stream, resolve_voice_peer_id
 from .bridge.timers import BridgeTimerMixin
@@ -49,6 +48,7 @@ from .bridge.obp_forward import BridgeObpForwardMixin
 from .bridge.hbp_forward import BridgeHbpForwardMixin
 from .bridge.lc_ta import BridgeLcTaMixin
 from .bridge.bridge_table import BridgeTableMixin
+from .bridge.store_authority_mixin import StoreAuthorityMixin
 from .bridge.voice_subscription import VoiceSubscriptionMixin
 
 logger = logging.getLogger(__name__)
@@ -60,6 +60,7 @@ class BridgeUseCases(
     BridgeHbpForwardMixin,
     BridgeLcTaMixin,
     BridgeTableMixin,
+    StoreAuthorityMixin,
     VoiceSubscriptionMixin,
 ):
     """Use cases for conference bridge state (BRIDGES)."""
@@ -84,6 +85,7 @@ class BridgeUseCases(
         self._config = config
         self._subscription_store = subscription_store
         self._subscription_router = None
+        self._bridges_legacy_view = None
         self._send_to_system = send_to_system  # (system_name, packet, **kwargs) -> None
         self._get_protocols = get_protocols  # () -> dict[str, protocol]
         self._reporting = reporting
@@ -122,19 +124,17 @@ class BridgeUseCases(
         if not self._reporting:
             return
         try:
-            self._reporting.send_bridge(self._router.get_bridges(), incremental=incremental)
+            self._reporting.send_bridge(self._bridges_for_report(), incremental=incremental)
         except Exception:
             pass
 
     def _sync_subscription_store(self) -> None:
-        """Mirror BRIDGES into the subscription store (OPTIONS/static paths only for now)."""
-        if self._subscription_store is None:
-            return
-        replace_store_from_bridges(self._subscription_store, self._router.get_bridges())
+        """Mirror BRIDGES into the subscription store after OPTIONS/static mutations."""
+        self._finalize_bridges_state()
 
     def get_bridges(self) -> dict[str, list[dict[str, Any]]]:
-        """Return current BRIDGES."""
-        return self._router.get_bridges()
+        """Return current BRIDGES (export shim when store authority is enabled)."""
+        return self._bridges_for_report()
 
     def acl_check(self, id_val: bytes | int, acl: tuple[bool, list[tuple[int, int]]]) -> bool:
         """Check ID against ACL. Legacy acl_check."""

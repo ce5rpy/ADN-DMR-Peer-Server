@@ -17,6 +17,7 @@ class RuntimeContext:
 
     config: dict[str, Any]
     config_path: str = ""
+    subscription_store: Any = None
 
 
 class RuntimeContextHolder:
@@ -106,5 +107,12 @@ def swap_runtime_config(
     config_path: str | None = None,
 ) -> RuntimeContext:
     """Atomically install a reloaded config dict."""
-    path = config_path if config_path is not None else holder.get().config_path
-    return holder.swap(RuntimeContext(config=new_config, config_path=path))
+    previous = holder.get()
+    path = config_path if config_path is not None else previous.config_path
+    return holder.swap(
+        RuntimeContext(
+            config=new_config,
+            config_path=path,
+            subscription_store=previous.subscription_store,
+        )
+    )

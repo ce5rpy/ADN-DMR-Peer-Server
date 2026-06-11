@@ -305,6 +305,14 @@ def run_peer_server(
     )
 
     subscription_store = InMemorySubscriptionStore()
+    _ctx = runtime_holder.get()
+    runtime_holder.swap(
+        RuntimeContext(
+            config=_ctx.config,
+            config_path=_ctx.config_path,
+            subscription_store=subscription_store,
+        )
+    )
     bridge_use_cases = BridgeUseCases(
         bridge_router,
         config,
@@ -321,7 +329,8 @@ def run_peer_server(
         subscription_store=subscription_store,
     )
     bridge_use_cases.apply_startup_bridges()
-    report_factory.set_bridges(bridge_router.get_bridges())
+    get_bridges = bridge_use_cases.get_bridges
+    report_factory.set_bridges(get_bridges())
     report_factory.set_systems(config.get("SYSTEMS", {}))
 
     # Report server (same order as legacy: log then listen)
@@ -343,7 +352,7 @@ def run_peer_server(
     def reporting_loop():
         logger.debug("(REPORT) Periodic reporting loop started")
         reporting_use_cases.send_config(config.get("SYSTEMS", {}))
-        reporting_use_cases.send_bridge(bridge_router.get_bridges())
+        reporting_use_cases.send_bridge(get_bridges())
         # Legacy: peer count and SUB_MAP count
         systems_with_peers = sum(1 for s in config.get("SYSTEMS", {}) if config.get("SYSTEMS", {}).get(s, {}).get("PEERS"))
         logger.info("(REPORT) %s systems have at least one peer", systems_with_peers)
@@ -356,7 +365,7 @@ def run_peer_server(
     # (V2-P0-006: no deferToThread — avoids races with dmrd_received on the same dict).
     def _rule_timer_on_reactor() -> None:
         bridge_use_cases.rule_timer_loop()
-        reporting_use_cases.send_bridge(bridge_router.get_bridges(), incremental=True)
+        reporting_use_cases.send_bridge(get_bridges(), incremental=True)
 
     task.LoopingCall(_rule_timer_on_reactor).start(52).addErrback(_looping_errback, logger)
     task.LoopingCall(bridge_use_cases.stream_trimmer_loop).start(5).addErrback(_looping_errback, logger)
@@ -365,7 +374,7 @@ def run_peer_server(
 
         def _stat_trimmer_on_reactor() -> None:
             bridge_use_cases.stat_trimmer_loop()
-            reporting_use_cases.send_bridge(bridge_router.get_bridges(), incremental=True)
+            reporting_use_cases.send_bridge(get_bridges(), incremental=True)
 
         task.LoopingCall(_stat_trimmer_on_reactor).start(303).addErrback(_looping_errback, logger)
 
@@ -377,7 +386,7 @@ def run_peer_server(
         task.LoopingCall(
             lambda: (
                 bridge_use_cases.bridge_debug_loop(),
-                reporting_use_cases.send_bridge(bridge_router.get_bridges(), incremental=True),
+                reporting_use_cases.send_bridge(get_bridges(), incremental=True),
             )
         ).start(66).addErrback(_looping_errback, logger)
 
@@ -513,7 +522,7 @@ def run_peer_server(
 
     def _on_config_systems_changed() -> None:
         reporting_use_cases.send_config(config.get("SYSTEMS", {}))
-        reporting_use_cases.send_bridge(bridge_router.get_bridges())
+        reporting_use_cases.send_bridge(get_bridges())
         user_passwords_loader.load(config)
 
     def _apply_reload_success(result: Any, *, new_config: dict[str, Any], mqtt_before: Any) -> None:

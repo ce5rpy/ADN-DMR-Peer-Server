@@ -64,3 +64,24 @@ def test_subscription_router_hbp_slot1() -> None:
     )
 
     assert_forwarded(scenario, "MASTER-B", count=2, dst_id=730444)
+
+
+@pytest.mark.behavior
+def test_subscription_router_with_store_authority_parity() -> None:
+    """P2-012: router + store authority export same forwards as legacy."""
+    config = minimal_config(("MASTER-A", "MASTER-B"))
+    config["GLOBAL"]["USE_SUBSCRIPTION_ROUTER"] = True
+    config["GLOBAL"]["USE_SUBSCRIPTION_STORE_AUTHORITY"] = True
+    bridges = active_bridge(52090, (("MASTER-A", 2), ("MASTER-B", 2)))
+    scenario = DeterministicScenario(config=config, bridges=bridges)
+    scenario.bridge._finalize_bridges_state()
+
+    base = PacketSpec(dst_id=52090, stream_id=0x90909090, slot=2)
+    scenario.inject_hbp("MASTER-A", DeterministicScenario.voice_head_spec(base))
+    scenario.inject_hbp(
+        "MASTER-A",
+        DeterministicScenario.voice_burst_spec(base, seq=1, dtype_vseq=1),
+    )
+
+    assert_forwarded(scenario, "MASTER-B", count=2, dst_id=52090)
+    assert scenario.bridge.get_bridges()["52090"][0]["ACTIVE"] is True

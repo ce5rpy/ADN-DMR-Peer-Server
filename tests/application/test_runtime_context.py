@@ -62,3 +62,12 @@ def test_swap_runtime_config_preserves_config_path() -> None:
     swap_runtime_config(holder, {"GLOBAL": {}}, config_path="/etc/adn-server.yaml")
 
     assert holder.get().config_path == "/etc/adn-server.yaml"
+
+
+def test_swap_runtime_config_preserves_subscription_store() -> None:
+    store = object()
+    holder = RuntimeContextHolder(RuntimeContext(config={"GLOBAL": {}}, subscription_store=store))
+
+    swap_runtime_config(holder, {"GLOBAL": {"X": 1}})
+
+    assert holder.get().subscription_store is store

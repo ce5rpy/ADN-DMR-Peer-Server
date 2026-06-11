@@ -1,7 +1,7 @@
-"""Subscription router helpers for the voice hot path (P2-009).
+"""Subscription router helpers for the voice hot path (P2-009 / P2-010).
 
-BRIDGES remains the runtime authority for ACTIVE/timer mutations; the store is
-refreshed from BRIDGES before each subscription lookup when enabled.
+BRIDGES mutates ACTIVE/timers; ``_finalize_bridges_state`` keeps the store aligned
+after timer/OPTIONS paths. Per-packet store sync is skipped when store authority is on.
 """
 
 from __future__ import annotations
@@ -39,6 +39,8 @@ class VoiceSubscriptionMixin:
     def _sync_store_for_voice_router(self) -> None:
         """Mirror BRIDGES into the store before subscription lookups."""
         if self._subscription_store is None:
+            return
+        if self._use_subscription_store_authority():
             return
         self._sync_subscription_store()
 

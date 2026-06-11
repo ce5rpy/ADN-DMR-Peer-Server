@@ -61,17 +61,17 @@ from ...domain.talker_alias import (
     store_ta_block,
     try_buffer_ta_from_voice_fragments,
 )
-from ..mesh.dmre_v5 import build_dmre, parse_dmre_trailer, verify_dmre_mac
+from ...domain.mesh_routing import MeshEgress, MeshIngress, PeerMeshConfig
+from ..mesh.dmre_v5 import parse_dmre_trailer
+from ..mesh.registry import MeshCodecRegistry
 from ..mesh.obp_v1 import (
     build_bcka,
     build_bcve,
     build_bcsq,
-    build_dmrd_v1,
     verify_bcka,
     verify_bcsq,
     verify_bcst,
     verify_bcve,
-    verify_dmrd_v1,
 )
 from ..hbp_constants import (
     BC,
@@ -108,6 +108,8 @@ from ..hbp_constants import (
 )
 
 logger = logging.getLogger(__name__)
+
+_DEFAULT_MESH_REGISTRY = MeshCodecRegistry()
 
 
 def get_user_password(radio_id: int):
@@ -179,6 +181,7 @@ class HBPProtocol(DatagramProtocol):
         on_talker_alias_stream_end: Callable[[str, bytes], None] | None = None,
         on_dmra_fragment_stored: Callable[[str, bytes, bytes, bytes], None] | None = None,
         get_bridges: Callable[[], dict[str, Any]] | None = None,
+        mesh_registry: MeshCodecRegistry | None = None,
     ) -> None:
         self._CONFIG = config
         self._system = system_name
@@ -198,6 +201,7 @@ class HBPProtocol(DatagramProtocol):
         self._on_talker_alias_repeat_burst = on_talker_alias_repeat_burst
         self._on_talker_alias_stream_end = on_talker_alias_stream_end
         self._on_dmra_fragment_stored = on_dmra_fragment_stored
+        self._mesh_registry = mesh_registry if mesh_registry is not None else _DEFAULT_MESH_REGISTRY
         self._config = config.get("SYSTEMS", {}).get(system_name, {})
         if self._config.get("MODE") == "OPENBRIDGE":
             self._laststrid = deque([], 20)
@@ -279,6 +283,63 @@ class HBPProtocol(DatagramProtocol):
     def _inject_multi_peer_options_filter(self) -> bool:
         """Inject-only proxy: always filter downlink by each peer's own OPTIONS."""
         return is_proxy_inject_only(self._CONFIG, self._system)
+
+    def _peer_mesh_config(self) -> PeerMeshConfig:
+        _global = self._CONFIG.get("GLOBAL", {})
+        _sid = _global.get("SERVER_ID", b"\x00\x00\x00\x00")
+        _server_id = (
+            _sid
+            if isinstance(_sid, bytes) and len(_sid) >= 4
+            else bytes_4(int(_sid) & 0xFFFFFFFF if isinstance(_sid, int) else 0)
+        )
+        _ver_cfg = self._config.get("VER")
+        wire_ver = int(_ver_cfg) if _ver_cfg is not None else None
+        return PeerMeshConfig(
+            passphrase=_get_passphrase_bytes(self._config),
+            server_id=_server_id,
+            wire_ver=wire_ver,
+        )
+
+    def _mesh_session_codec(self) -> str | None:
+        codec = self._config.get("_mesh_session_codec")
+        return codec if isinstance(codec, str) else None
+
+    def _note_mesh_ingress(self, ingress: MeshIngress) -> None:
+        self._config["_mesh_session_codec"] = ingress.codec
+        if ingress.embedded_ver is not None:
+            self._config["VER"] = ingress.embedded_ver
+
+    def _try_decode_mesh_ingress(self, datagram: bytes) -> MeshIngress | None:
+        ingress = self._mesh_registry.decode_auto(datagram, self._peer_mesh_config())
+        if ingress is not None:
+            self._note_mesh_ingress(ingress)
+        return ingress
+
+    def _encode_mesh_egress(
+        self,
+        inner_packet: bytes,
+        *,
+        hops: bytes,
+        ber: bytes,
+        rssi: bytes,
+        source_server: bytes,
+        source_rptr: bytes,
+    ) -> bytes | None:
+        mesh_protocol = str(self._config.get("MESH_PROTOCOL", "auto"))
+        egress = MeshEgress(
+            inner_packet=inner_packet,
+            hops=hops or b"\x01",
+            ber=ber,
+            rssi=rssi,
+            source_server=source_server,
+            source_rptr=source_rptr,
+        )
+        return self._mesh_registry.encode(
+            mesh_protocol,
+            egress,
+            self._peer_mesh_config(),
+            session_codec=self._mesh_session_codec(),
+        )
 
     def _apply_tg4000_reset(self, peer_id: bytes, slot: int, call_type: str) -> None:
         """Clear per-peer UA dynamics; legacy bridge reset only outside inject-only."""
@@ -538,50 +599,21 @@ class HBPProtocol(DatagramProtocol):
             if not _hops:
                 _hops = (1).to_bytes(1, "big")
             if _packet[:3] == DMR and self._config.get("TARGET_IP"):
-                _sid = self._CONFIG.get("GLOBAL", {}).get("SERVER_ID", b"\x00\x00\x00\x00")
-                _server_id = _sid if isinstance(_sid, bytes) and len(_sid) >= 4 else bytes_4(int(_sid) & 0xFFFFFFFF if isinstance(_sid, int) else 0)
-                _passphrase = _get_passphrase_bytes(self._config)
                 _target_addr = (self._config["TARGET_IP"], self._config["TARGET_PORT"])
                 _ver_cfg = self._config.get("VER")
-                if "VER" in self._config and _ver_cfg is not None and _ver_cfg > 4:
-                    _wire = build_dmre(
-                        _packet,
-                        server_id=_server_id,
-                        ber=_ber,
-                        rssi=_rssi,
-                        embedded_ver=VER,
-                        timestamp_ns=time.time_ns(),
-                        source_server=_source_server,
-                        source_rptr=_source_rptr,
-                        hops=_hops,
-                        passphrase=_passphrase,
-                        extended_layout=True,
-                    )
-                    if _wire is not None:
-                        self.transport.write(_wire, _target_addr)
-                elif "VER" in self._config and _ver_cfg == 4:
-                    _wire = build_dmre(
-                        _packet,
-                        server_id=_server_id,
-                        ber=_ber,
-                        rssi=_rssi,
-                        embedded_ver=VER,
-                        timestamp_ns=time.time_ns(),
-                        source_server=_source_server,
-                        source_rptr=_source_rptr,
-                        hops=_hops,
-                        passphrase=_passphrase,
-                        extended_layout=False,
-                    )
-                    if _wire is not None:
-                        self.transport.write(_wire, _target_addr)
-                elif "VER" in self._config and _ver_cfg == 3:
-                    logger.error("(%s) protocol version 3 no longer supported", self._system)
-                elif "VER" in self._config and _ver_cfg == 2:
-                    logger.error("(%s) protocol version 2 no longer supported", self._system)
+                if "VER" in self._config and _ver_cfg in (2, 3):
+                    logger.error("(%s) protocol version %s no longer supported", self._system, _ver_cfg)
                 else:
-                    _wire = build_dmrd_v1(_packet, _server_id, _passphrase)
-                    self.transport.write(_wire, _target_addr)
+                    _wire = self._encode_mesh_egress(
+                        _packet,
+                        hops=_hops,
+                        ber=_ber,
+                        rssi=_rssi,
+                        source_server=_source_server,
+                        source_rptr=_source_rptr,
+                    )
+                    if _wire is not None:
+                        self.transport.write(_wire, _target_addr)
             else:
                 if not self._config.get("TARGET_IP"):
                     logger.debug("(%s) Not sent packet as TARGET_IP not currently known", self._system)
@@ -1487,10 +1519,9 @@ class HBPProtocol(DatagramProtocol):
                     self._laststrid.append(_stream_id)
                 self._obp_send_bcve()
                 return
-            _passphrase = _get_passphrase_bytes(self._config)
-            _verified = verify_dmrd_v1(_packet, _passphrase)
-            if _verified is not None and (_sockaddr == self._config.get("TARGET_SOCK") or self._config.get("RELAX_CHECKS")):
-                _data = _verified.payload
+            _ingress = self._try_decode_mesh_ingress(_packet)
+            if _ingress is not None and _ingress.codec == "obp_v1" and (_sockaddr == self._config.get("TARGET_SOCK") or self._config.get("RELAX_CHECKS")):
+                _data = _ingress.voice_frame
                 self._obp_sync_target_sock_from_peer(_sockaddr)
                 _peer_id = _data[11:15]
                 if self._config.get("NETWORK_ID") != _peer_id:
@@ -1603,27 +1634,22 @@ class HBPProtocol(DatagramProtocol):
                 logger.warning("(%s) OpenBridge HMAC failed, packet discarded - OPCODE: %s SRC: %s", self._system, _packet[:4], _sockaddr)
         elif _packet[:4] == DMRE:
             # Legacy hblink.py OPENBRIDGE: DMRE (v5) incoming – 89-byte or 85-byte format, BLAKE2b
-            _trailer = parse_dmre_trailer(_packet)
-            if _trailer is None:
+            _ingress = self._try_decode_mesh_ingress(_packet)
+            if _ingress is None or _ingress.codec != "dmre_v5":
                 return
-            _data = _packet[:53]
-            _ber = _trailer.ber
-            _rssi = _trailer.rssi
-            _embedded_version = _trailer.embedded_version
-            _timestamp = _trailer.timestamp
-            _source_server = _trailer.source_server
-            _source_rptr = _trailer.source_rptr
-            _hops = _trailer.hops
-            _hash_len = _trailer.hash_len
-            self._config["VER"] = _embedded_version
-            _passphrase = _get_passphrase_bytes(self._config)
-            _stream_id = _data[16:20]
-            if not (
-                verify_dmre_mac(_packet, _passphrase, _hash_len)
-                and (_sockaddr == self._config.get("TARGET_SOCK") or self._config.get("RELAX_CHECKS"))
-            ):
+            if not (_sockaddr == self._config.get("TARGET_SOCK") or self._config.get("RELAX_CHECKS")):
                 logger.warning("(%s) OpenBridge DMRE BLAKE2b failed, packet discarded - SRC: %s", self._system, _sockaddr)
                 return
+            _data = _ingress.voice_frame
+            _ber = _ingress.ber
+            _rssi = _ingress.rssi
+            _embedded_version = _ingress.embedded_ver if _ingress.embedded_ver is not None else self._config.get("VER", 5)
+            _source_server = _ingress.source_server
+            _source_rptr = _ingress.source_rptr
+            _hops = _ingress.hops
+            _trailer = parse_dmre_trailer(_packet)
+            _timestamp = _trailer.timestamp if _trailer is not None else b"\x00" * 8
+            _stream_id = _data[16:20]
             self._obp_sync_target_sock_from_peer(_sockaddr)
             _peer_id = _data[11:15]
             if self._config.get("NETWORK_ID") != _peer_id:
@@ -1877,6 +1903,7 @@ def HBPProtocolFactory(
     on_talker_alias_stream_end: Callable[[str, bytes], None] | None = None,
     on_dmra_fragment_stored: Callable[[str, bytes, bytes, bytes], None] | None = None,
     get_bridges: Callable[[], dict[str, Any]] | None = None,
+    mesh_registry: MeshCodecRegistry | None = None,
 ) -> HBPProtocol:
     """Create HBP protocol instance (legacy: one HBSYSTEM per system)."""
     return HBPProtocol(
@@ -1898,4 +1925,5 @@ def HBPProtocolFactory(
         on_talker_alias_stream_end=on_talker_alias_stream_end,
         on_dmra_fragment_stored=on_dmra_fragment_stored,
         get_bridges=get_bridges,
+        mesh_registry=mesh_registry,
     )

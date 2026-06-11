@@ -115,6 +115,8 @@ class BridgeTimerMixin:
             del bridges[key]
             logger.debug("(ROUTER) Unused conference bridge %s removed", key)
 
+        self._finalize_bridges_state()
+
     def bridge_debug_loop(self) -> None:
         """Legacy bridgeDebug (bridge_master.py 487-543): remove invalid bridges, fix >1 active dial per MASTER."""
         logger.debug("(BRIDGEDEBUG) Running bridge debug")
@@ -194,6 +196,7 @@ class BridgeTimerMixin:
                     bridges[_bridge] = bridgetemp
 
         logger.info("(BRIDGEDEBUG) The server currently has %s STATic bridges", statroll)
+        self._finalize_bridges_state()
 
     def apply_in_band_signalling(
         self, system_name: str, slot: int, dst_id: bytes, pkt_time: float
@@ -305,6 +308,7 @@ class BridgeTimerMixin:
                             _system["TIMER"] = pkt_time
                             logger.info("(%s) [8b] Bridge: %s set to ON with and \"OFF\" timer rule: timeout timer cancelled", system_name, _bridge)
 
+        self._finalize_bridges_state()
         self._send_bridge_snapshot(incremental=True)
 
     def _obp_emit_end_tx_forward_leg(
@@ -576,6 +580,7 @@ class BridgeTimerMixin:
                 self._restore_prohibited_static_bridge_legs(system_name)
                 sys_cfg["_reset"] = False
                 sys_cfg["_resetlog"] = False
+        self._finalize_bridges_state()
 
     def _restore_prohibited_static_bridge_legs(self, system_name: str) -> None:
         """After BRIDGERESET / peer RPTO: restore static TGs in prohibited_tgs (parity with _make_echo_bridges)."""
@@ -635,6 +640,7 @@ class BridgeTimerMixin:
                         "(ROUTER) Re-added service bridge leg: %s bridge %s TS %s",
                         system_name, bridge_key, ts,
                     )
+        self._finalize_bridges_state()
 
     def _remove_bridge_system(self, system_name: str, bridges: dict[str, list[dict[str, Any]]]) -> None:
         """Remove all bridge entries for system (legacy remove_bridge_system)."""
@@ -669,3 +675,4 @@ class BridgeTimerMixin:
         for key in remove_bridges:
             del bridges[key]
             logger.debug("(ROUTER) STAT bridge %s removed", key)
+        self._finalize_bridges_state()
