@@ -1,7 +1,8 @@
-"""Import legacy ``BRIDGES`` snapshots into ``SubscriptionStore`` (tests and harness only).
+"""Import legacy ``BRIDGES`` snapshots into ``SubscriptionStore``.
 
-Runtime paths mutate the store directly and publish via ``export_bridges``; they must not
-call ``replace_store_from_bridges`` — that would overwrite store authority with the shim.
+Runtime hot paths mutate the store directly and publish via ``export_bridges``; they must not
+call ``replace_store_from_bridges`` (would overwrite store authority with the shim).
+Bootstrap and tests may import once — e.g. ``_make_echo_bridges`` in ``peer_server.py``.
 """
 
 from __future__ import annotations

@@ -35,6 +35,7 @@ from adn_server.application.runtime_context import (
 )
 from adn_server.domain import bytes_3
 from adn_server.domain.dmr.bptc import encode_emblc
+from adn_server.application.subscription.store_sync import replace_store_from_bridges
 from adn_server.infrastructure.bridge_router_impl import InMemoryBridgeRouter
 from adn_server.infrastructure.subscription_store import InMemorySubscriptionStore
 from adn_server.infrastructure.config_normalizer import (
@@ -305,6 +306,10 @@ def run_peer_server(
     )
 
     subscription_store = InMemorySubscriptionStore()
+    initial_bridges = bridge_router.get_bridges()
+    if initial_bridges:
+        # Bootstrap-only: seed echo/parrot tables (_make_echo_bridges) into the store authority.
+        replace_store_from_bridges(subscription_store, initial_bridges)
     _ctx = runtime_holder.get()
     runtime_holder.swap(
         RuntimeContext(

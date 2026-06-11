@@ -203,6 +203,9 @@ class BridgeUseCases(
                 system_name, peer_id, rf_src, dst_id, seq, slot, stream_id, data, pkt_time,
             ):
                 return
+            # Arm ON in-band rules on VHEAD (parrot 9990 and UA bridges); VTERM handled in udp_hbp too.
+            if frame_type == HBPF_DATA_SYNC and dtype_vseq == HBPF_SLT_VHEAD:
+                self.apply_in_band_signalling(system_name, slot, dst_id, pkt_time)
         bridge_key = str(int_id(dst_id))
         bridges = self._router.get_bridges()
         dst_int = int_id(dst_id)

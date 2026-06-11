@@ -20,6 +20,7 @@ All notable changes to **adn-server** are documented here. Versioning follows [S
 
 ### Fixed
 
+- Parrot TG 9990: seed echo bridges into `SubscriptionStore` at bootstrap; arm ON rules on VHEAD.
 - Dashboard peers without RPTO inherit `TS1_STATIC` / `TS2_STATIC` from the MASTER YAML.
 - Inject-only monitor remap: sole connected hotspot receives dynamic UA downlink when a bridge leg is ACTIVE.
 
