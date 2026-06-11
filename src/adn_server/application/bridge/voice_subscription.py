@@ -1,7 +1,8 @@
 """Subscription router helpers for the voice hot path (P2-009 / P2-010).
 
 BRIDGES mutates ACTIVE/timers; ``_finalize_bridges_state`` keeps the store aligned
-after timer/OPTIONS paths. Per-packet store sync is skipped when store authority is on.
+after timer/OPTIONS paths. Voice resolve always uses ``SubscriptionRouter`` when a
+store is wired (production default).
 """
 
 from __future__ import annotations
@@ -17,15 +18,10 @@ logger = logging.getLogger(__name__)
 
 
 class VoiceSubscriptionMixin:
-    """Wire ``SubscriptionRouter`` into ``dmrd_received`` when configured."""
+    """Wire ``SubscriptionRouter`` into ``dmrd_received``."""
 
     _subscription_store: Any
     _subscription_router: SubscriptionRouter | None
-
-    def _use_subscription_router(self) -> bool:
-        if self._subscription_store is None:
-            return False
-        return bool(self._config.get("GLOBAL", {}).get("USE_SUBSCRIPTION_ROUTER", False))
 
     def _subscription_router_instance(self) -> SubscriptionRouter | None:
         if self._subscription_store is None:
@@ -102,8 +98,8 @@ class VoiceSubscriptionMixin:
         dst_int: int,
         ingress_required: bool = True,
     ) -> tuple[tuple[str, ...], frozenset[tuple[str, int, int]] | None]:
-        """Return bridge tables and optional forward-leg filter (``None`` = legacy row scan)."""
-        if not self._use_subscription_router():
+        """Return bridge tables and optional forward-leg filter (``None`` = no subscription store)."""
+        if self._subscription_store is None:
             return (
                 tuple(self._router.bridge_tables_with_active_source(system_name, bridge_match_slot, dst_int)),
                 None,

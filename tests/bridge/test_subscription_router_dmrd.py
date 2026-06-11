@@ -1,4 +1,4 @@
-"""P2-009: dmrd_received with USE_SUBSCRIPTION_ROUTER enabled."""
+"""P2-009: dmrd_received routes voice via SubscriptionRouter."""
 
 from __future__ import annotations
 
@@ -17,9 +17,8 @@ from tests.harness.deterministic import (
 
 @pytest.mark.behavior
 def test_subscription_router_startup_bridge_voice_parity() -> None:
-    """Same forwards as legacy BRIDGES scan when USE_SUBSCRIPTION_ROUTER is on."""
+    """Startup static TG forwards across masters via subscription resolve."""
     config = minimal_config(("MASTER-A", "MASTER-B"))
-    config["GLOBAL"]["USE_SUBSCRIPTION_ROUTER"] = True
     config["SYSTEMS"]["MASTER-A"]["TS2_STATIC"] = "52090"
     config["SYSTEMS"]["MASTER-A"]["DEFAULT_UA_TIMER"] = 10
     bridges = active_bridge(52090, (("MASTER-A", 2), ("MASTER-B", 2)))
@@ -38,26 +37,8 @@ def test_subscription_router_startup_bridge_voice_parity() -> None:
 
 
 @pytest.mark.behavior
-def test_subscription_router_matches_legacy_flag_off() -> None:
-    """USE_SUBSCRIPTION_ROUTER=false keeps legacy BRIDGES scan (default)."""
-    config = minimal_config(("MASTER-A", "MASTER-B"))
-    bridges = active_bridge(91, (("MASTER-A", 2), ("MASTER-B", 2)))
-    scenario = DeterministicScenario(config=config, bridges=bridges)
-
-    base = PacketSpec(dst_id=91, stream_id=0x01020304, slot=2)
-    scenario.inject_hbp("MASTER-A", DeterministicScenario.voice_head_spec(base))
-    scenario.inject_hbp(
-        "MASTER-A",
-        DeterministicScenario.voice_burst_spec(base, seq=1, dtype_vseq=1),
-    )
-
-    assert_forwarded(scenario, "MASTER-B", count=2, dst_id=91)
-
-
-@pytest.mark.behavior
 def test_subscription_router_hbp_slot1() -> None:
     config = minimal_config(("MASTER-A", "MASTER-B"))
-    config["GLOBAL"]["USE_SUBSCRIPTION_ROUTER"] = True
     bridges = active_bridge(730444, (("MASTER-A", 1), ("MASTER-B", 1)))
     scenario = DeterministicScenario(config=config, bridges=bridges)
     replace_store_from_bridges(scenario.subscription_store, scenario.bridge.get_bridges())
@@ -73,11 +54,9 @@ def test_subscription_router_hbp_slot1() -> None:
 
 
 @pytest.mark.behavior
-def test_subscription_router_with_store_authority_parity() -> None:
-    """P2-012: router + store authority export same forwards as legacy."""
+def test_subscription_router_store_export_parity() -> None:
+    """Store authority export keeps forwards and ACTIVE visible in get_bridges()."""
     config = minimal_config(("MASTER-A", "MASTER-B"))
-    config["GLOBAL"]["USE_SUBSCRIPTION_ROUTER"] = True
-    config["GLOBAL"]["USE_SUBSCRIPTION_STORE_AUTHORITY"] = True
     bridges = active_bridge(52090, (("MASTER-A", 2), ("MASTER-B", 2)))
     scenario = DeterministicScenario(config=config, bridges=bridges)
     scenario.bridge._finalize_bridges_state()
@@ -94,11 +73,9 @@ def test_subscription_router_with_store_authority_parity() -> None:
 
 
 @pytest.mark.behavior
-def test_obp_to_system_with_store_authority_and_router() -> None:
-    """OBP RX must forward after _ensure_obp_source when store authority skips stale mirror."""
+def test_obp_to_system_forwards_after_obp_source_sync() -> None:
+    """OBP RX must forward after _ensure_obp_source syncs into the subscription store."""
     config = minimal_config(("SYSTEM",))
-    config["GLOBAL"]["USE_SUBSCRIPTION_ROUTER"] = True
-    config["GLOBAL"]["USE_SUBSCRIPTION_STORE_AUTHORITY"] = True
     add_openbridge_system(config, "OBP-CL")
     config["SYSTEMS"]["SYSTEM"]["TS2_STATIC"] = "7305"
     bridges = active_bridge(7305, (("OBP-CL", 1), ("SYSTEM", 2)))

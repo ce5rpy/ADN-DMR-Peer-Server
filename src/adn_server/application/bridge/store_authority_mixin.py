@@ -20,30 +20,25 @@ class StoreAuthorityMixin:
     _config: dict[str, Any]
     _bridges_legacy_view: BridgesLegacyView | None
 
-    def _use_subscription_store_authority(self) -> bool:
-        if self._subscription_store is None:
-            return False
-        return bool(self._config.get("GLOBAL", {}).get("USE_SUBSCRIPTION_STORE_AUTHORITY", False))
-
     def _bridges_for_report(self) -> dict[str, list[dict[str, Any]]]:
-        """BRIDGES snapshot for monitor/report (export shim when store authority is on)."""
-        if self._subscription_store is not None and self._use_subscription_store_authority():
-            view = getattr(self, "_bridges_legacy_view", None)
-            if view is None:
-                view = BridgesLegacyView(self._subscription_store)
-                self._bridges_legacy_view = view
-            return view.generate()
-        return self._router.get_bridges()
+        """BRIDGES snapshot for monitor/report (export shim from subscription store)."""
+        if self._subscription_store is None:
+            return self._router.get_bridges()
+        replace_store_from_bridges(self._subscription_store, self._router.get_bridges())
+        view = getattr(self, "_bridges_legacy_view", None)
+        if view is None:
+            view = BridgesLegacyView(self._subscription_store)
+            self._bridges_legacy_view = view
+        return view.generate()
 
     def _sync_store_for_voice_lookup(self) -> None:
         """Import router BRIDGES into the store (e.g. OBP ``_ensure_obp_source_for_tg``) before resolve."""
         replace_store_from_bridges(self._subscription_store, self._router.get_bridges())
-        if self._use_subscription_store_authority():
-            self._router.set_bridges(export_bridges(self._subscription_store))
+        self._router.set_bridges(export_bridges(self._subscription_store))
         self._router.rebuild_source_index()
 
     def _finalize_bridges_state(self) -> None:
-        """Import BRIDGES mutations into the store; export back when store is authority."""
+        """Import BRIDGES mutations into the store; export back as legacy shim."""
         if self._subscription_store is None:
             self._router.rebuild_source_index()
             return
