@@ -70,6 +70,7 @@ from ...domain.talker_alias import (
 from ...domain.mesh_routing import MeshEgress, MeshIngress, PeerMeshConfig
 from ..mesh.dmre_v5 import parse_dmre_trailer
 from ..mesh.registry import MeshCodecRegistry
+from ..config_push_throttle import ConfigPushThrottle
 from ..mesh.obp_v1 import (
     build_bcka,
     build_bcve,
@@ -228,6 +229,7 @@ class HBPProtocol(DatagramProtocol):
             self._downlink_index = None
             self._connected_peer_count = 0
             self._config_push_delayed = None
+            self._config_push_throttle = ConfigPushThrottle()
             self._refresh_connected_peer_count()
         else:
             self._peers = {}
@@ -736,7 +738,8 @@ class HBPProtocol(DatagramProtocol):
         """Schedule debounced CONFIG_SND when MASTER peer list or OPTIONS change."""
         if self._config_push_delayed is not None:
             return
-        self._config_push_delayed = reactor.callLater(0.3, self._flush_config_to_monitor)
+        delay = self._config_push_throttle.debounce_seconds()
+        self._config_push_delayed = reactor.callLater(delay, self._flush_config_to_monitor)
 
     def _flush_config_to_monitor(self) -> None:
         self._config_push_delayed = None
@@ -1171,6 +1174,7 @@ class HBPProtocol(DatagramProtocol):
                         logger.info("(%s) Peer %s (%s) has sent repeater configuration, Package ID: %s, Software ID: %s, Desc: %s", self._system, _this_peer["CALLSIGN"], _this_peer["RADIO_ID"], self._peers[_peer_id]["PACKAGE_ID"].decode("utf8", errors="replace").rstrip(), self._peers[_peer_id]["SOFTWARE_ID"].decode("utf8", errors="replace").rstrip(), self._peers[_peer_id]["DESCRIPTION"].decode("utf8", errors="replace").rstrip())
                         self._refresh_connected_peer_count()
                         self._mark_downlink_index_dirty()
+                        self._config_push_throttle.note_peer_connected()
                         self._push_config_to_monitor()
                 else:
                     self.transport.write(b"".join([MSTNAK, _peer_id]), _sockaddr)
