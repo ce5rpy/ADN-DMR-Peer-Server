@@ -1,6 +1,6 @@
 # Changelog
 
-All notable changes to **adn-server** are documented here. Versioning follows [SemVer](https://semver.org/).
+All notable changes to **adn-server** are documented here.
 
 ## [Unreleased]
 
