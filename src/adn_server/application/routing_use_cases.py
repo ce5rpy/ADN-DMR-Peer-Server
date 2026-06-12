@@ -1043,11 +1043,14 @@ class RoutingUseCases(
                 "(%s) *PRIVATE CALL START* STREAM ID: %s SUB: %s PEER: %s DST: %s, TS: %s, FORWARD: %s",
                 system_name, int_id(stream_id), int_id(rf_src), int_id(peer_id), int_id(dst_id), slot, self._pvt_targets,
             )
-            self._send_routing_event(
-                "PRIVATE VOICE,START,RX,{},{},{},{},{},{}".format(
-                    system_name, int_id(stream_id), int_id(peer_id), int_id(rf_src), slot, int_id(dst_id)
+            # Unit data (ARS/LRRP/SMS) has no VTERM; PRIVATE VOICE START without END leaves
+            # monitor timeslot chips stuck. UNIT DATA events cover lastheard instead.
+            if not _unit_data:
+                self._send_routing_event(
+                    "PRIVATE VOICE,START,RX,{},{},{},{},{},{}".format(
+                        system_name, int_id(stream_id), int_id(peer_id), int_id(rf_src), slot, int_id(dst_id)
+                    )
                 )
-            )
         for _target in getattr(self, "_pvt_targets", []):
             target_proto = protocols.get(_target)
             if not target_proto:
@@ -1070,11 +1073,12 @@ class RoutingUseCases(
                         "(%s) PRIVATE call bridged to OBP System: %s TS: %s, UNIT: %s",
                         system_name, _target, slot if _target_system.get("BOTH_SLOTS") else 1, int_id(dst_id),
                     )
-                    self._send_routing_event(
-                        "PRIVATE VOICE,START,TX,{},{},{},{},{},{}".format(
-                            _target, int_id(stream_id), int_id(peer_id), int_id(rf_src), slot, int_id(dst_id),
-                        ).encode("utf-8", "ignore")
-                    )
+                    if not _unit_data:
+                        self._send_routing_event(
+                            "PRIVATE VOICE,START,TX,{},{},{},{},{},{}".format(
+                                _target, int_id(stream_id), int_id(peer_id), int_id(rf_src), slot, int_id(dst_id),
+                            ).encode("utf-8", "ignore")
+                        )
                 _target_status[stream_id]["LAST"] = pkt_time
                 if _target_system.get("BOTH_SLOTS"):
                     _tmp_bits = _bits
@@ -1111,11 +1115,12 @@ class RoutingUseCases(
                     ts_st["TX_RFS"] = rf_src
                     ts_st["TX_PEER"] = peer_id
                     logger.info("(%s) PRIVATE call bridged to HBP System: %s TS: %s, DST: %s", system_name, _target, slot, int_id(dst_id))
-                    self._send_routing_event(
-                        "PRIVATE VOICE,START,TX,{},{},{},{},{},{}".format(
-                            _target, int_id(stream_id), int_id(peer_id), int_id(rf_src), slot, int_id(dst_id),
-                        ).encode("utf-8", "ignore")
-                    )
+                    if not _unit_data:
+                        self._send_routing_event(
+                            "PRIVATE VOICE,START,TX,{},{},{},{},{},{}".format(
+                                _target, int_id(stream_id), int_id(peer_id), int_id(rf_src), slot, int_id(dst_id),
+                            ).encode("utf-8", "ignore")
+                        )
                 ts_st["TX_TIME"] = pkt_time
                 ts_st["TX_TYPE"] = dtype_vseq
                 send_data = data

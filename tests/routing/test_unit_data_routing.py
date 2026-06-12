@@ -270,3 +270,25 @@ def test_unit_data_7digit_multi_frame_pierces_rx_tgid_match() -> None:
         )
         scenario.inject_unit("D-APRS", spec)
     assert_forwarded(scenario, "SYSTEM", count=5, call_type="unit", dst_id=HOTSPOT_SUB_ID)
+
+
+@pytest.mark.behavior
+def test_unit_data_pvt_call_does_not_emit_private_voice_monitor_events() -> None:
+    """Unit data downlink must not light monitor TS chips (no PRIVATE VOICE START/END)."""
+    config = minimal_config(("D-APRS", "SYSTEM"))
+    config["_SUB_MAP"] = {bytes_3(HOTSPOT_SUB_ID): ("SYSTEM", 2, 1000.0)}
+    scenario = DeterministicScenario(config=config, enable_reporting=True)
+    scenario.protocols["SYSTEM"].STATUS[2] = idle_hbp_slot()
+    base = PacketSpec(
+        call_type="unit",
+        rf_src=900999,
+        dst_id=HOTSPOT_SUB_ID,
+        stream_id=0x11223344,
+        slot=2,
+    )
+    scenario.inject_unit("D-APRS", DeterministicScenario.unit_data_header_spec(base))
+
+    assert_forwarded(scenario, "SYSTEM", count=2, call_type="unit", dst_id=HOTSPOT_SUB_ID)
+    assert scenario.report_factory is not None
+    private_voice = [e for e in scenario.report_factory.events if e.startswith("PRIVATE VOICE")]
+    assert private_voice == []
