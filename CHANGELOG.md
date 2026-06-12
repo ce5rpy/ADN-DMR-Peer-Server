@@ -4,67 +4,44 @@ All notable changes to **adn-server** are documented here. Versioning follows [S
 
 ## [Unreleased]
 
+## [2.0.0-rc.1] - 2026-06-12
+
+First v2 release candidate since **1.0.0** (~70 commits). HBP/OpenBridge on-wire behaviour preserved.
+
 ### Added
 
-- SIGHUP reload reapplies YAML static TGs via `apply_startup_subscriptions()` when SYSTEMS change.
-- Store-native timer loops (`rule_timer`, `stat_trimmer`, `bridge_debug`, `bridge_reset`) and in-band signalling.
-- Store-native bridge table (OPTIONS, static TG, reflectors, UA) and OBP source ensure.
-- `InbandTriggers` (ON/OFF/RESET) on `Subscription` with import/export round-trip.
-- `to_target` iterates `ForwardLeg` from `SubscriptionRouter.resolve()` instead of re-scanning BRIDGES rows.
+- **Report v2** — JSON HELLO, slim `dashboard_state` TCP wire (no full topology/routing snapshots to monitor), bounded report queue, optional MQTT.
+- **Unified binary** — `adn-server.py` with `--parrot`, `--doctor`, `--no-proxy`; wiring in `bootstrap/peer_server.py`.
+- **Integrated proxy** — in-process UDP fan-in (`PROXY`), inject-only MASTER, self-service MySQL OPTIONS, peer blacklist/timers parity with legacy proxy.
+- **Subscription routing** — `SubscriptionStore` + `SubscriptionRouter` as runtime authority; store-native timers, OPTIONS/static TG, in-band ON/OFF; `MeshCodecRegistry` on OpenBridge.
+- **Inject-only production path** — per-peer OPTIONS downlink filter, monitor topology expansion (virtual SYSTEM slots), CONFIG push on peer connect.
+- **Performance** — O(1) BRIDGES source index; peer downlink index for inject fan-out; adaptive CONFIG_SND debounce on mass login.
 
 ### Changed
 
-- `SubscriptionStore` is required at runtime; bridge timers, OPTIONS, and table paths mutate the store only.
-- `BRIDGES` is an export shim for monitor/report (`export_routing_table`); no direct dict mutation in hot paths.
-- `_export_store_to_router()` publishes store mutations without router→store overwrite (timer/in-band paths).
+- **Architecture** — `bridge_use_cases` split into `routing_use_cases` + mixins; `RuntimeContext` and atomic SIGHUP reload; DMR codecs vendored to `domain/dmr/`; mesh codecs extracted from `udp_hbp`.
+- **OPTIONS / static TG** — event-driven refresh (RPTO, startup, reload, dmrd fallback) instead of 26 s periodic loop.
+- **Talker Alias** — embed on local REPEAT; passthrough and dedupe fixes on relay path.
 
 ### Fixed
 
-- Parrot TG 9990: seed echo bridges into `SubscriptionStore` at bootstrap; arm ON rules on VHEAD.
-- Dashboard peers without RPTO inherit `TS1_STATIC` / `TS2_STATIC` from the MASTER YAML.
-- Inject-only monitor remap: sole connected hotspot receives dynamic UA downlink when a bridge leg is ACTIVE.
+- OpenBridge packet control and rate-limit parity with legacy.
+- Parrot playback when sequence byte wraps; echo TG 9990 bootstrap.
+- Inject TG 4000: clear dynamics once per PTT per peer.
+- Unit data (ARS/LRRP) downlink for 7-digit private calls; monitor TS chip (no spurious `PRIVATE VOICE` on unit data).
+- OBP → HBP voice forwarding and downlink CPU under multi-peer inject load.
 
 ### Removed
 
-- Periodic 26s `options_config_loop` (V2-P2-016): OPTIONS/static TGs covered by RPTO, startup/reload, and dmrd fallback.
-- Runtime `replace_store_from_routing_table` calls in bridge timers and OPTIONS paths (store-native slice 6).
+- Standalone **`adn-parrot.py`** — use `adn-server.py --parrot`.
+- Periodic **26 s `options_config_loop`**.
+- Legacy pickle CONFIG/BRIDGE snapshots on the **server → monitor** wire (monitor uses v2 slim ingest).
 
-## [2.0.0-alpha.2] - 2026-06-11
+### Compatibility
 
-Subscription runtime (phase 2b/2c) closed for production Chile.
-
-### Added
-
-- Subscription store always wired at runtime; `SubscriptionRouter` is the voice resolve path.
-- `MeshCodecRegistry` on OpenBridge ingress/egress (phase 2c).
-
-### Changed
-
-- Removed YAML flags `USE_SUBSCRIPTION_ROUTER` and `USE_SUBSCRIPTION_STORE_AUTHORITY`; rollback via git tags only.
-- `routing_table_for_report()` mirrors router state into the store before export (report/monitor shim).
-
-### Fixed
-
-- OBP → HBP voice: sync store before subscription resolve (`c10f7f8`).
-- TG 4000: clear dynamics once per PTT, scoped to transmitting peer (inject-only).
-
-## [2.0.0-alpha.1] - 2026-06-10
-
-Phases 0–4 + 3b GA baseline (tag `v2.0.0-alpha1` alias retained).
-
-### Added
-
-- `adn-server.py --doctor` — validate config, UDP/TCP bind ports, PEER upstream and `MESH_PROTOCOL`.
-- Integrated proxy fan-in, self-service MySQL OPTIONS, monitor slim report wire.
-
-### Changed
-
-- Parrot: integrated in `adn-server.py --parrot`; minimal `adn-parrot.yaml` (PEER → ECHO MASTER).
-- Runtime wiring moved to `infrastructure/bootstrap/peer_server.py`; `main.py` is CLI-only (<200 lines).
-
-### Removed
-
-- **`adn-parrot.py`** and **`parrot_main.py`** — use `adn-server.py --parrot` instead.
+- **Monitor:** adn-monitor **2.0.0-rc.1** (report v2 slim wire, HELLO JSON).
+- **Wire:** HBP and OpenBridge on-wire formats unchanged vs legacy ADN DMR Server.
+- **Config:** same `adn-server.yaml` shape; add optional `PROXY` / `SELF_SERVICE` / `REPORTS.MQTT` sections.
 
 ## [1.0.0] - 2026-06-06
 
