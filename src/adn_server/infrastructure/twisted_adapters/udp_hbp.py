@@ -53,6 +53,11 @@ from ...application.routing.helpers import (
     seed_peer_ua_session_from_status,
     tg4000_reset_on_vhead,
 )
+from ...application.routing.peer_downlink_index import (
+    build_peer_downlink_index,
+    count_connected_peers,
+    invalidate_peer_options_cache,
+)
 from ...application.proxy.deployment import is_proxy_inject_only
 from ...domain import bytes_4, int_id
 from ...domain.talker_alias import (
@@ -219,6 +224,11 @@ class HBPProtocol(DatagramProtocol):
             self.STATUS = {1: _make_slot_status(), 2: _make_slot_status()}
         if self._config.get("MODE") == "MASTER":
             self._peers = self._config.setdefault("PEERS", {})
+            self._downlink_index_dirty = True
+            self._downlink_index = None
+            self._connected_peer_count = 0
+            self._config_push_delayed = None
+            self._refresh_connected_peer_count()
         else:
             self._peers = {}
         if self._config.get("MODE") in ("MASTER", "OPENBRIDGE"):
@@ -274,18 +284,59 @@ class HBPProtocol(DatagramProtocol):
         self._config = sys_cfg
         if sys_cfg.get("MODE") == "MASTER":
             self._peers = sys_cfg.setdefault("PEERS", {})
+            self._refresh_connected_peer_count()
+            self._mark_downlink_index_dirty()
 
     # ── Exact port of hblink.py send_peers / send_peer / send_master / send_system ──
 
     def send_peers(self, _packet: bytes, _hops: bytes = b"", _ber: bytes = b"\x00", _rssi: bytes = b"\x00", _source_server: bytes = b"\x00\x00\x00\x00", _source_rptr: bytes = b"\x00\x00\x00\x00") -> None:
-        for _peer in self._peers:
-            if len(_packet) < 54:
-                _packet = b"".join([_packet, _ber, _rssi])
+        if len(_packet) < 54:
+            _packet = b"".join([_packet, _ber, _rssi])
+        for _peer in self._iter_downlink_peers(_packet):
             self.send_peer(_peer, _packet)
 
     def _inject_multi_peer_options_filter(self) -> bool:
         """Inject-only proxy: always filter downlink by each peer's own OPTIONS."""
         return is_proxy_inject_only(self._CONFIG, self._system)
+
+    def _mark_downlink_index_dirty(self) -> None:
+        self._downlink_index_dirty = True
+
+    def _refresh_connected_peer_count(self) -> None:
+        self._connected_peer_count = count_connected_peers(self._peers)
+
+    def _cached_connected_peer_count(self) -> int:
+        """Return cached count; refresh once if cache is zero but peers exist."""
+        n = self._connected_peer_count
+        if n <= 0 and self._peers:
+            self._refresh_connected_peer_count()
+            n = self._connected_peer_count
+        return n
+
+    def _ensure_downlink_index(self):
+        if not self._downlink_index_dirty and self._downlink_index is not None:
+            return self._downlink_index
+        self._downlink_index = build_peer_downlink_index(self._peers, self._config)
+        self._downlink_index_dirty = False
+        return self._downlink_index
+
+    def _iter_downlink_peers(self, packet: bytes):
+        """Peer ids to consider for MASTER downlink / REPEAT (indexed when inject-only)."""
+        if not self._inject_multi_peer_options_filter():
+            return self._peers.keys()
+        parsed = parse_dmrd_route_fields(packet)
+        if parsed is None:
+            return self._peers.keys()
+        slot, tgid, call_type = parsed
+        if call_type not in ("group", "vcsbk"):
+            return self._peers.keys()
+        if is_special_tg(str(tgid)):
+            return self._peers.keys()
+        connected = self._cached_connected_peer_count()
+        if connected <= 0:
+            return ()
+        index = self._ensure_downlink_index()
+        return index.candidates(slot, tgid, connected_count=connected)
 
     def _peer_mesh_config(self) -> PeerMeshConfig:
         _global = self._CONFIG.get("GLOBAL", {})
@@ -386,10 +437,7 @@ class HBPProtocol(DatagramProtocol):
             return False
         parsed = parse_dmrd_route_fields(packet)
         if parsed is None:
-            connected = sum(
-                1 for peer in self._peers.values() if peer.get("CONNECTION") == "YES"
-            )
-            return connected <= 1
+            return self._cached_connected_peer_count() <= 1
         slot, tgid, call_type = parsed
         if call_type not in ("group", "vcsbk"):
             return True
@@ -402,13 +450,8 @@ class HBPProtocol(DatagramProtocol):
                     return bytes_4(int_id(peer_id)) == bytes_4(int_id(rx_peer))
             if len(packet) >= 8 and peer_matches_rf_source(peer_id, packet[5:8], self._peers):
                 return True
-            connected = sum(
-                1 for peer in self._peers.values() if peer.get("CONNECTION") == "YES"
-            )
-            return connected == 1
-        connected = sum(
-            1 for peer in self._peers.values() if peer.get("CONNECTION") == "YES"
-        )
+            return self._cached_connected_peer_count() == 1
+        connected = self._cached_connected_peer_count()
         store = self._get_subscription_store() if self._get_subscription_store else None
         return peer_should_receive_group_voice(
             self._peers[peer_id],
@@ -690,7 +733,13 @@ class HBPProtocol(DatagramProtocol):
             self.proxy_IPBlackList(_pi, self._peers[_pi]["SOCKADDR"])
 
     def _push_config_to_monitor(self) -> None:
-        """Push CONFIG_SND when MASTER peer list or connection state changes."""
+        """Schedule debounced CONFIG_SND when MASTER peer list or OPTIONS change."""
+        if self._config_push_delayed is not None:
+            return
+        self._config_push_delayed = reactor.callLater(0.3, self._flush_config_to_monitor)
+
+    def _flush_config_to_monitor(self) -> None:
+        self._config_push_delayed = None
         report = self._report
         if report is None:
             return
@@ -759,6 +808,8 @@ class HBPProtocol(DatagramProtocol):
     def _remove_peer(self, peer_id: bytes) -> None:
         self._on_peer_disconnected(peer_id)
         self._peers.pop(peer_id, None)
+        self._refresh_connected_peer_count()
+        self._mark_downlink_index_dirty()
 
     def _master_datagram_received(self, _data: bytes, _sockaddr: tuple[str, int]) -> None:
         """Direct port of hblink.py master_datagramReceived (lines 888-1146)."""
@@ -861,6 +912,7 @@ class HBPProtocol(DatagramProtocol):
                             self._config,
                             now=pkt_time,
                         )
+                        self._mark_downlink_index_dirty()
                         if _prev_single_tg != _int_dst_id:
                             self._push_config_to_monitor()
                 if (
@@ -898,7 +950,7 @@ class HBPProtocol(DatagramProtocol):
                         )
                         _repeat_tail = b"".join([_data[15:20], _dmrpkt_out, _data[53:]])
                     _repeat_pkt = b"".join([_data[:11], _peer_id, _repeat_tail])
-                    for _peer in self._peers:
+                    for _peer in self._iter_downlink_peers(_repeat_pkt):
                         if _peer != _peer_id:
                             self.send_peer(_peer, _repeat_pkt)
                 # TG 4000: reset after REPEAT so peers see the packet (legacy order)
@@ -1117,6 +1169,8 @@ class HBPProtocol(DatagramProtocol):
                     else:
                         self.send_peer(_peer_id, b"".join([RPTACK, _peer_id]))
                         logger.info("(%s) Peer %s (%s) has sent repeater configuration, Package ID: %s, Software ID: %s, Desc: %s", self._system, _this_peer["CALLSIGN"], _this_peer["RADIO_ID"], self._peers[_peer_id]["PACKAGE_ID"].decode("utf8", errors="replace").rstrip(), self._peers[_peer_id]["SOFTWARE_ID"].decode("utf8", errors="replace").rstrip(), self._peers[_peer_id]["DESCRIPTION"].decode("utf8", errors="replace").rstrip())
+                        self._refresh_connected_peer_count()
+                        self._mark_downlink_index_dirty()
                         self._push_config_to_monitor()
                 else:
                     self.transport.write(b"".join([MSTNAK, _peer_id]), _sockaddr)
@@ -1127,6 +1181,8 @@ class HBPProtocol(DatagramProtocol):
             if _peer_id in self._peers and self._peers[_peer_id]["SOCKADDR"] == _sockaddr:
                 _this_peer = self._peers[_peer_id]
                 _this_peer["OPTIONS"] = _data[8:]
+                invalidate_peer_options_cache(_this_peer)
+                self._mark_downlink_index_dirty()
                 self.send_peer(_peer_id, b"".join([RPTACK, _peer_id]))
                 logger.info("(%s) Peer %s has sent options %s", self._system, _this_peer["CALLSIGN"], _this_peer["OPTIONS"])
                 if is_proxy_inject_only(self._CONFIG, self._system):

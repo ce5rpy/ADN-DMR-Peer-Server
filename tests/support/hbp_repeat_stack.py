@@ -73,6 +73,8 @@ class HbpRepeatStack:
         self.config["SYSTEMS"][self.system_name].setdefault("PEERS", {})[peer_id] = (
             self.hbp._peers[peer_id]
         )
+        self.hbp._refresh_connected_peer_count()
+        self.hbp._mark_downlink_index_dirty()
 
     def inject(self, packet: bytes, sockaddr: tuple[str, int]) -> None:
         self.hbp.datagramReceived(packet, sockaddr)
