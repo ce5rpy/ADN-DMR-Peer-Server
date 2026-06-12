@@ -10,6 +10,47 @@ from typing import Any
 
 from ...domain import HBPF_DATA_SYNC, HBPF_SLT_VHEAD, bytes_3, bytes_4, int_id
 
+
+def is_private_subscriber_dst(dst_id: bytes) -> bool:
+    """True for 7-digit private/unit destinations (legacy routerHBP pvt_call branch)."""
+    return len(str(int_id(dst_id))) == 7
+
+
+def unit_data_hbp_target_idle(
+    dst_slot: dict,
+    pkt_time: float,
+    hangtime: float,
+) -> bool:
+    """Legacy sendDataToHBP gate: both RX/TX idle and past group hangtime."""
+    from ...domain.hbp_protocol import HBPF_SLT_VTERM
+
+    return (
+        dst_slot.get("RX_TYPE") == HBPF_SLT_VTERM
+        and dst_slot.get("TX_TYPE") == HBPF_SLT_VTERM
+        and (pkt_time - dst_slot.get("TX_TIME", 0) > hangtime)
+    )
+
+
+def is_unit_data_ingress(
+    call_type: str,
+    dtype_vseq: int,
+    stream_id: bytes,
+    slot_rx_stream_id: bytes | None,
+) -> bool:
+    """True when legacy routerHBP sets ``_data_call`` (bridge_master.py ~3130).
+
+    Unit data is routed but must not update per-slot RX STATUS (busy check for
+    downlink SUB_MAP / hotspot match stays open on the source MASTER).
+    """
+    if call_type != "unit":
+        return False
+    if dtype_vseq in (6, 7, 8):
+        return True
+    if dtype_vseq == 3:
+        return stream_id != (slot_rx_stream_id or b"\x00")
+    return False
+
+
 # Embedded LC codeword sits at bits 116:148 inside the 48-bit EMB field (108:156).
 # Legacy bridge_master.py replaces dmrbits[116:148] on bursts B–E (dtype_vseq 1–4).
 EMB_LC_SLICE = slice(116, 148)

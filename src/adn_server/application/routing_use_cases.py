@@ -42,7 +42,13 @@ from ..domain.dmr import bptc
 from ..domain import HBPF_DATA_SYNC, HBPF_SLT_VHEAD, HBPF_SLT_VTERM, STREAM_TO, bytes_3, bytes_4, int_id
 from .ports import AclRouter, DmrEmbeddedLcEncoder, SubscriptionStore, TalkerAliasEmblcEncoder
 from .talker_alias_use_cases import TalkerAliasUseCases
-from .routing.helpers import obp_target_bcsq_quenches_stream, resolve_voice_peer_id
+from .routing.helpers import (
+    is_private_subscriber_dst,
+    is_unit_data_ingress,
+    obp_target_bcsq_quenches_stream,
+    resolve_voice_peer_id,
+    unit_data_hbp_target_idle,
+)
 from .routing.timers import RoutingTimerMixin
 from .routing.obp_forward import ObpForwardMixin
 from .routing.hbp_forward import HbpForwardMixin
@@ -180,6 +186,7 @@ class RoutingUseCases(
         if call_type == "unit" and int_id(dst_id) == 4000:
             return
         if call_type == "unit":
+            _int_dst = int_id(dst_id)
             if dtype_vseq in (6, 7, 8) or (dtype_vseq == 3 and not self._is_stream_known(system_name, stream_id, slot)):
                 self._unit_data_received(
                     system_name, peer_id, rf_src, dst_id, seq, slot,
@@ -188,8 +195,14 @@ class RoutingUseCases(
                     obp_source_server=obp_source_server,
                     obp_ber=obp_ber, obp_rssi=obp_rssi, obp_source_rptr=obp_source_rptr,
                 )
-            elif len(str(int_id(dst_id))) == 7:
-                self._pvt_call_received(system_name, peer_id, rf_src, dst_id, seq, slot, frame_type, dtype_vseq, stream_id, data)
+            # Legacy routerHBP ~3252-3254: 7-digit routing runs after unit data, not
+            # instead of it. D-APRS ARS/LRRP downlink (dst 7300392) uses pvt_call_received
+            # when SUB_MAP sendDataToHBP is blocked by the strict idle check.
+            if len(str(_int_dst)) == 7:
+                self._pvt_call_received(
+                    system_name, peer_id, rf_src, dst_id, seq, slot,
+                    frame_type, dtype_vseq, stream_id, data,
+                )
             return True
         systems_cfg = self._config.get("SYSTEMS", {})
         source_is_obp = systems_cfg.get(system_name, {}).get("MODE") == "OPENBRIDGE"
@@ -722,6 +735,32 @@ class RoutingUseCases(
 
     # ── Unit DATA path (SMS, GPS, CSBK) — legacy routerOBP/routerHBP unit data branch ──
 
+    def _log_unit_data_hbp_busy(
+        self,
+        system_name: str,
+        d_system: str,
+        d_slot: int,
+        int_dst_id: int,
+        dst_slot: dict,
+        d_sys_cfg: dict,
+        pkt_time: float,
+    ) -> None:
+        """Legacy logs busy at debug only; include slot state for D-APRS downlink triage."""
+        logger.info(
+            "(%s) UNIT Data not bridged to HBP - target busy: %s slot %s DST_ID: %s "
+            "(RX_TYPE=%s TX_TYPE=%s RX_TGID=%s TX_TGID=%s TX_age=%.2fs hangtime=%s)",
+            system_name,
+            d_system,
+            d_slot,
+            int_dst_id,
+            dst_slot.get("RX_TYPE"),
+            dst_slot.get("TX_TYPE"),
+            int_id(dst_slot.get("RX_TGID", b"\x00\x00\x00")),
+            int_id(dst_slot.get("TX_TGID", b"\x00\x00\x00")),
+            pkt_time - dst_slot.get("TX_TIME", 0),
+            d_sys_cfg.get("GROUP_HANGTIME", 5),
+        )
+
     def _unit_data_received(
         self,
         system_name: str,
@@ -899,15 +938,14 @@ class RoutingUseCases(
                 _dst_slot = getattr(_d_proto, "STATUS", {}).get(_d_slot, {})
                 logger.info("(%s) SUB_MAP matched, System: %s Slot: %s, Time: %s", system_name, _d_system, _d_slot, _d_time)
                 _d_sys_cfg = systems_cfg.get(_d_system, {})
-                if (
-                    _dst_slot.get("RX_TYPE") == HBPF_SLT_VTERM
-                    and _dst_slot.get("TX_TYPE") == HBPF_SLT_VTERM
-                    and (pkt_time - _dst_slot.get("TX_TIME", 0) > _d_sys_cfg.get("GROUP_HANGTIME", 5))
-                ):
+                _hangtime = _d_sys_cfg.get("GROUP_HANGTIME", 5)
+                if unit_data_hbp_target_idle(_dst_slot, pkt_time, _hangtime):
                     _tmp_bits = _bits ^ (1 << 7) if slot != _d_slot else _bits
                     self._send_data_to_hbp(system_name, _d_system, _d_slot, dst_id, _tmp_bits, data, dmrpkt, rf_src, stream_id, peer_id)
-                else:
-                    logger.debug("(%s) UNIT Data not bridged to HBP - target busy: %s DST_ID: %s", system_name, _d_system, _int_dst_id)
+                elif not is_private_subscriber_dst(dst_id):
+                    self._log_unit_data_hbp_busy(
+                        system_name, _d_system, _d_slot, _int_dst_id, _dst_slot, _d_sys_cfg, pkt_time,
+                    )
         else:
             # Hotspot 6/7-digit peer ID match (legacy ~3131-3168 / ~2314-2345)
             for _d_system, _d_sys_cfg in systems_cfg.items():
@@ -927,15 +965,14 @@ class RoutingUseCases(
                             _d_slot = 2
                             _dst_slot = getattr(_d_proto, "STATUS", {}).get(_d_slot, {})
                             logger.info("(%s) User Peer Hotspot ID (6-digit) matched, System: %s Slot: %s", system_name, _d_system, _d_slot)
-                            if (
-                                _dst_slot.get("RX_TYPE") == HBPF_SLT_VTERM
-                                and _dst_slot.get("TX_TYPE") == HBPF_SLT_VTERM
-                                and (pkt_time - _dst_slot.get("TX_TIME", 0) > _d_sys_cfg.get("GROUP_HANGTIME", 5))
-                            ):
+                            _hangtime = _d_sys_cfg.get("GROUP_HANGTIME", 5)
+                            if unit_data_hbp_target_idle(_dst_slot, pkt_time, _hangtime):
                                 _tmp_bits = _bits ^ (1 << 7) if slot != 2 else _bits
                                 self._send_data_to_hbp(system_name, _d_system, _d_slot, dst_id, _tmp_bits, data, dmrpkt, rf_src, stream_id, peer_id)
-                            else:
-                                logger.debug("(%s) UNIT Data not bridged to HBP on slot %s - target busy: %s DST_ID: %s", system_name, _d_slot, _d_system, _int_dst_id)
+                            elif not is_private_subscriber_dst(dst_id):
+                                self._log_unit_data_hbp_busy(
+                                    system_name, _d_system, _d_slot, _int_dst_id, _dst_slot, _d_sys_cfg, pkt_time,
+                                )
                             _matched = True
                             break
                     elif len(_dst_str) >= 7:
@@ -943,15 +980,14 @@ class RoutingUseCases(
                             _d_slot = 2
                             _dst_slot = getattr(_d_proto, "STATUS", {}).get(_d_slot, {})
                             logger.info("(%s) User Peer Hotspot ID (7-digit) matched, System: %s Slot: %s", system_name, _d_system, _d_slot)
-                            if (
-                                _dst_slot.get("RX_TYPE") == HBPF_SLT_VTERM
-                                and _dst_slot.get("TX_TYPE") == HBPF_SLT_VTERM
-                                and (pkt_time - _dst_slot.get("TX_TIME", 0) > _d_sys_cfg.get("GROUP_HANGTIME", 5))
-                            ):
+                            _hangtime = _d_sys_cfg.get("GROUP_HANGTIME", 5)
+                            if unit_data_hbp_target_idle(_dst_slot, pkt_time, _hangtime):
                                 _tmp_bits = _bits ^ (1 << 7) if slot != 2 else _bits
                                 self._send_data_to_hbp(system_name, _d_system, _d_slot, dst_id, _tmp_bits, data, dmrpkt, rf_src, stream_id, peer_id)
-                            else:
-                                logger.debug("(%s) UNIT Data not bridged to HBP on slot %s - target busy: %s DST_ID: %s", system_name, _d_slot, _d_system, _int_dst_id)
+                            elif not is_private_subscriber_dst(dst_id):
+                                self._log_unit_data_hbp_busy(
+                                    system_name, _d_system, _d_slot, _int_dst_id, _dst_slot, _d_sys_cfg, pkt_time,
+                                )
                             _matched = True
                             break
                 if _matched:
@@ -975,6 +1011,8 @@ class RoutingUseCases(
         dmrpkt = data[20:53] if len(data) >= 53 else b""
         _bits = data[15] if len(data) > 15 else 0
         sub_map = self._config.get("_SUB_MAP", {})
+        if sub_map is not None:
+            sub_map[rf_src] = (system_name, slot, pkt_time)
         systems_cfg = self._config.get("SYSTEMS", {})
         protocols = self._get_protocols() if self._get_protocols else {}
         source_proto = protocols.get(system_name)
@@ -982,6 +1020,9 @@ class RoutingUseCases(
         if source_proto:
             source_status.setdefault(slot, {})
         slot_st = source_status[slot] if source_proto and slot in source_status else {}
+        _unit_data = is_unit_data_ingress(
+            "unit", dtype_vseq, stream_id, slot_st.get("RX_STREAM_ID"),
+        )
         if stream_id != slot_st.get("RX_STREAM_ID"):
             if (slot_st.get("RX_TYPE") != HBPF_SLT_VTERM) and (pkt_time < (slot_st.get("RX_TIME", 0) + STREAM_TO)) and (rf_src != slot_st.get("RX_RFS")):
                 logger.warning(
@@ -1045,20 +1086,24 @@ class RoutingUseCases(
                     _target_status[stream_id]["ACTIVE"] = False
             else:
                 ts_st = _target_status.get(slot, {})
-                if (dst_id == ts_st.get("RX_TGID")) and ((pkt_time - ts_st.get("RX_TIME", 0)) < STREAM_TO):
-                    if frame_type == HBPF_DATA_SYNC and dtype_vseq == HBPF_SLT_VHEAD and slot_st.get("RX_STREAM_ID") != stream_id:
-                        logger.info(
-                            "(%s) PRIVATE Call not routed to destination %s, matching call already active on target: HBSystem: %s, TS: %s, DEST: %s",
-                            system_name, int_id(dst_id), _target, slot, int_id(ts_st.get("RX_TGID", b"")),
-                        )
-                    continue
-                if (dst_id == ts_st.get("TX_TGID")) and (rf_src != ts_st.get("TX_RFS")) and ((pkt_time - ts_st.get("TX_TIME", 0)) < STREAM_TO):
-                    if frame_type == HBPF_DATA_SYNC and dtype_vseq == HBPF_SLT_VHEAD and slot_st.get("RX_STREAM_ID") != stream_id:
-                        logger.info(
-                            "(%s) PRIVATE Call not routed for subscriber %s, call route in progress on target: HBSystem: %s, TS: %s, DEST: %s, SUB: %s",
-                            system_name, int_id(rf_src), _target, slot, int_id(ts_st.get("TX_TGID", b"")), int_id(ts_st.get("TX_RFS", b"")),
-                        )
-                    continue
+                # Voice private-call contention only. Unit data (ARS/LRRP/SMS) must
+                # pierce group/voice RX on the target slot — legacy pvt_call still
+                # sends via send_system even when sendDataToHBP is busy.
+                if not _unit_data:
+                    if (dst_id == ts_st.get("RX_TGID")) and ((pkt_time - ts_st.get("RX_TIME", 0)) < STREAM_TO):
+                        if frame_type == HBPF_DATA_SYNC and dtype_vseq == HBPF_SLT_VHEAD and slot_st.get("RX_STREAM_ID") != stream_id:
+                            logger.info(
+                                "(%s) PRIVATE Call not routed to destination %s, matching call already active on target: HBSystem: %s, TS: %s, DEST: %s",
+                                system_name, int_id(dst_id), _target, slot, int_id(ts_st.get("RX_TGID", b"")),
+                            )
+                        continue
+                    if (dst_id == ts_st.get("TX_TGID")) and (rf_src != ts_st.get("TX_RFS")) and ((pkt_time - ts_st.get("TX_TIME", 0)) < STREAM_TO):
+                        if frame_type == HBPF_DATA_SYNC and dtype_vseq == HBPF_SLT_VHEAD and slot_st.get("RX_STREAM_ID") != stream_id:
+                            logger.info(
+                                "(%s) PRIVATE Call not routed for subscriber %s, call route in progress on target: HBSystem: %s, TS: %s, DEST: %s, SUB: %s",
+                                system_name, int_id(rf_src), _target, slot, int_id(ts_st.get("TX_TGID", b"")), int_id(ts_st.get("TX_RFS", b"")),
+                            )
+                        continue
                 if stream_id != slot_st.get("RX_STREAM_ID"):
                     ts_st["TX_START"] = pkt_time
                     ts_st["TX_TGID"] = dst_id
@@ -1097,10 +1142,15 @@ class RoutingUseCases(
                 )
             )
         if slot_st:
-            slot_st["RX_PEER"] = peer_id
-            slot_st["RX_SEQ"] = seq
-            slot_st["RX_RFS"] = rf_src
-            slot_st["RX_TYPE"] = dtype_vseq
-            slot_st["RX_TGID"] = dst_id
-            slot_st["RX_TIME"] = pkt_time
-            slot_st["RX_STREAM_ID"] = stream_id
+            if _unit_data:
+                # Keep stream continuity for multi-frame unit data without marking the
+                # slot voice-busy (parity with is_unit_data_ingress on HBP ingress).
+                slot_st["RX_STREAM_ID"] = stream_id
+            else:
+                slot_st["RX_PEER"] = peer_id
+                slot_st["RX_SEQ"] = seq
+                slot_st["RX_RFS"] = rf_src
+                slot_st["RX_TYPE"] = dtype_vseq
+                slot_st["RX_TGID"] = dst_id
+                slot_st["RX_TIME"] = pkt_time
+                slot_st["RX_STREAM_ID"] = stream_id

@@ -168,7 +168,12 @@ class HbpForwardMixin:
         except Exception as exc:
             logger.warning("(%s) send_data_to_hbp %s failed: %s", source_system, d_system, exc)
             return
-        logger.debug("(%s) UNIT Data Bridged to HBP System: %s DST_ID: %s", source_system, d_system, int_id(dst_id))
+        logger.info("(%s) UNIT Data Bridged to HBP System: %s DST_ID: %s", source_system, d_system, int_id(dst_id))
+        if int_id(dst_id) == 900999 and len(dmrpkt) == 33:
+            logger.info(
+                "(%s) UNIT trace -> %s stream=%s payload33=%s",
+                source_system, d_system, int_id(stream_id), dmrpkt.hex(),
+            )
         self._send_routing_event(
             "UNIT DATA,DATA,TX,{},{},{},{},{},{}".format(
                 d_system, int_id(stream_id), int_id(peer_id), int_id(rf_src), 1, int_id(dst_id),

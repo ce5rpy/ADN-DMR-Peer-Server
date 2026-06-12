@@ -44,6 +44,7 @@ from ...application.routing.helpers import (
     clear_peer_rx_status_slots,
     clear_peer_ua_sessions,
     is_special_tg,
+    is_unit_data_ingress,
     parse_dmrd_route_fields,
     peer_matches_rf_source,
     peer_should_receive_group_voice,
@@ -916,7 +917,11 @@ class HBPProtocol(DatagramProtocol):
                 # routing_use_cases.py:2080 reads exactly that. Never write STATUS[stream_id]
                 # for HBP — that pattern is only legal for routerOBP (flat dict).
                 dmrpkt = _data[20:53] if len(_data) >= 53 else b""
-                if _slot in self.STATUS:
+                _unit_data = is_unit_data_ingress(
+                    _call_type, _dtype_vseq, _stream_id,
+                    self.STATUS.get(_slot, {}).get("RX_STREAM_ID") if _slot in self.STATUS else None,
+                )
+                if _slot in self.STATUS and not _unit_data:
                     if _stream_id != self.STATUS[_slot].get("RX_STREAM_ID"):
                         self.STATUS[_slot]["RX_START"] = pkt_time
                         if _frame_type == HBPF_DATA_SYNC and _dtype_vseq == HBPF_SLT_VHEAD and len(dmrpkt) >= 33:
@@ -962,7 +967,8 @@ class HBPProtocol(DatagramProtocol):
                     and self._on_talker_alias_stream_end
                 ):
                     self._on_talker_alias_stream_end(self._system, _stream_id)
-                if _slot in self.STATUS:
+                # Legacy routerHBP: unit data (_data_call) does not mark slot RX busy.
+                if _slot in self.STATUS and not _unit_data:
                     self.STATUS[_slot]["RX_PEER"] = _peer_id
                     self.STATUS[_slot]["RX_SEQ"] = _seq
                     self.STATUS[_slot]["RX_RFS"] = _rf_src
@@ -1299,7 +1305,11 @@ class HBPProtocol(DatagramProtocol):
                 # reads STATUS[_slot]['RX_LC'] for HBP sources. Never write
                 # STATUS[stream_id] for HBP — that pattern is only legal for routerOBP.
                 dmrpkt = _data[20:53] if len(_data) >= 53 else b""
-                if _slot in self.STATUS:
+                _unit_data = is_unit_data_ingress(
+                    _call_type, _dtype_vseq, _stream_id,
+                    self.STATUS.get(_slot, {}).get("RX_STREAM_ID") if _slot in self.STATUS else None,
+                )
+                if _slot in self.STATUS and not _unit_data:
                     if _stream_id != self.STATUS[_slot].get("RX_STREAM_ID"):
                         self.STATUS[_slot]["RX_START"] = pkt_time
                         if _frame_type == HBPF_DATA_SYNC and _dtype_vseq == HBPF_SLT_VHEAD and len(dmrpkt) >= 33:
@@ -1339,7 +1349,7 @@ class HBPProtocol(DatagramProtocol):
                     and self._on_in_band_signalling
                 ):
                     self._on_in_band_signalling(self._system, _slot, _dst_id, pkt_time)
-                if _slot in self.STATUS:
+                if _slot in self.STATUS and not _unit_data:
                     if _stream_id != self.STATUS[_slot].get("RX_STREAM_ID"):
                         self.STATUS[_slot]["RX_START"] = pkt_time
                     self.STATUS[_slot]["RX_PEER"] = _peer_id

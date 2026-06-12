@@ -7,6 +7,7 @@ from tests.harness.assertions import assert_inject_ok, assert_report_event
 from tests.harness.deterministic import DeterministicScenario, PacketSpec, minimal_config
 
 from adn_server.domain import bytes_4
+from adn_server.domain.hbp_protocol import HBPF_SLT_VTERM
 
 
 @pytest.mark.behavior
@@ -19,8 +20,8 @@ def test_unit_data_header_accepted_from_hbp() -> None:
 
     assert_inject_ok(ok)
     assert_report_event(scenario, "UNIT DATA HEADER")
-    slot = scenario.protocols["MASTER-A"].STATUS[2]
-    assert slot.get("RX_STREAM_ID") == bytes_4(base.stream_id)
+    slot = scenario.protocols["MASTER-A"].STATUS.get(2, {})
+    assert slot.get("RX_TYPE", HBPF_SLT_VTERM) == HBPF_SLT_VTERM
 
 
 def test_unit_data_reports_rx_event_when_reporting_enabled() -> None:
@@ -47,7 +48,8 @@ def test_unit_data_csbk_new_stream_is_handled() -> None:
 
     assert_inject_ok(ok)
     assert_report_event(scenario, "UNIT CSBK")
-    assert scenario.protocols["MASTER-A"].STATUS[2].get("RX_STREAM_ID") == bytes_4(base.stream_id)
+    slot = scenario.protocols["MASTER-A"].STATUS.get(2, {})
+    assert slot.get("RX_TYPE", HBPF_SLT_VTERM) == HBPF_SLT_VTERM
 
 
 def test_unit_data_csbk_ignored_when_stream_already_known() -> None:

@@ -490,11 +490,20 @@ class DeterministicScenario:
 
     def _sync_hbp_slot(self, system_name: str, args: dict[str, Any]) -> None:
         """Mirror udp_hbp STATUS[slot] updates after an accepted HBP packet."""
+        from adn_server.application.routing.helpers import is_unit_data_ingress
+
         proto = self.protocols.get(system_name)
         if not isinstance(proto, FakeHbpProtocol):
             return
         slot = args["slot"]
         st = proto.STATUS.setdefault(slot, {})
+        if is_unit_data_ingress(
+            args["call_type"],
+            args["dtype_vseq"],
+            args["stream_id"],
+            st.get("RX_STREAM_ID"),
+        ):
+            return
         st["RX_PEER"] = args["peer_id"]
         st["RX_SEQ"] = args["seq"]
         st["RX_RFS"] = args["rf_src"]
