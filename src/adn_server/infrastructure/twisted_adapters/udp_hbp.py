@@ -568,7 +568,7 @@ class HBPProtocol(DatagramProtocol):
         self._ta_decoded_logged.discard(stream_id)
 
     def copy_ta_stream_buffer(self, from_stream: bytes, to_stream: bytes) -> None:
-        """Carry decoded TA blocks from recording stream to parrot playback stream."""
+        """Carry decoded TA blocks from recording stream to echo playback stream."""
         entry = self._dmra_by_stream.get(from_stream)
         if not entry or not entry.get("blocks"):
             return

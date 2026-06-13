@@ -1,4 +1,4 @@
-# ADN DMR Peer Server - tests parrot playback ingress
+# ADN DMR Peer Server - tests echo playback ingress
 #
 # Copyright (C) 2026  Rodrigo Pérez, CE5RPY <ce5rpy@qmd.cl>
 #
@@ -32,14 +32,14 @@ from adn_server.application.playback_use_cases import _PLAYBACK_DELAY_S, _RECORD
 
 
 def test_dmrd_received_accepts_ingress_pkt_time_kwarg() -> None:
-    """Regression: PEER udp_hbp passes ingress_pkt_time (parrot must not TypeError)."""
+    """Regression: PEER udp_hbp passes ingress_pkt_time (echo must not TypeError)."""
     proto = FakePlaybackProtocol()
-    pb = PlaybackUseCases("PARROT", get_protocol=lambda: proto)
+    pb = PlaybackUseCases("ECHO", get_protocol=lambda: proto)
     base = PacketSpec(dst_id=9990, stream_id=0x12121212, slot=2)
     args = DeterministicScenario.voice_head_spec(base).decoded_hbp_args()
 
     pb.dmrd_received(
-        "PARROT",
+        "ECHO",
         args["peer_id"],
         args["rf_src"],
         args["dst_id"],
@@ -60,17 +60,17 @@ def test_dmrd_received_accepts_ingress_pkt_time_kwarg() -> None:
 def test_ingress_pkt_time_enables_record_to_playback(caplog) -> None:
     """Regression: PEER path (ingress_pkt_time) records voice and schedules playback."""
     proto = FakePlaybackProtocol()
-    pb = PlaybackUseCases("PARROT", get_protocol=lambda: proto)
+    pb = PlaybackUseCases("ECHO", get_protocol=lambda: proto)
     base = PacketSpec(dst_id=9990, stream_id=0x34343434, slot=2)
     mock_reactor, scheduled = install_reactor_capture()
     t0 = 1_700_000_000.0
 
     with patch("adn_server.application.playback_use_cases.reactor", mock_reactor):
         with patch("adn_server.application.playback_use_cases.time", return_value=t0):
-            send_playback(pb, "PARROT", DeterministicScenario.voice_head_spec(base))
+            send_playback(pb, "ECHO", DeterministicScenario.voice_head_spec(base))
             send_playback(
                 pb,
-                "PARROT",
+                "ECHO",
                 DeterministicScenario.voice_burst_spec(base, seq=1, dtype_vseq=1),
                 ingress_pkt_time=t0 + 2.0,
             )

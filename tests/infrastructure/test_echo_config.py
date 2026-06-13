@@ -1,4 +1,4 @@
-# ADN DMR Peer Server - infrastructure parrot   init  
+# ADN DMR Peer Server - tests infrastructure echo config
 #
 # Copyright (C) 2026  Rodrigo Pérez, CE5RPY <ce5rpy@qmd.cl>
 #
@@ -18,8 +18,37 @@
 #   Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301  USA
 ###############################################################################
 
-"""Integrated parrot (playback) runtime."""
+"""Minimal adn-echo.yaml validation."""
 
-from .runtime import run_parrot
+from __future__ import annotations
 
-__all__ = ["run_parrot"]
+from adn_server.infrastructure.config_validator import validate_config
+
+
+MINIMAL_ECHO = {
+    "GLOBAL": {"SERVER_ID": 9990},
+    "LOGGER": {"LOG_FILE": "/var/log/adn-server/echo.log"},
+    "SYSTEMS": {
+        "ECHO": {
+            "MODE": "PEER",
+            "IP": "127.0.0.1",
+            "PORT": 54915,
+            "MASTER_IP": "127.0.0.1",
+            "MASTER_PORT": 54917,
+            "PASSPHRASE": "secret",
+            "RADIO_ID": 9990,
+            "CALLSIGN": "ECHO",
+            "OPTIONS": "TS2=9990;",
+        },
+    },
+}
+
+
+def test_minimal_echo_config_validates_without_proxy() -> None:
+    validate_config(MINIMAL_ECHO)
+
+
+def test_minimal_echo_has_no_reports_or_aliases() -> None:
+    assert "REPORTS" not in MINIMAL_ECHO
+    assert "ALIASES" not in MINIMAL_ECHO
+    assert "PROXY" not in MINIMAL_ECHO

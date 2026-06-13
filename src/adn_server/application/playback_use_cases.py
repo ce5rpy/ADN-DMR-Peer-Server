@@ -1,4 +1,4 @@
-# ADN DMR Peer Server - playback (parrot) use case
+# ADN DMR Peer Server - playback (echo) use case
 # Copyright (C) 2026  Rodrigo Pérez, CE5RPY <ce5rpy@qmd.cl>
 #
 # Derived from ADN DMR Server / FreeDMR  / HBlink. Original license:

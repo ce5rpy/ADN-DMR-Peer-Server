@@ -543,7 +543,7 @@ class SubscriptionTableMixin:
                 self._sync_subscription_store()
                 return
             if merged is None:
-                # Echo / parrot TGs (9990–9999) are excluded from merged lists but still need restore.
+                # Echo TGs (9990–9999) are excluded from merged lists but still need restore.
                 self._restore_prohibited_static_bridge_legs(system_name)
                 self._sync_subscription_store()
                 return

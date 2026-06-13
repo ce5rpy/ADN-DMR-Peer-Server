@@ -1,4 +1,4 @@
-# ADN DMR Peer Server - infrastructure parrot runtime
+# ADN DMR Peer Server - infrastructure echo runtime
 #
 # Copyright (C) 2026  Rodrigo Pérez, CE5RPY <ce5rpy@qmd.cl>
 #
@@ -18,7 +18,7 @@
 #   Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301  USA
 ###############################################################################
 
-"""Wire parrot (playback) PEER systems at startup."""
+"""Wire ECHO playback PEER systems at startup."""
 
 from __future__ import annotations
 
@@ -45,7 +45,7 @@ def _looping_errback(logger_obj: logging.Logger, failure: Any) -> None:
     logger_obj.error("(GLOBAL) Unhandled error in timed loop: %s", failure.getTraceback())
 
 
-def run_parrot(config: dict[str, Any], *, logger: logging.Logger) -> None:
+def run_echo(config: dict[str, Any], *, logger: logging.Logger) -> None:
     """Start playback PEER(s) and run the Twisted reactor (blocks until shutdown)."""
     ensure_system_runtime_config(config)
     normalize_peer_config(config)
@@ -74,7 +74,7 @@ def run_parrot(config: dict[str, Any], *, logger: logging.Logger) -> None:
         task.LoopingCall(reporting_loop).start(report_interval).addErrback(_looping_errback, logger)
 
     def sig_handler(sig: int, _frame: Any) -> None:
-        logger.info("SHUTDOWN: PARROT IS TERMINATING WITH SIGNAL %s", sig)
+        logger.info("SHUTDOWN: ECHO IS TERMINATING WITH SIGNAL %s", sig)
         if reactor.running:
             reactor.stop()
 
@@ -83,7 +83,7 @@ def run_parrot(config: dict[str, Any], *, logger: logging.Logger) -> None:
         logger.info("(LOGGER) Reopened %s file log handler(s) after SIGUSR2", n)
 
     def sighup_ignore(_sig: int, _frame: Any) -> None:
-        logger.debug("(PARROT) SIGHUP ignored (no config hot-reload; use SIGUSR2 for logrotate)")
+        logger.debug("(ECHO) SIGHUP ignored (no config hot-reload; use SIGUSR2 for logrotate)")
 
     signal.signal(signal.SIGTERM, sig_handler)
     signal.signal(signal.SIGINT, sig_handler)
@@ -91,13 +91,13 @@ def run_parrot(config: dict[str, Any], *, logger: logging.Logger) -> None:
     if hasattr(signal, "SIGHUP"):
         signal.signal(signal.SIGHUP, sighup_ignore)
 
-    logger.info("ADN Parrot -- SYSTEM STARTING...")
+    logger.info("ADN Echo -- SYSTEM STARTING...")
     started = 0
     for system_name, sys_cfg in systems_cfg.items():
         if not sys_cfg.get("ENABLED", True):
             continue
         if sys_cfg.get("MODE") != "PEER":
-            logger.debug("(PARROT) skip %s (MODE=%s; parrot only runs PEER systems)", system_name, sys_cfg.get("MODE"))
+            logger.debug("(ECHO) skip %s (MODE=%s; echo only runs PEER systems)", system_name, sys_cfg.get("MODE"))
             continue
 
         pb = PlaybackUseCases(system_name, get_protocol=lambda sn=system_name: protocols.get(sn))
@@ -115,7 +115,7 @@ def run_parrot(config: dict[str, Any], *, logger: logging.Logger) -> None:
         reactor.listenUDP(udp_port, protocol, interface=ip or "0.0.0.0")
         started += 1
         logger.info(
-            "(PARROT) %s PEER on %s:%s → master %s:%s",
+            "(ECHO) %s PEER on %s:%s → master %s:%s",
             system_name,
             ip or "0.0.0.0",
             udp_port,
@@ -124,7 +124,7 @@ def run_parrot(config: dict[str, Any], *, logger: logging.Logger) -> None:
         )
 
     if started == 0:
-        logger.critical("(PARROT) no enabled PEER systems in config")
-        sys.exit("parrot config must define at least one enabled SYSTEMS.<name> with MODE: PEER")
+        logger.critical("(ECHO) no enabled PEER systems in config")
+        sys.exit("echo config must define at least one enabled SYSTEMS.<name> with MODE: PEER")
 
     reactor.run()

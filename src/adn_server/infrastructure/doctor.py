@@ -98,22 +98,22 @@ def collect_findings(
     *,
     project_root: str,
     config_path: str,
-    parrot: bool = False,
+    echo: bool = False,
     no_proxy: bool = False,
 ) -> list[Finding]:
     findings: list[Finding] = []
     logger = _NullLogger()
 
-    if parrot:
+    if echo:
         peers = [
             name
             for name, cfg in config.get("SYSTEMS", {}).items()
             if isinstance(cfg, dict) and cfg.get("MODE") == "PEER" and cfg.get("ENABLED", True)
         ]
         if peers:
-            findings.append(Finding("ok", "parrot", f"{len(peers)} PEER system(s): {', '.join(peers)}"))
+            findings.append(Finding("ok", "echo", f"{len(peers)} PEER system(s): {', '.join(peers)}"))
         else:
-            findings.append(Finding("error", "parrot", "no enabled PEER systems in config"))
+            findings.append(Finding("error", "echo", "no enabled PEER systems in config"))
     else:
         apply_talker_alias_defaults(config)
         expand_generator(config, logger)
@@ -196,7 +196,7 @@ def collect_findings(
         else:
             findings.append(Finding("warn", "systems", f"{name}: unknown MODE={mode}"))
 
-    if not parrot:
+    if not echo:
         reports = config.get("REPORTS", {})
         if reports.get("REPORT", True):
             port = int(reports.get("REPORT_PORT", 4321))
@@ -253,7 +253,7 @@ def run_doctor(
     config_path: str,
     project_root: str,
     *,
-    parrot: bool = False,
+    echo: bool = False,
     no_proxy: bool = False,
     version: str = "",
     out: TextIO | None = None,
@@ -271,7 +271,7 @@ def run_doctor(
         config,
         project_root=project_root,
         config_path=config_path,
-        parrot=parrot,
+        echo=echo,
         no_proxy=no_proxy,
     )
     print(format_report(findings, version=version, config_path=config_path), file=stream)

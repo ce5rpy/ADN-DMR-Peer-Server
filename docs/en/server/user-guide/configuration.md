@@ -46,12 +46,12 @@ Three **modes** exist:
 | Mode | Typical use | Listens | Connects upstream |
 |------|-------------|---------|-------------------|
 | **MASTER** | Conference server for one or more hotspots/repeaters | **Yes** — `IP` / `PORT`, peers register with passphrase | No (peers connect to you) |
-| **PEER** | Hotspot/repeater or service (e.g. parrot) behaving as a **client** of a MASTER | **Yes** — local `IP` / `PORT` | **Yes** — `MASTER_IP` / `MASTER_PORT` must point at a MASTER |
+| **PEER** | Hotspot/repeater or service (e.g. echo) behaving as a **client** of a MASTER | **Yes** — local `IP` / `PORT` | **Yes** — `MASTER_IP` / `MASTER_PORT` must point at a MASTER |
 | **OPENBRIDGE** | Link to another **server** over OpenBridge (DMRD v1 / DMRE) | **Yes** — `IP` / `PORT` | **Yes** — `TARGET_IP` / `TARGET_PORT` (peer server) |
 
 **MASTER** holds the **`PEERS`** table at runtime (hotspots that authenticated). **PEER** maintains **STATS** (connection, pings). **OPENBRIDGE** uses **NETWORK_ID**, **PASSPHRASE**, **TARGET_***, **PROTO_VER** / **VER**, and optional **ENHANCED_OBP**, **RELAX_CHECKS**, **TGID_ACL**.
 
-A single process can run **several** systems at once (e.g. one MASTER for users, one ECHO for parrot, one OBP to a partner network).
+A single process can run **several** systems at once (e.g. one MASTER for users, one ECHO for playback, one OBP to a partner network).
 
 ---
 
@@ -136,7 +136,7 @@ A **PEER** connects **outbound** to a **MASTER** and listens locally for the rad
 | **OPTIONS** | Byte string / options line (e.g. `TS2=9990;`) for static TG / behaviour. |
 | **LOOSE** | Relaxed handling flag where applicable. |
 
-The **parrot** example (`adn-parrot.example.yaml`) is a PEER that attaches to the **ECHO** MASTER: same **PASSPHRASE**, **MASTER_PORT** = ECHO’s **PORT**. See [Parrot](parrot.md).
+The **echo** example (`adn-echo.example.yaml`) is a PEER that attaches to the **ECHO** MASTER: same **PASSPHRASE**, **MASTER_PORT** = ECHO’s **PORT**. See [Echo](echo.md).
 
 ---
 
@@ -264,5 +264,5 @@ Use the project interpreter (see workspace rules), e.g. `python3.11` from pyenv,
 - [Introduction](introduction.md) — role of the server.
 - [Bridges and talkgroups](bridges-and-talkgroups.md) — `BRIDGES` semantics.
 - [Special numbers](special-numbers.md) — reserved TGs and server IDs.
-- [Parrot](parrot.md) — PEER example (parrot process).
+- [Echo](echo.md) — PEER example (echo process).
 - [Hotspot proxy](hotspot-proxy.md) — integrated **`PROXY`** / **`SELF_SERVICE`**.

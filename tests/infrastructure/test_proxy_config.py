@@ -47,10 +47,10 @@ def test_proxy_section_required_when_master_present() -> None:
     assert "PROXY" in str(exc.value)
 
 
-def test_parrot_config_without_proxy_is_valid() -> None:
+def test_echo_config_without_proxy_is_valid() -> None:
     validate_config({
         "GLOBAL": {"SERVER_ID": 9990},
-        "SYSTEMS": {"PARROT": {"MODE": "PEER", "ENABLED": True, "PORT": 54915}},
+        "SYSTEMS": {"ECHO": {"MODE": "PEER", "ENABLED": True, "PORT": 54915}},
     })
 
 

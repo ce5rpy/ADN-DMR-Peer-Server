@@ -1,4 +1,4 @@
-# ADN DMR Peer Server - tests parrot rekey playback
+# ADN DMR Peer Server - tests echo rekey playback
 #
 # Copyright (C) 2026  Rodrigo Pérez, CE5RPY <ce5rpy@qmd.cl>
 #

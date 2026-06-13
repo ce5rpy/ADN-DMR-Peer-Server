@@ -25,14 +25,14 @@ python3 -m pytest tests/ -q
 ```bash
 python3 -m pytest tests/routing/ -q
 python3 -m pytest tests/hbp/ -q
-python3 -m pytest tests/parrot/ -q
+python3 -m pytest tests/echo/ -q
 ```
 
 **By file** (recommended for point checks):
 
 ```bash
 python3 -m pytest tests/routing/test_unit_data_routing.py -q
-python3 -m pytest tests/parrot/test_rekey_playback.py -q
+python3 -m pytest tests/echo/test_rekey_playback.py -q
 ```
 
 **Single test**:

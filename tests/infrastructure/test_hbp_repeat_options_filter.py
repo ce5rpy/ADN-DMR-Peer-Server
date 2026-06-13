@@ -85,8 +85,8 @@ def test_bridge_downlink_send_peers_filters_by_options() -> None:
     assert len(tx_pkts) == 1
 
 
-def test_parrot_tg_9990_reaches_caller_without_9990_in_options() -> None:
-    """Echo/parrot downlink must not be blocked by static OPTIONS (TG 9990)."""
+def test_echo_tg_9990_reaches_caller_without_9990_in_options() -> None:
+    """Echo/echo downlink must not be blocked by static OPTIONS (TG 9990)."""
     stack = _inject_proxy_stack()
     stack.register_peer(
         bytes_4(730039101),

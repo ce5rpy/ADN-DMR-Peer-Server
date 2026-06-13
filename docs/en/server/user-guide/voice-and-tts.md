@@ -52,5 +52,5 @@ Parallel **broadcasts** on **different** TGs may run concurrently; **same-TG** b
 ## See also
 
 - [Configuration](configuration.md) — voice file paths.
-- [Parrot](parrot.md) — separate playback service.
+- [Echo](echo.md) — separate playback service.
 - [Special numbers](special-numbers.md) — 5000, 999x, recording-related behaviour.

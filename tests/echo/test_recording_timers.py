@@ -1,4 +1,4 @@
-# ADN DMR Peer Server - tests parrot recording timers
+# ADN DMR Peer Server - tests echo recording timers
 #
 # Copyright (C) 2026  Rodrigo Pérez, CE5RPY <ce5rpy@qmd.cl>
 #

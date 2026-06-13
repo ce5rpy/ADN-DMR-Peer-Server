@@ -70,15 +70,15 @@ python adn-server.py --doctor          # config, ports, peers (exit 1 on errors)
 python adn-server.py --no-proxy        # disable integrated PROXY
 ```
 
-## Parrot (playback)
+## Echo (playback)
 
 Separate process (same binary) records group voice and plays it back on TG 9990.
 
 ```bash
-cp adn-parrot.example.yaml adn-parrot.yaml
-python adn-server.py --parrot -c adn-parrot.yaml
+cp adn-echo.example.yaml adn-echo.yaml
+python adn-server.py --echo -c adn-echo.yaml
 ```
 
-See [Parrot (playback)](docs/en/server/user-guide/parrot.md) in the docs site for an overview.
+See [Echo (playback)](docs/en/server/user-guide/echo.md) in the docs site for an overview.
 
-**systemd:** example units in `examples/systemd/` (`adn-server.service`, `adn-parrot.service`).
+**systemd:** example units in `examples/systemd/` (`adn-server.service`, `adn-echo.service`).

@@ -32,7 +32,7 @@ def proxy_target_system(config: dict[str, Any]) -> str | None:
 
 
 def config_has_enabled_master(config: dict[str, Any]) -> bool:
-    """True when config defines at least one enabled MASTER (adn-server, not parrot-only)."""
+    """True when config defines at least one enabled MASTER (adn-server, not echo-only)."""
     systems = config.get("SYSTEMS", {})
     if not isinstance(systems, dict):
         return False

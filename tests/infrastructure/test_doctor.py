@@ -28,8 +28,8 @@ import textwrap
 from adn_server.infrastructure.doctor import collect_findings, run_doctor
 
 
-def test_doctor_parrot_requires_peer_system(tmp_path) -> None:
-    cfg = tmp_path / "adn-parrot.yaml"
+def test_doctor_echo_requires_peer_system(tmp_path) -> None:
+    cfg = tmp_path / "adn-echo.yaml"
     cfg.write_text(
         textwrap.dedent(
             """
@@ -45,7 +45,7 @@ def test_doctor_parrot_requires_peer_system(tmp_path) -> None:
         ),
         encoding="utf-8",
     )
-    code = run_doctor(str(cfg), str(tmp_path), parrot=True, version="test")
+    code = run_doctor(str(cfg), str(tmp_path), echo=True, version="test")
     assert code == 1
 
 

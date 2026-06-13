@@ -1,4 +1,4 @@
-# ADN DMR Peer Server - tests parrot playback logging
+# ADN DMR Peer Server - tests echo playback logging
 #
 # Copyright (C) 2026  Rodrigo Pérez, CE5RPY <ce5rpy@qmd.cl>
 #
@@ -35,7 +35,7 @@ from adn_server.domain import bytes_3, bytes_4
 def test_start_playback_logs_duration_with_two_decimals(caplog) -> None:
     """PLAYBACK duration matches bridge-style %.2f (no float noise in logs)."""
     proto = FakePlaybackProtocol()
-    pb = PlaybackUseCases("PARROT", get_protocol=lambda: proto)
+    pb = PlaybackUseCases("ECHO", get_protocol=lambda: proto)
     base = PacketSpec(dst_id=9990, stream_id=0x88888888, slot=2)
     recorded = [DeterministicScenario.voice_head_spec(base).data()]
 

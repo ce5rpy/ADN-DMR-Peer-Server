@@ -46,12 +46,12 @@ Existen tres **modos**:
 | Modo | Uso típico | Escucha | Conecta aguas arriba |
 |------|------------|---------|----------------------|
 | **MASTER** | Servidor de conferencia para uno o más hotspots/repetidores | **Sí** — `IP` / `PORT`, los peers se registran con passphrase | No (los peers se conectan a ti) |
-| **PEER** | Hotspot/repetidor o servicio (p. ej. parrot) como **cliente** de un MASTER | **Sí** — `IP` / `PORT` local | **Sí** — `MASTER_IP` / `MASTER_PORT` deben apuntar al MASTER |
+| **PEER** | Hotspot/repetidor o servicio (p. ej. echo) como **cliente** de un MASTER | **Sí** — `IP` / `PORT` local | **Sí** — `MASTER_IP` / `MASTER_PORT` deben apuntar al MASTER |
 | **OPENBRIDGE** | Enlace a otro **servidor** por OpenBridge (DMRD v1 / DMRE) | **Sí** — `IP` / `PORT` | **Sí** — `TARGET_IP` / `TARGET_PORT` (servidor par) |
 
 **MASTER** mantiene la tabla **`PEERS`** en tiempo de ejecución (hotspots autenticados). **PEER** mantiene **STATS** (conexión, pings). **OPENBRIDGE** usa **NETWORK_ID**, **PASSPHRASE**, **TARGET_***, **PROTO_VER** / **VER**, y opcionalmente **ENHANCED_OBP**, **RELAX_CHECKS**, **TGID_ACL**.
 
-Un solo proceso puede ejecutar **varios** sistemas a la vez (p. ej. un MASTER para usuarios, un ECHO para parrot, un OBP hacia una red asociada).
+Un solo proceso puede ejecutar **varios** sistemas a la vez (p. ej. un MASTER para usuarios, un ECHO para playback, un OBP hacia una red asociada).
 
 ---
 
@@ -136,7 +136,7 @@ Un **PEER** conecta **saliente** hacia un **MASTER** y escucha localmente para l
 | **OPTIONS** | Cadena / línea de opciones (p. ej. `TS2=9990;`) para TG estáticas / comportamiento. |
 | **LOOSE** | Flag de manejo relajado donde aplique. |
 
-El ejemplo **parrot** (`adn-parrot.example.yaml`) es un PEER que se une al MASTER **ECHO**: mismo **PASSPHRASE**, **MASTER_PORT** = **PORT** del ECHO. Ver [Parrot](parrot.md).
+El ejemplo **echo** (`adn-echo.example.yaml`) es un PEER que se une al MASTER **ECHO**: mismo **PASSPHRASE**, **MASTER_PORT** = **PORT** del ECHO. Ver [Echo](echo.md).
 
 ---
 
@@ -264,5 +264,5 @@ Usa el intérprete del proyecto (ver reglas del workspace), p. ej. `python3.11` 
 - [Introducción](introduction.md) — rol del servidor.
 - [Bridges y talkgroups](bridges-and-talkgroups.md) — semántica de `BRIDGES`.
 - [Números especiales](special-numbers.md) — TG e IDs reservados.
-- [Parrot](parrot.md) — ejemplo PEER (proceso parrot).
+- [Echo](echo.md) — ejemplo PEER (proceso echo).
 - [Proxy hotspot](hotspot-proxy.md) — **`PROXY`** / **`SELF_SERVICE`** integrados.

@@ -1,7 +1,7 @@
-# ADN DMR Parrot — minimal PEER config (copy to adn-parrot.yaml; do not commit).
+# ADN DMR Echo — minimal PEER config (copy to adn-echo.yaml; do not commit).
 #
 # Separate process, same binary as adn-server:
-#   python adn-server.py --parrot -c adn-parrot.yaml
+#   python adn-server.py --echo -c adn-echo.yaml
 #
 # Connects to ECHO (MASTER) in adn-server.yaml — match MASTER_PORT and PASSPHRASE.
 
@@ -9,11 +9,11 @@ GLOBAL:
   SERVER_ID: 9990
 
 LOGGER:
-  LOG_FILE: /var/log/adn-server/parrot.log
+  LOG_FILE: /var/log/adn-server/echo.log
   LOG_LEVEL: INFO
 
 SYSTEMS:
-  PARROT:
+  ECHO:
     MODE: PEER
     IP: 127.0.0.1
     PORT: 54915

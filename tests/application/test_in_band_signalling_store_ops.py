@@ -72,7 +72,7 @@ def test_store_non_single_deactivates_on_tg4000() -> None:
 
 
 def test_store_single_mode_keeps_static_off_on_unrelated_vterm() -> None:
-    """OPTIONS static OFF legs must survive parrot/other-TG VTERM for OBP downlink."""
+    """OPTIONS static OFF legs must survive echo other-TG VTERM for OBP downlink."""
     store = InMemorySubscriptionStore()
     systems_cfg = {"MASTER-A": {"MODE": "MASTER", "SINGLE_MODE": True, "DEFAULT_UA_TIMER": 10}}
     make_static_tg_store(store, 52090, 2, 10.0, "MASTER-A", systems_cfg, 1000.0, single_mode=True)

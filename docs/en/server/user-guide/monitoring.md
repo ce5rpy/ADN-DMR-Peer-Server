@@ -50,7 +50,7 @@ These processes handle **`SIGUSR2`** by reopening **`logging.FileHandler`** stre
 
 | Process | Typical config keys |
 |---------|---------------------|
-| **`adn-server`** / **`adn-parrot`** | **`LOGGER.LOG_FILE`** (integrated proxy logs appear in the same file) |
+| **`adn-server`** / **`adn-echo`** | **`LOGGER.LOG_FILE`** (integrated proxy logs appear in the same file) |
 | **`adn-monitor`** | **`LOG.PATH`** + **`LOG.LOG_FILE`** in `adn-monitor.yaml` |
 
 Example **`/etc/logrotate.d/adn`** fragment (adjust paths and service names):
@@ -70,7 +70,7 @@ Example **`/etc/logrotate.d/adn`** fragment (adjust paths and service names):
 }
 ```
 
-Repeat **`postrotate`** with **`kill -USR2`** for **`adn-parrot`** and **`adn-monitor`** units if those logs are rotated on the same host. Use the correct **PID** (systemd **`MainPID`**, a pidfile, or **`kill`** targeting the process you manage).
+Repeat **`postrotate`** with **`kill -USR2`** for **`adn-echo`** and **`adn-monitor`** units if those logs are rotated on the same host. Use the correct **PID** (systemd **`MainPID`**, a pidfile, or **`kill`** targeting the process you manage).
 
 ## Requirements
 

@@ -89,11 +89,11 @@ A nivel operativo: si usuarios reportan «bridges que se caen demasiado fácil»
 
 El **audio** se envía con **ID de fuente 5000** y **TG de destino 9** en el flujo generado. Estructura de ficheros: [Voz, anuncios y TTS](voice-and-tts.md).
 
-## TG 9990 — eco / parrot (en banda)
+## TG 9990 — eco (en banda)
 
 **Propósito:** las filas de bridge para **eco** suelen usar **9990** con el sistema **ECHO** (ver `BRIDGES` y opciones en tu YAML).
 
-**Nota:** Un **parrot independiente** también está disponible como proceso aparte — [Parrot](parrot.md).
+**Nota:** Un **echo independiente** también está disponible como proceso aparte — [Echo](echo.md).
 
 ## Llamada privada al ID 4000
 

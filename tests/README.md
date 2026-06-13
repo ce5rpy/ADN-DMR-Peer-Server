@@ -23,7 +23,7 @@ Use the project interpreter, e.g. `/opt/.pyenv/versions/3.11.8/bin/python3`.
 | `obp/` | OpenBridge loop, rate limit, unit-data loop |
 | `voice/` | Announcements, TTS schedule, broadcast queue, disconnected voice, in-band signalling |
 | `talker_alias/` | Encode/decode, passthrough, MMDVM wire, routing inject (DeterministicScenario) |
-| `parrot/` | Recording timers, playback loop, seq preservation, ingress path |
+| `echo/` | Recording timers, playback loop, seq preservation, ingress path |
 | `replay/` | JSONL session replay |
 | `schemas/` | Report v2 JSON Schema validation (`jsonschema` dev dep) |
 | `application/` | Report payloads, monitor topology, proxy use cases, subscription store/router |
@@ -106,7 +106,7 @@ Mark new stack tests with `@pytest.mark.integration`.
 | `test_mmdvm_wire.py` | 10 | MMDVM wire blocks |
 | `test_passthrough.py` | 9 | Passthrough / both modes |
 
-### parrot/
+### echo/
 
 | File | Tests | Topic |
 |------|-------|-------|
@@ -156,8 +156,8 @@ Session replay JSONL meta accepts `routing_table` (preferred) or legacy `bridges
 # After changing unit-data routing
 python3 -m pytest tests/routing/test_unit_data_routing.py -q
 
-# After parrot seq fix
-python3 -m pytest tests/parrot/test_rekey_playback.py -q
+# After echo seq fix
+python3 -m pytest tests/echo/test_rekey_playback.py -q
 
 # Talker Alias REPEAT (real stack)
 python3 -m pytest tests/infrastructure/test_hbp_repeat_talker_alias.py -q

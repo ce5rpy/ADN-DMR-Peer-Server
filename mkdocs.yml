@@ -57,7 +57,7 @@ nav:
           - Voice, announcements, and TTS: server/user-guide/voice-and-tts.md
           - Monitoring and reports: server/user-guide/monitoring.md
           - Hotspot proxy (integrated): server/user-guide/hotspot-proxy.md
-          - Parrot (playback): server/user-guide/parrot.md
+          - Echo (playback): server/user-guide/echo.md
           - Credits & license: server/user-guide/attribution.md
       - Protocols:
           - HBP (DMRD): server/protocols/hbp.md

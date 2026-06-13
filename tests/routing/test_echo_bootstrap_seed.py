@@ -1,4 +1,4 @@
-# ADN DMR Peer Server - tests routing parrot bootstrap seed
+# ADN DMR Peer Server - tests routing echo bootstrap seed
 #
 # Copyright (C) 2026  Rodrigo Pérez, CE5RPY <ce5rpy@qmd.cl>
 #
@@ -36,7 +36,7 @@ def _prod_like_config() -> dict:
     return config
 
 
-def test_parrot_routing_missing_without_echo_store_seed() -> None:
+def test_echo_routing_missing_without_echo_store_seed() -> None:
     scenario = DeterministicScenario(config=_prod_like_config(), routing_table={})
     scenario.routing.apply_startup_subscriptions()
 
@@ -46,7 +46,7 @@ def test_parrot_routing_missing_without_echo_store_seed() -> None:
     assert scenario.capture.for_system("ECHO") == []
 
 
-def test_parrot_routing_works_after_echo_seed_on_vhead() -> None:
+def test_echo_routing_works_after_echo_seed_on_vhead() -> None:
     config = _prod_like_config()
     scenario = DeterministicScenario(config=config, routing_table=_seed_echo_routing_table(config))
     scenario.routing.apply_startup_subscriptions()

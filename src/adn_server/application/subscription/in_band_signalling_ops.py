@@ -130,7 +130,7 @@ def apply_in_band_signalling_store(
                     or dst_id_b != tgid_b
                     or dst_id_b == bytes_3(4000)
                 ):
-                    # OPTIONS static (OFF) legs stay armed when parrot/special TG ends (9990–9999).
+                    # OPTIONS static (OFF) legs stay armed when echo special TG ends (9990–9999).
                     if (
                         sub.policy == ActivationPolicy.STATIC
                         and dst_id_b != tgid_b

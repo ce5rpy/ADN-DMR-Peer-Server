@@ -1,4 +1,4 @@
-# ADN DMR Peer Server - tests infrastructure parrot cli
+# ADN DMR Peer Server - tests infrastructure echo cli
 #
 # Copyright (C) 2026  Rodrigo Pérez, CE5RPY <ce5rpy@qmd.cl>
 #
@@ -18,7 +18,7 @@
 #   Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301  USA
 ###############################################################################
 
-"""CLI and integrated parrot entry (Phase 4)."""
+"""CLI and integrated echo entry."""
 
 from __future__ import annotations
 
@@ -30,15 +30,15 @@ import pytest
 from adn_server.main import main
 
 
-def test_parrot_flag_routes_to_run_parrot() -> None:
+def test_echo_flag_routes_to_run_echo() -> None:
     with (
-        patch("adn_server.main.run_parrot") as mock_run,
+        patch("adn_server.main.run_echo") as mock_run,
         patch("adn_server.main.YamlConfigLoader") as mock_loader_cls,
         patch("adn_server.main.setup_logging") as mock_log,
     ):
         mock_loader_cls.return_value.load.return_value = {"GLOBAL": {"SERVER_ID": 9990}, "LOGGER": {}}
         mock_log.return_value = _FakeLogger()
-        with patch.object(sys, "argv", ["adn-server", "--parrot", "-c", "/tmp/adn-parrot.yaml"]):
+        with patch.object(sys, "argv", ["adn-server", "--echo", "-c", "/tmp/adn-echo.yaml"]):
             main()
     mock_run.assert_called_once()
 
@@ -56,7 +56,7 @@ def test_no_proxy_skips_proxy_startup(monkeypatch: pytest.MonkeyPatch) -> None:
         raise AssertionError("proxy should not start")
 
     monkeypatch.setattr(peer_mod, "start_proxy_service", _track)
-    monkeypatch.setattr(main_mod, "run_parrot", lambda *_a, **_k: None)
+    monkeypatch.setattr(main_mod, "run_echo", lambda *_a, **_k: None)
     monkeypatch.setattr(reactor, "run", lambda: None)
     monkeypatch.setattr(peer_mod, "ReportServerFactory", lambda *a, **k: _FakeReportFactory())
     monkeypatch.setattr(peer_mod, "create_report_mqtt_publisher", lambda *_: None)

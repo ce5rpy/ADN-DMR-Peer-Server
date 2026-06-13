@@ -212,7 +212,7 @@ class RoutingUseCases(
                 system_name, peer_id, rf_src, dst_id, seq, slot, stream_id, data, pkt_time,
             ):
                 return
-            # Arm ON in-band rules on VHEAD (parrot 9990 and UA bridges); VTERM handled in udp_hbp too.
+            # Arm ON in-band rules on VHEAD (echo 9990 and UA bridges); VTERM handled in udp_hbp too.
             if frame_type == HBPF_DATA_SYNC and dtype_vseq == HBPF_SLT_VHEAD:
                 self.apply_in_band_signalling(system_name, slot, dst_id, pkt_time)
         from .subscription.subscription_queries import store_has_table
@@ -264,7 +264,7 @@ class RoutingUseCases(
                 obp_hops if obp_use_parsed else b"",
             ):
                 return
-            # SINGLE_MODE in-band VTERM on another TG (e.g. 9990 parrot) deactivates static OFF
+            # SINGLE_MODE in-band VTERM on another TG (e.g. 9990 echo) deactivates static OFF
             # legs; re-arm OPTIONS static destinations before forward (inject-only merged lists).
             if frame_type == HBPF_DATA_SYNC and dtype_vseq == HBPF_SLT_VHEAD:
                 self.apply_static_tg_to_bridge(dst_int)
@@ -279,7 +279,7 @@ class RoutingUseCases(
         # Do not call ensure_dynamic_relay here for 9990–9999 when BRIDGES["9990"] already exists:
         # ensure_dynamic_relay replaces the whole table and only sets the source MASTER ACTIVE; every
         # other system (including ECHO with TO_TYPE NONE) becomes ACTIVE False — to_target then has
-        # no active target for the parrot path (legacy _seed_echo_routing_table / make_bridges keeps ECHO
+        # no active target for the echo path (legacy _seed_echo_routing_table / make_bridges keeps ECHO
         # ACTIVE True; activation of the source row is via in-band ON on VTERM, bridge_master ~3465).
         if not has_source:
             logger.debug(

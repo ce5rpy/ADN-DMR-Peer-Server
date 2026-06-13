@@ -84,7 +84,7 @@ Detalle del flujo en el panel: [Self-service](../../monitor/self-service.md).
 ## Comportamiento con varios hotspots
 
 - Cada hotspot autenticado es un **peer** en el MASTER de inyección con sus **OPTIONS** (TG estáticas). **Repeat** y el fan-out del monitor respetan **OPTIONS por peer** — el tráfico de un TG no se envía a peers que no lo tienen seleccionado.
-- Los talkgroups **parrot / eco 9990–9999** omiten el filtro OPTIONS y vuelven al hotspot **llamante** (ver [Números especiales](special-numbers.md)).
+- Los talkgroups **eco 9990–9999** omiten el filtro OPTIONS y vuelven al hotspot **llamante** (ver [Números especiales](special-numbers.md)).
 
 ---
 

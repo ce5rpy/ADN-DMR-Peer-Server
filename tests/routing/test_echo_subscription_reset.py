@@ -18,7 +18,7 @@
 #   Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301  USA
 ###############################################################################
 
-"""ECHO / parrot bridge leg restore after BRIDGERESET (regression for production outage)."""
+"""ECHO / echo bridge leg restore after BRIDGERESET (regression for production outage)."""
 
 from __future__ import annotations
 

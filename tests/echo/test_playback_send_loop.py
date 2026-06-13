@@ -1,4 +1,4 @@
-# ADN DMR Peer Server - tests parrot playback send loop
+# ADN DMR Peer Server - tests echo playback send loop
 #
 # Copyright (C) 2026  Rodrigo Pérez, CE5RPY <ce5rpy@qmd.cl>
 #

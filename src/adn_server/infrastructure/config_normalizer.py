@@ -22,7 +22,7 @@
 #   Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301  USA
 ###############################################################################
 
-"""Shared config normalization: PEER, OBP, MASTER runtime state. Used by main and parrot runtime."""
+"""Shared config normalization: PEER, OBP, MASTER runtime state. Used by main and echo runtime."""
 
 from __future__ import annotations
 

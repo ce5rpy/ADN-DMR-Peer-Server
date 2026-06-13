@@ -26,9 +26,9 @@
 ADN DMR Peer Server entrypoint.
 
 Run: python -m adn_server.main [-c adn-server.yaml] [--logging LEVEL]
-       python -m adn_server.main --parrot [-c adn-parrot.yaml]
+       python -m adn_server.main --echo [-c adn-echo.yaml]
        python -m adn_server.main --doctor [-c adn-server.yaml]
-Config default: adn-server.yaml (or adn-parrot.yaml with --parrot).
+Config default: adn-server.yaml (or adn-echo.yaml with --echo).
 """
 
 from __future__ import annotations
@@ -48,7 +48,7 @@ from adn_server.infrastructure import YamlConfigLoader, setup_logging
 from adn_server.infrastructure.bootstrap import run_peer_server
 from adn_server.infrastructure.config_normalizer import apply_talker_alias_defaults
 from adn_server.infrastructure.doctor import run_doctor
-from adn_server.infrastructure.parrot import run_parrot
+from adn_server.infrastructure.echo import run_echo
 
 
 def _project_root() -> str:
@@ -65,9 +65,9 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("-c", "--config", dest="CONFIG_FILE", default=None, help="Path to YAML config")
     parser.add_argument("--logging", dest="LOG_LEVEL", default=None, help="Override log level")
     parser.add_argument(
-        "--parrot",
+        "--echo",
         action="store_true",
-        help="Playback mode: run parrot PEER(s) from adn-parrot.yaml (default config)",
+        help="Playback mode: run ECHO PEER(s) from adn-echo.yaml (default config)",
     )
     parser.add_argument(
         "--no-proxy",
@@ -98,7 +98,7 @@ def main() -> None:
 
     args = _parse_args()
     project_root = _project_root()
-    default_config = "adn-parrot.yaml" if args.parrot else "adn-server.yaml"
+    default_config = "adn-echo.yaml" if args.echo else "adn-server.yaml"
     config_path = args.CONFIG_FILE or os.path.join(project_root, default_config)
 
     if args.doctor:
@@ -106,7 +106,7 @@ def main() -> None:
             run_doctor(
                 config_path,
                 project_root,
-                parrot=args.parrot,
+                echo=args.echo,
                 no_proxy=args.no_proxy,
                 version=__version__,
             )
@@ -119,11 +119,11 @@ def main() -> None:
         print(f"(CONFIG) {exc}", file=sys.stderr)
         sys.exit(1)
 
-    if not args.parrot:
+    if not args.echo:
         apply_talker_alias_defaults(config)
 
     voice_config_path = os.path.join(os.path.dirname(os.path.abspath(config_path)), "adn-voice.yaml")
-    voice_data = loader.load_voice_config(voice_config_path) if not args.parrot else None
+    voice_data = loader.load_voice_config(voice_config_path) if not args.echo else None
     if voice_data:
         config.setdefault("VOICE", {}).update(voice_data)
 
@@ -132,8 +132,8 @@ def main() -> None:
     logger = setup_logging(config.get("LOGGER", {}))
     _log_copyright(logger)
 
-    if args.parrot:
-        run_parrot(config, logger=logger)
+    if args.echo:
+        run_echo(config, logger=logger)
         return
 
     run_peer_server(
