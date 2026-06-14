@@ -44,12 +44,7 @@ SERVER_NAME = "adn-server"
 
 
 def server_version() -> str:
-    try:
-        from importlib.metadata import PackageNotFoundError, version
+    """Package version for HELLO (same source as ``adn_server --version``)."""
+    from adn_server import __version__
 
-        try:
-            return version("adn-server")
-        except PackageNotFoundError:
-            return "0.0.0"
-    except Exception:
-        return "0.0.0"
+    return __version__
