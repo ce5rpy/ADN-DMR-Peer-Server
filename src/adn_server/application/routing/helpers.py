@@ -526,14 +526,28 @@ def peer_single_blocks_group_voice(
 
 
 def peer_receives_group_tgid(peer: dict[str, Any], slot: int, tgid: int) -> bool:
-    """True when peer RPTO OPTIONS list the group TG on that voice timeslot."""
+    """True when peer RPTO OPTIONS list the group TG on TS1 or TS2 (legacy REPEAT parity).
+
+    Voice may arrive on either timeslot; hotspots in repeater mode often use one RF
+    slot while self-service lists the TG on the other.
+    """
+    del slot
+    return peer_options_static_tg_slot(peer, tgid) is not None
+
+
+def peer_options_static_tg_slot(peer: dict[str, Any], tgid: int) -> int | None:
+    """Timeslot (1 or 2) where peer OPTIONS list ``tgid``, when unambiguous."""
     from adn_server.application.report.payloads import parse_peer_options_static
 
     ts1, ts2 = parse_peer_options_static(peer.get("OPTIONS"))
-    static = ts1 if slot == 1 else ts2
-    if not static:
-        return False
-    return str(tgid) in static
+    tg = str(tgid)
+    in_ts1 = tg in ts1
+    in_ts2 = tg in ts2
+    if in_ts1 and not in_ts2:
+        return 1
+    if in_ts2 and not in_ts1:
+        return 2
+    return None
 
 
 def peer_single_blocks_uplink(
@@ -589,7 +603,7 @@ def peer_should_receive_group_voice(
     Inject-only multi-hotspot rules (per peer):
 
     1. ``SINGLE=1`` with an active session on another TG → deny all other TGs.
-    2. TG in this peer's OPTIONS static list → allow (when not blocked by SINGLE).
+    2. TG in this peer's OPTIONS static list (TS1 or TS2) → allow (when not blocked by SINGLE).
     3. ``SINGLE=1``: dynamic UA owned by this peer's exclusive session → allow.
     4. ``SINGLE=0``: dynamic UA this peer keyed (multi set) → allow.
     5. Sole connected hotspot with an ACTIVE bridge leg for ``(slot, tgid)`` → allow.
