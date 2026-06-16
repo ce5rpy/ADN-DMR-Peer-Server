@@ -221,6 +221,27 @@ def test_local_hotspot_rx_fans_out_tx_only_to_peers_with_matching_tg() -> None:
     assert "SYSTEM-4" not in by_system
 
 
+def test_repeat_companion_tx_uses_peer_options_static_slot() -> None:
+    """Duplex TS1=73010 must show monitor TX on TS1 when simplex keys TS2."""
+    duplex = bytes_4(730001)
+    simplex = bytes_4(730002)
+    peers = {
+        simplex: _peer(options=b"TS2=73010;"),
+        duplex: _peer(options=b"TS1=73010;"),
+    }
+    config = _proxy_config(peers)
+    peer_slots = {simplex: 0, duplex: 1}
+    raw = "GROUP VOICE,START,RX,SYSTEM,3262598598,730002,730002,2,73010"
+    events = remap_inject_proxy_voice_events(
+        raw, config, config["SYSTEMS"], peer_slots
+    )
+    assert len(events) == 2
+    by_system = {ev.split(",")[3]: ev for ev in events}
+    duplex_tx = by_system["SYSTEM-1"]
+    assert duplex_tx.startswith("GROUP VOICE,START,TX,SYSTEM-1,")
+    assert duplex_tx.split(",")[7] == "1"
+
+
 def test_obp_tx_single_hotspot_remaps_dynamic_tg_not_in_static() -> None:
     """One HS online: downlink/monitor must remap TX even when TG is UA-only (not in OPTIONS)."""
     peer = bytes_4(730039101)
