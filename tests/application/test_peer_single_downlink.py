@@ -29,6 +29,7 @@ from adn_server.application.routing.helpers import (
     clear_peer_ua_sessions,
     tg4000_reset_on_vhead,
     clear_peer_rx_status_slots,
+    peer_receives_group_tgid,
     peer_should_receive_group_voice,
     peer_single_blocks_group_voice,
     peer_single_blocks_uplink,
@@ -44,6 +45,13 @@ def _sys_cfg() -> dict:
 
 def _peer_id() -> bytes:
     return bytes_4(730039101)
+
+
+def test_static_tg_on_opposite_slot_receives_group_voice() -> None:
+    """Hotspot lists TG on TS1 but network voice arrives on TS2 (legacy REPEAT parity)."""
+    peer = {"OPTIONS": b"TS1=730170;"}
+    assert peer_receives_group_tgid(peer, 2, 730170)
+    assert peer_should_receive_group_voice(peer, 2, 730170, connected_count=8)
 
 
 def test_single_blocks_other_static_tg_while_session_on_static() -> None:

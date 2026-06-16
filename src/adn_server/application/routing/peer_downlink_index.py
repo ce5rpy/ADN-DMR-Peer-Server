@@ -71,10 +71,14 @@ class PeerDownlinkIndex:
     def candidates(self, slot: int, tgid: int, *, connected_count: int) -> frozenset[bytes]:
         if connected_count == 1:
             return self.connected
+        voice_slot = int(slot)
+        other_slot = 3 - voice_slot
+        tg = int(tgid)
         out: set[bytes] = set()
-        key = (int(slot), int(tgid))
-        out.update(self.static_by_slot_tgid.get(key, ()))
-        out.update(self.ua_by_slot_tgid.get(key, ()))
+        for ts in (voice_slot, other_slot):
+            key = (ts, tg)
+            out.update(self.static_by_slot_tgid.get(key, ()))
+            out.update(self.ua_by_slot_tgid.get(key, ()))
         return frozenset(out)
 
 

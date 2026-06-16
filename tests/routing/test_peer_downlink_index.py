@@ -55,6 +55,15 @@ def test_single_connected_peer_returns_all() -> None:
     assert idx.candidates(2, 52090, connected_count=1) == frozenset({p1})
 
 
+def test_static_tg_on_opposite_slot_is_candidate() -> None:
+    """Legacy REPEAT: TG in TS1 OPTIONS still receives voice on TS2."""
+    p1 = bytes_4(730001)
+    peers = {p1: _peer("TS1=730170;")}
+    idx = build_peer_downlink_index(peers, {})
+    assert p1 in idx.candidates(2, 730170, connected_count=5)
+    assert p1 not in idx.candidates(2, 52090, connected_count=5)
+
+
 def test_options_cache_invalidates_on_rpto() -> None:
     peer = _peer("TS2=52090;")
     cached_peer_static_tgs(peer)
