@@ -2,7 +2,15 @@
 
 All notable changes to **adn-server** are documented here.
 
-## [Unreleased]
+## [2.0.0-rc.2] - 2026-06-16
+
+### Fixed
+
+- **Cross-slot static TG downlink** (legacy REPEAT parity): inject-only MASTER delivers group voice to hotspots when the TG is listed in TS1 or TS2 OPTIONS, regardless of incoming wire timeslot. Wire slot is unchanged; downlink index and `peer_should_receive_group_voice` match both OPTIONS lists.
+
+### Compatibility
+
+- **Monitor:** adn-monitor **2.0.0-rc.2** (TS chip maps OPTIONS static slot on receive).
 
 ## [2.0.0-rc.1] - 2026-06-12
 
