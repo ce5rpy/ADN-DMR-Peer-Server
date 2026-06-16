@@ -31,7 +31,7 @@ from __future__ import annotations
 import copy
 from typing import Any
 
-from adn_server.application.routing.helpers import peer_downlink_voice_slot, peer_should_receive_group_voice
+from adn_server.application.routing.helpers import peer_should_receive_group_voice
 from adn_server.application.proxy.deployment import is_proxy_inject_only, proxy_target_system
 from adn_server.domain.value_objects import bytes_4, int_id
 
@@ -350,15 +350,13 @@ def remap_inject_proxy_voice_events(
         if not receivers:
             return [event]
         remapped: list[str] = []
-        for peer_key, peer in receivers:
+        for peer_key, _peer in receivers:
             mapped_slot = slot_map.get(peer_key)
             if mapped_slot is None:
                 continue
-            peer_parts = list(parts)
-            peer_parts[7] = str(peer_downlink_voice_slot(peer, voice_slot, tgid))
             remapped.append(
                 _remap_voice_event_to_slot(
-                    peer_parts, target=target, slot=mapped_slot, peer_key=peer_key
+                    parts, target=target, slot=mapped_slot, peer_key=peer_key
                 )
             )
         return remapped if remapped else [event]
@@ -381,7 +379,7 @@ def remap_inject_proxy_voice_events(
         tx_parts = list(parts)
         tx_parts[2] = "TX"
         tx_parts[5] = str(int_id(peer_key))
-        for other_key, other_peer in _peers_receiving_tgid(
+        for other_key, _peer in _peers_receiving_tgid(
             connected,
             slot=voice_slot,
             tgid=tgid,
@@ -393,11 +391,9 @@ def remap_inject_proxy_voice_events(
             other_slot = slot_map.get(other_key)
             if other_slot is None:
                 continue
-            peer_tx_parts = list(tx_parts)
-            peer_tx_parts[7] = str(peer_downlink_voice_slot(other_peer, voice_slot, tgid))
             results.append(
                 _remap_voice_event_to_slot(
-                    peer_tx_parts,
+                    tx_parts,
                     target=target,
                     slot=other_slot,
                     peer_key=other_key,

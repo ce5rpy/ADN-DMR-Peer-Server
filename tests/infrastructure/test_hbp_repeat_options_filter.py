@@ -62,34 +62,6 @@ def _voice_burst() -> bytes:
     return DeterministicScenario.voice_burst_spec(spec, seq=1, dtype_vseq=1).data()
 
 
-def test_repeat_remaps_slot_to_peer_options_ts() -> None:
-    """Duplex on TS1=73010 must receive TS2 ingress on TS1 (slot bit flip)."""
-    stack = build_hbp_repeat_stack(talker_alias=False, system_name="MASTER-A")
-    stack.config["PROXY"] = {"TARGET_SYSTEM": "MASTER-A"}
-    stack.hbp._CONFIG = stack.config
-    duplex = bytes_4(730001)
-    simplex = bytes_4(730002)
-    addr_duplex = ("10.0.0.30", 62030)
-    addr_simplex = ("10.0.0.31", 62031)
-    stack.register_peer(simplex, addr_simplex, options="TS2=73010;")
-    stack.register_peer(duplex, addr_duplex, options="TS1=73010;")
-
-    spec = PacketSpec(
-        peer_id=int.from_bytes(simplex, "big"),
-        rf_src=730002,
-        dst_id=73010,
-        slot=2,
-        stream_id=0x22334455,
-        payload=b"\x00" * 33,
-    )
-    burst = DeterministicScenario.voice_burst_spec(spec, seq=1, dtype_vseq=1).data()
-    stack.inject(burst, addr_simplex)
-
-    duplex_pkts = [p for p in stack.transport.for_addr(addr_duplex) if p[:4] == DMRD]
-    assert len(duplex_pkts) == 1
-    assert not (duplex_pkts[0][15] & 0x80)
-
-
 def test_repeat_only_reaches_peers_with_matching_options() -> None:
     stack = _inject_proxy_stack()
     stack.inject(_voice_burst(), _ADDR_TX)

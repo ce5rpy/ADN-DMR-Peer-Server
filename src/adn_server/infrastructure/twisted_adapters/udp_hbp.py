@@ -48,7 +48,6 @@ from ...application.routing.helpers import (
     parse_dmrd_route_fields,
     peer_matches_rf_source,
     peer_should_receive_group_voice,
-    remap_dmrd_to_peer_static_slot,
     peer_single_exclusive_tgid,
     register_peer_ua_session,
     seed_peer_ua_session_from_status,
@@ -472,9 +471,6 @@ class HBPProtocol(DatagramProtocol):
         if _packet[:4] == DMRD:
             if not self._peer_should_receive_dmrd(_peer, _packet):
                 return
-            peer = self._peers.get(_peer)
-            if peer is not None:
-                _packet = remap_dmrd_to_peer_static_slot(_packet, peer)
             _packet = b"".join([_packet[:11], _peer, _packet[15:]])
         self.transport.write(_packet, self._peers[_peer]["SOCKADDR"])
 

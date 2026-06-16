@@ -550,32 +550,6 @@ def peer_options_static_tg_slot(peer: dict[str, Any], tgid: int) -> int | None:
     return None
 
 
-def peer_downlink_voice_slot(peer: dict[str, Any], voice_slot: int, tgid: int) -> int:
-    """Timeslot for downlink DMRD and monitor BRDG_EVENT for this peer."""
-    cfg_slot = peer_options_static_tg_slot(peer, tgid)
-    if cfg_slot is not None:
-        return cfg_slot
-    return int(voice_slot)
-
-
-def remap_dmrd_to_peer_static_slot(packet: bytes, peer: dict[str, Any]) -> bytes:
-    """Flip DMRD slot bit when voice arrives on the opposite TS from OPTIONS static TG."""
-    parsed = parse_dmrd_route_fields(packet)
-    if parsed is None:
-        return packet
-    voice_slot, tgid, call_type = parsed
-    if call_type not in ("group", "vcsbk"):
-        return packet
-    if is_special_tg(str(tgid)):
-        return packet
-    cfg_slot = peer_options_static_tg_slot(peer, tgid)
-    if cfg_slot is None or cfg_slot == voice_slot:
-        return packet
-    bits = packet[15]
-    new_bits = bits ^ (1 << 7)
-    return packet[:15] + bytes([new_bits]) + packet[16:]
-
-
 def peer_single_blocks_uplink(
     peer: dict[str, Any],
     peer_id: bytes,
