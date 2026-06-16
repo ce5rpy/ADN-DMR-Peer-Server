@@ -532,11 +532,40 @@ def peer_receives_group_tgid(peer: dict[str, Any], slot: int, tgid: int) -> bool
     slot while self-service lists the TG on the other.
     """
     del slot
+    return peer_options_static_tg_slot(peer, tgid) is not None
+
+
+def peer_options_static_tg_slot(peer: dict[str, Any], tgid: int) -> int | None:
+    """Timeslot (1 or 2) where peer OPTIONS list ``tgid``, when unambiguous."""
     from adn_server.application.report.payloads import parse_peer_options_static
 
     ts1, ts2 = parse_peer_options_static(peer.get("OPTIONS"))
     tg = str(tgid)
-    return tg in ts1 or tg in ts2
+    in_ts1 = tg in ts1
+    in_ts2 = tg in ts2
+    if in_ts1 and not in_ts2:
+        return 1
+    if in_ts2 and not in_ts1:
+        return 2
+    return None
+
+
+def remap_dmrd_to_peer_static_slot(packet: bytes, peer: dict[str, Any]) -> bytes:
+    """Flip DMRD slot bit when voice arrives on the opposite TS from OPTIONS static TG."""
+    parsed = parse_dmrd_route_fields(packet)
+    if parsed is None:
+        return packet
+    voice_slot, tgid, call_type = parsed
+    if call_type not in ("group", "vcsbk"):
+        return packet
+    if is_special_tg(str(tgid)):
+        return packet
+    cfg_slot = peer_options_static_tg_slot(peer, tgid)
+    if cfg_slot is None or cfg_slot == voice_slot:
+        return packet
+    bits = packet[15]
+    new_bits = bits ^ (1 << 7)
+    return packet[:15] + bytes([new_bits]) + packet[16:]
 
 
 def peer_single_blocks_uplink(

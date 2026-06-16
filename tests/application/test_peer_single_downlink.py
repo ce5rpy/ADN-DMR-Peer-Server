@@ -29,8 +29,10 @@ from adn_server.application.routing.helpers import (
     clear_peer_ua_sessions,
     tg4000_reset_on_vhead,
     clear_peer_rx_status_slots,
+    peer_options_static_tg_slot,
     peer_receives_group_tgid,
     peer_should_receive_group_voice,
+    remap_dmrd_to_peer_static_slot,
     peer_single_blocks_group_voice,
     peer_single_blocks_uplink,
     register_peer_ua_multi_tg,
@@ -51,7 +53,35 @@ def test_static_tg_on_opposite_slot_receives_group_voice() -> None:
     """Hotspot lists TG on TS1 but network voice arrives on TS2 (legacy REPEAT parity)."""
     peer = {"OPTIONS": b"TS1=730170;"}
     assert peer_receives_group_tgid(peer, 2, 730170)
+    assert peer_options_static_tg_slot(peer, 730170) == 1
     assert peer_should_receive_group_voice(peer, 2, 730170, connected_count=8)
+
+
+def test_remap_dmrd_flips_slot_to_options_static_ts() -> None:
+    from tests.harness.deterministic import PacketSpec, DeterministicScenario
+
+    peer = {"OPTIONS": b"TS1=73010;"}
+    burst = DeterministicScenario.voice_burst_spec(
+        PacketSpec(dst_id=73010, slot=2, peer_id=730044401, rf_src=7300444),
+        seq=1,
+        dtype_vseq=1,
+    ).data()
+    assert burst[15] & 0x80
+    remapped = remap_dmrd_to_peer_static_slot(burst, peer)
+    assert not (remapped[15] & 0x80)
+
+
+def test_remap_dmrd_keeps_slot_when_options_match_voice_ts() -> None:
+    from tests.harness.deterministic import PacketSpec, DeterministicScenario
+
+    peer = {"OPTIONS": b"TS2=73010;"}
+    burst = DeterministicScenario.voice_burst_spec(
+        PacketSpec(dst_id=73010, slot=2, peer_id=730044401, rf_src=7300444),
+        seq=1,
+        dtype_vseq=1,
+    ).data()
+    remapped = remap_dmrd_to_peer_static_slot(burst, peer)
+    assert remapped[15] == burst[15]
 
 
 def test_single_blocks_other_static_tg_while_session_on_static() -> None:
