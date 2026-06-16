@@ -13,7 +13,7 @@ En cable, OpenBridge extendido usa el opcode **`DMRE`**. El **byte de versión d
 - **`DMRD`** versión 1 — carga autenticada HMAC-SHA1 (modo de compatibilidad); o
 - **`DMRE`** — trama extendida con MAC **BLAKE2b**, versión embebida, marcas de tiempo, **saltos**, IDs servidor/repetidor de origen, etc. (**DMRE v5** = versión embebida 5, recomendada arriba).
 
-Esta pila implementa el modo par **OPENBRIDGE** en **`udp_hbp.py`** y el enrutado de bridges en **`BridgeUseCases`**.
+Esta pila implementa el modo par **OPENBRIDGE** en **`udp_hbp.py`** y el enrutado de voz en **`RoutingUseCases`** (`application/routing/`, `application/subscription/`).
 
 ## Ingreso (DMRE)
 

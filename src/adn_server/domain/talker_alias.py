@@ -1,5 +1,22 @@
 # ADN DMR Peer Server - DMR Talker Alias (ETSI / MMDVMHost)
+#
 # Copyright (C) 2026  Rodrigo Pérez, CE5RPY <ce5rpy@qmd.cl>
+#
+###############################################################################
+#   This program is free software; you can redistribute it and/or modify
+#   it under the terms of the GNU General Public License as published by
+#   the Free Software Foundation; either version 3 of the License, or
+#   (at your option) any later version.
+#
+#   This program is distributed in the hope that it will be useful,
+#   but WITHOUT ANY WARRANTY; without even the implied warranty of
+#   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+#   GNU General Public License for more details.
+#
+#   You should have received a copy of the GNU General Public License
+#   along with this program; if not, write to the Free Software Foundation,
+#   Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301  USA
+###############################################################################
 
 """Talker Alias encode/decode and HBP DMRA packet builders (UTF-8 format 2)."""
 
@@ -270,11 +287,12 @@ def try_buffer_ta_from_voice_fragments(
 ) -> bool:
     """Reassemble embedded LC across voice bursts B–E (vseq 1–4) and store if it is a TA.
 
-    ``dmr_utils3.bptc.decode_emblc`` is correct on properly FEC-encoded input (the encode
-    helper is the buggy one), so a TA sent by a real radio decodes losslessly here.
+    ``adn_server.domain.dmr.bptc.decode_emblc`` is correct on properly FEC-encoded input (the encode
+    helper had an upstream bit-25 bug, fixed in our vendored copy), so a TA sent by a real radio
+    decodes losslessly here.
     Returns True when a TA block was decoded and stored.
     """
-    from dmr_utils3 import bptc, decode
+    from .dmr import bptc, decode
 
     if vseq not in (1, 2, 3, 4) or len(dmrpkt) < 33:
         return False

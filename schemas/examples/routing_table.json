@@ -1,0 +1,39 @@
+{
+  "type": "routing_table",
+  "seq": 42,
+  "ts": 1717555260.5,
+  "routes": [
+    {
+      "relay_table_key": "52090",
+      "legs": [
+        {
+          "system": "MASTER-A",
+          "ts": 2,
+          "tgid": 52090,
+          "active": true,
+          "to_type": "ON",
+          "timer_expires_at": 1717555320.0
+        },
+        {
+          "system": "MASTER-B",
+          "ts": 2,
+          "tgid": 52090,
+          "active": true,
+          "to_type": "ON"
+        }
+      ]
+    },
+    {
+      "relay_table_key": "#310",
+      "legs": [
+        {
+          "system": "MASTER-A",
+          "ts": 2,
+          "tgid": 310,
+          "active": false,
+          "to_type": "NONE"
+        }
+      ]
+    }
+  ]
+}

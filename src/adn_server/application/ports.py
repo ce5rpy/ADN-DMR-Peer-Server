@@ -27,7 +27,10 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from collections.abc import Sequence
-from typing import Any, Protocol
+from typing import TYPE_CHECKING, Any, Protocol
+
+if TYPE_CHECKING:
+    from adn_server.domain.subscription import AudioChannel, Subscription, SubscriptionId, SubscriptionPhase, SystemId
 
 
 class ConfigLoader(ABC):
@@ -88,37 +91,90 @@ class KeysStore(ABC):
         ...
 
 
+class ReportWireEncoder(ABC):
+    """Outbound port: encode one report protocol variant into zero or more TCP frames."""
+
+    @abstractmethod
+    def hello_frames(self, systems: dict[str, Any]) -> tuple[bytes, ...]:
+        """HELLO (0xFF) frame(s) for this variant."""
+        ...
+
+    @abstractmethod
+    def config_frames(self, systems: dict[str, Any], *, full_snapshot: bool) -> tuple[bytes, ...]:
+        """CONFIG_SND / TOPOLOGY_SND / delta frames (empty if nothing to send)."""
+        ...
+
+    @abstractmethod
+    def bridge_frames(self, bridges: dict[str, Any], *, full_snapshot: bool) -> tuple[bytes, ...]:
+        """BRIDGE_SND / ROUTING_TABLE_SND / delta frames."""
+        ...
+
+    @abstractmethod
+    def bridge_event_frames(self, event: str) -> tuple[bytes, ...]:
+        """BRDG_EVENT / VOICE_EVENT_SND frames."""
+        ...
+
+
+class ReportMqttPublisher(ABC):
+    """Optional second sink: publish the same report v2 JSON payloads to an MQTT broker."""
+
+    @abstractmethod
+    def start(
+        self,
+        wire: ReportWireEncoder,
+        get_systems: Any,
+        routing_table_for_report: Any,
+    ) -> None:
+        """Connect to broker and publish bootstrap snapshots (hello + full topology + routing)."""
+        ...
+
+    @abstractmethod
+    def publish_frames(self, frames: tuple[bytes, ...]) -> None:
+        """Publish zero or more wire frames (opcode + JSON) to MQTT topics."""
+        ...
+
+    @abstractmethod
+    def publish_dashboard(self, systems: dict[str, Any]) -> None:
+        """Publish slim ``dashboard_state`` (linked systems only)."""
+        ...
+
+    @abstractmethod
+    def stop(self) -> None:
+        """Disconnect from broker."""
+        ...
+
+
 class ReportSender(ABC):
     """Send config and bridge state to report TCP clients (CONFIG_SND, BRIDGE_SND, BRDG_EVENT)."""
 
     @abstractmethod
-    def send_config(self, systems: dict[str, Any]) -> None:
-        """Send CONFIG_SND (pickle systems)."""
+    def set_systems(self, systems: dict[str, Any]) -> None:
+        """Update cached SYSTEMS snapshot used by the wire encoder."""
         ...
 
     @abstractmethod
-    def send_bridge(self, bridges: dict[str, Any]) -> None:
-        """Send BRIDGE_SND (pickle bridges)."""
+    def set_routing_table(self, bridges: dict[str, Any]) -> None:
+        """Update cached BRIDGES snapshot used by the wire encoder."""
         ...
 
     @abstractmethod
-    def send_bridge_event(self, event: str) -> None:
+    def send_config(self, systems: dict[str, Any], *, incremental: bool = False) -> None:
+        """Send CONFIG_SND (pickle systems) or topology / delta JSON."""
+        ...
+
+    @abstractmethod
+    def send_routing_table(self, bridges: dict[str, Any], *, incremental: bool = False) -> None:
+        """Send BRIDGE_SND (pickle bridges) or routing_table / delta JSON."""
+        ...
+
+    @abstractmethod
+    def send_routing_event(self, event: str) -> None:
         """Send BRDG_EVENT (opcode + event string)."""
         ...
 
 
-class BridgeRouter(ABC):
-    """Query and update BRIDGES (conference bridge state). Used by rule_timer, make_single_bridge, etc."""
-
-    @abstractmethod
-    def get_bridges(self) -> dict[str, list[dict[str, Any]]]:
-        """Return current BRIDGES dict (key = TGID or #reflector)."""
-        ...
-
-    @abstractmethod
-    def set_bridges(self, bridges: dict[str, list[dict[str, Any]]]) -> None:
-        """Replace BRIDGES (e.g. after rule_timer or make_single_bridge)."""
-        ...
+class AclRouter(ABC):
+    """ACL range checks for registration and voice ingress (legacy acl_check)."""
 
     @abstractmethod
     def acl_check(self, id_bytes_or_int: bytes | int, acl: tuple[bool, list[tuple[int, int]]]) -> bool:
@@ -183,3 +239,180 @@ class TalkerAliasEmblcEncoder(Protocol):
 
     def encode_blocks(self, blocks: dict[int, bytes]) -> tuple[list[dict[int, Any]], int]:
         ...
+
+
+class SubscriptionStore(ABC):
+    """Authoritative in-memory subscription registry (Phase 2; replaces BRIDGES dict over time)."""
+
+    @abstractmethod
+    def get(self, sub_id: "SubscriptionId") -> "Subscription | None":
+        ...
+
+    @abstractmethod
+    def upsert(self, subscription: "Subscription") -> None:
+        ...
+
+    @abstractmethod
+    def remove(self, sub_id: "SubscriptionId") -> bool:
+        ...
+
+    @abstractmethod
+    def clear(self) -> None:
+        ...
+
+    @abstractmethod
+    def replace_all(self, subscriptions: Sequence["Subscription"]) -> None:
+        ...
+
+    @abstractmethod
+    def snapshot(self) -> tuple["Subscription", ...]:
+        ...
+
+    @abstractmethod
+    def list_by_channel(self, channel: "AudioChannel") -> tuple["Subscription", ...]:
+        ...
+
+    @abstractmethod
+    def list_by_system(self, system: "SystemId") -> tuple["Subscription", ...]:
+        ...
+
+    @abstractmethod
+    def list_active(self) -> tuple["Subscription", ...]:
+        ...
+
+    @abstractmethod
+    def list_by_phase(self, phase: "SubscriptionPhase") -> tuple["Subscription", ...]:
+        ...
+
+
+class ProxySlotStore(ABC):
+    """Hotspot session registry keyed by peer_id (Phase 3)."""
+
+    @abstractmethod
+    def bind(self, slot: "ClientSlot") -> None:
+        ...
+
+    @abstractmethod
+    def update_client(self, peer_id: bytes, host: str, port: int) -> None:
+        ...
+
+    @abstractmethod
+    def unbind(self, peer_id: bytes) -> "ClientSlot | None":
+        ...
+
+    @abstractmethod
+    def get_by_peer(self, peer_id: bytes) -> "ClientSlot | None":
+        ...
+
+    @abstractmethod
+    def list_slots(self) -> tuple["ClientSlot", ...]:
+        ...
+
+
+class PendingRptoQueue(ABC):
+    """Pending RPTO payloads for self-service / login options push."""
+
+    @abstractmethod
+    def enqueue(self, peer_id: bytes, payload: bytes) -> None:
+        ...
+
+    @abstractmethod
+    def dequeue(self) -> tuple[bytes, bytes] | None:
+        ...
+
+
+class ProxySelfServiceStore(ABC):
+    """Self-service ``Clients`` table (legacy adn-proxy / hotspot_proxy_self_service)."""
+
+    @abstractmethod
+    def test_db(self) -> Any:
+        """Verify DB connectivity. Returns Twisted Deferred."""
+
+    @abstractmethod
+    def ins_conf(
+        self,
+        int_id: int,
+        peer_id_bytes: bytes,
+        callsign: str,
+        host: str,
+        mode: str,
+    ) -> None:
+        ...
+
+    @abstractmethod
+    def updt_tbl(
+        self,
+        action: str,
+        peer_id_bytes: bytes,
+        *,
+        psswd: str | None = None,
+    ) -> None:
+        ...
+
+    @abstractmethod
+    def slct_opt(self, peer_id_bytes: bytes) -> Any:
+        """Returns Deferred firing with row list, e.g. ``((options_str,),)``."""
+
+    @abstractmethod
+    def slct_db(self) -> Any:
+        """Returns Deferred firing with ``(dmr_id, options)`` rows for ``modified=1``."""
+
+    @abstractmethod
+    def updt_lstseen(self, dmrid_list: list[tuple[bytes, ...]]) -> None:
+        ...
+
+    @abstractmethod
+    def clean_tbl(self) -> Any:
+        """Returns Deferred."""
+
+
+class ProxyIpBlacklist(ABC):
+    """Temporary IP blocks (legacy proxy ``ip_black_list`` / PRBL)."""
+
+    @abstractmethod
+    def block_until(self, host: str, expire_at: float) -> None:
+        ...
+
+    @abstractmethod
+    def is_blocked(self, host: str, now: float) -> bool:
+        ...
+
+
+class ProxyMasterSink(Protocol):
+    """Inject hotspot datagrams into the target MASTER (in-process)."""
+
+    def inject(self, data: bytes, client_addr: tuple[str, int]) -> None:
+        ...
+
+
+class ProxyClientSender(Protocol):
+    """Send datagrams to hotspot clients via LISTEN_PORT."""
+
+    def send_to_client(self, data: bytes, client: "ClientEndpoint") -> None:
+        ...
+
+
+class MasterPeerRegistry(Protocol):
+    """Drop MASTER peer state when proxy session ends."""
+
+    def remove_peer(self, peer_id: bytes) -> None:
+        ...
+
+
+class PeerTransport(Protocol):
+    """Built-in mesh codec (dmre_v5, obp_v1) — decode datagrams to ``MeshIngress``, encode ``MeshEgress``."""
+
+    @property
+    def name(self) -> str:
+        ...
+
+    def try_decode(self, datagram: bytes, config: "PeerMeshConfig") -> "MeshIngress | None":
+        ...
+
+    def encode(self, egress: "MeshEgress", config: "PeerMeshConfig") -> bytes | None:
+        ...
+
+
+if TYPE_CHECKING:
+    from adn_server.domain.mesh_routing import MeshEgress, MeshIngress, PeerMeshConfig
+    from adn_server.domain.proxy import ClientEndpoint, ClientSlot

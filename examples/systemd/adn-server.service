@@ -1,0 +1,31 @@
+# ADN DMR Peer Server – systemd unit (bridge, integrated PROXY, reports)
+#
+# Copy:
+#   sudo cp /opt/adn-server/examples/systemd/adn-server.service /etc/systemd/system/
+# Edit User / paths if needed, then:
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now adn-server
+#
+# Config: adn-server.yaml (copy from adn-server.example.yaml; not committed).
+# Reload YAML: systemctl reload adn-server  (SIGHUP via ExecReload — not logrotate)
+# Logrotate: kill -USR2 $(systemctl show adn-server -p MainPID --value)
+
+[Unit]
+Description=ADN DMR Peer Server
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=adn
+Type=simple
+Restart=always
+RestartSec=3
+SyslogIdentifier=adn-dmr-server
+WorkingDirectory=/opt/adn-server
+ExecStart=/opt/.pyenv/versions/3.11.8/bin/python3 /opt/adn-server/adn-server.py -c /opt/adn-server/adn-server.yaml
+ExecReload=/bin/kill -HUP $MAINPID
+KillSignal=SIGTERM
+TimeoutStopSec=30
+
+[Install]
+WantedBy=multi-user.target

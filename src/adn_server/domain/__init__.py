@@ -22,6 +22,17 @@
 ###############################################################################
 
 from .entities import BridgeEntry, StreamState, SystemConfig
+from .subscription import (
+    ActivationPolicy,
+    AudioChannel,
+    Subscription,
+    SubscriptionId,
+    SubscriptionPhase,
+    SubscriptionRole,
+    SubscriptionState,
+    SystemId,
+)
+from .voice_routing import ForwardLeg, VoiceIngress
 from .errors import ACLError, ConfigError, DomainError
 from .hbp_protocol import (
     HBPF_DATA_SYNC,
@@ -40,6 +51,16 @@ __all__ = [
     "BridgeEntry",
     "StreamState",
     "SystemConfig",
+    "ActivationPolicy",
+    "AudioChannel",
+    "Subscription",
+    "SubscriptionId",
+    "SubscriptionPhase",
+    "SubscriptionRole",
+    "SubscriptionState",
+    "SystemId",
+    "VoiceIngress",
+    "ForwardLeg",
     "DmrId",
     "TgId",
     "Slot",

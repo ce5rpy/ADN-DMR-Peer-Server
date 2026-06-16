@@ -1,6 +1,6 @@
 # ADN Monitor (overview)
 
-**ADN Monitor** is a separate project from the **ADN DMR Peer Server**, but the two are normally deployed **together**: the server sends **TCP reports** (config, bridges, call events) to the monitor; the monitor drives the **web dashboard** (React) and **WebSocket** live updates. Optional components include the **PHP API** (Slim), **MySQL** (self-service / device registry), and the **hotspot proxy** (UDP between hotspots and the peer server).
+**ADN Monitor** is a separate project from the **ADN DMR Peer Server**, but the two are normally deployed **together**: the server sends **TCP reports** (or MQTT) to the monitor; the monitor drives the **web dashboard** (React) and **WebSocket** live updates. A single **`monitor.py`** process (FastAPI) serves **REST** (`/api/*`), **WebSocket** (`/ws`), and **report ingest**. Optional: **MySQL** (self-service / Last Heard) and **integrated hotspot proxy** in **`adn-server.py`**.
 
 This chapter documents the **adn-monitor** stack at the same level of detail as the server guides. Source code lives in the **adn-monitor** repository, not in the **adn-server** repository (where this documentation is maintained).
 
@@ -8,19 +8,17 @@ This chapter documents the **adn-monitor** stack at the same level of detail as 
 
 | Part | Role |
 |------|------|
-| **`monitor/monitor.py`** | Python (Twisted): connects to the peer server’s **report TCP** port, decodes netstring payloads (`CONFIG_SND`, `BRIDGE_SND`, `BRDG_EVENT`), maintains **CTABLE** / **BTABLE**, writes **Last Heard** / TG stats to **MySQL** when configured, serves **WebSocket** JSON to the dashboard. |
-| **`backend/`** | PHP **Slim** app: `/api/config/dashboard`, auth, optional **self-service** APIs, alias proxies. Reads **`adn-monitor.yaml`** via **`ADN_CONFIG_PATH`**. |
-| **`frontend/`** | React (Vite): dashboard UI; consumes backend API + WebSocket. |
-| **`proxy/`** | Python (Twisted): UDP **hotspot proxy**; forwards Homebrew between hotspots and the peer server; reads **`Clients`** in MySQL for **RPTO** options (self-service). Loads **`adn-proxy.yaml`** by default (see [Hotspot proxy](hotspot-proxy.md)). |
+| **`monitor/monitor.py`** | FastAPI: REST (`/api/*`), WebSocket (`/ws`), TCP or MQTT report ingest, **CTABLE** / Last Heard, self-service MySQL. |
+| **`frontend/`** | React (Vite): dashboard UI; same-origin `/api` + `/ws`. |
 
 ## Configuration files
 
 | File | Used by | Typical env |
 |------|---------|-------------|
-| **`monitor/adn-monitor.yaml`** | **`monitor.py`**, **PHP backend** | **`ADN_CONFIG_PATH`** |
-| **`proxy/adn-proxy.yaml`** | **`proxy/proxy.py`** | **`ADN_PROXY_CONFIG_PATH`** (optional; defaults and legacy fallback in [Hotspot proxy](hotspot-proxy.md#configuration-file)) |
+| **`adn-server.yaml`** | **`adn-server.py`** (integrated **`PROXY`** / **`SELF_SERVICE`**) | `-c` / default path next to binary |
+| **`monitor/adn-monitor.yaml`** | **`monitor.py`** | **`ADN_CONFIG_PATH`** |
 
-**`SELF_SERVICE`** (MySQL / PBKDF2) must **match** between both YAML files when you split config. **`ADN_CONNECTION`**, dashboard, WebSocket, and aliases live in **`adn-monitor.yaml`**; **`PROXY`** listen/master/range settings live in **`adn-proxy.yaml`** unless you use a **legacy** single file via **`ADN_CONFIG_PATH`** for the proxy.
+**`SELF_SERVICE`** (MySQL / PBKDF2) must **match** between **`adn-server.yaml`** and **`adn-monitor.yaml`**. **`ADN_CONNECTION`**, dashboard, WebSocket, and aliases live in **`adn-monitor.yaml`**; integrated **`PROXY`** lives in **`adn-server.yaml`** — see [Hotspot proxy (integrated)](../server/user-guide/hotspot-proxy.md).
 
 ## Link to the peer server
 
@@ -33,7 +31,7 @@ See [Monitoring and reports](../server/user-guide/monitoring.md) for report opco
 
 ## See also
 
-- [Hotspot proxy](hotspot-proxy.md) — `PROXY`, peer server port range, how the process loads config and runs
+- [Hotspot proxy (integrated)](../server/user-guide/hotspot-proxy.md) — `PROXY` in `adn-server.yaml`
 - [Architecture and deployment](architecture.md)
 - [Configuration (`adn-monitor.yaml`)](configuration.md)
 - [Self-service](self-service.md)

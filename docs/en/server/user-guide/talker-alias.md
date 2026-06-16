@@ -41,7 +41,7 @@ Under **`GLOBAL`** (optional per-system override with the same keys):
 GLOBAL:
   TALKER_ALIAS: false
   TALKER_ALIAS_MODE: both
-  TALKER_ALIAS_FORMAT: "{callsign} {fname}"
+  TALKER_ALIAS_FORMAT: "TA {callsign} {fname}"
   TALKER_ALIAS_TEXT_FORMAT: "utf8,iso8"
 ```
 

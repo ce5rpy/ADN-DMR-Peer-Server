@@ -31,17 +31,34 @@ import logging
 import time
 from binascii import a2b_hex as bhex
 from collections import deque
-from hashlib import blake2b, sha1, sha256
-from hmac import compare_digest
-from hmac import new as hmac_new
+from hashlib import sha256
 from random import randint
 from typing import Any, Callable
 
-from dmr_utils3 import decode
-from dmr_utils3.const import LC_OPT
+from ...domain.dmr import decode
+from ...domain.dmr.const import LC_OPT
 from twisted.internet import reactor, task
 from twisted.internet.protocol import DatagramProtocol
 
+from ...application.routing.helpers import (
+    clear_peer_rx_status_slots,
+    clear_peer_ua_sessions,
+    is_special_tg,
+    is_unit_data_ingress,
+    parse_dmrd_route_fields,
+    peer_matches_rf_source,
+    peer_should_receive_group_voice,
+    peer_single_exclusive_tgid,
+    register_peer_ua_session,
+    seed_peer_ua_session_from_status,
+    tg4000_reset_on_vhead,
+)
+from ...application.routing.peer_downlink_index import (
+    build_peer_downlink_index,
+    count_connected_peers,
+    invalidate_peer_options_cache,
+)
+from ...application.proxy.deployment import is_proxy_inject_only
 from ...domain import bytes_4, int_id
 from ...domain.talker_alias import (
     DMRA_PACKET_LEN,
@@ -49,6 +66,19 @@ from ...domain.talker_alias import (
     parse_dmra_packet,
     store_ta_block,
     try_buffer_ta_from_voice_fragments,
+)
+from ...domain.mesh_routing import MeshEgress, MeshIngress, PeerMeshConfig
+from ..mesh.dmre_v5 import parse_dmre_trailer
+from ..mesh.registry import MeshCodecRegistry
+from ..config_push_throttle import ConfigPushThrottle
+from ..mesh.obp_v1 import (
+    build_bcka,
+    build_bcve,
+    build_bcsq,
+    verify_bcka,
+    verify_bcsq,
+    verify_bcst,
+    verify_bcve,
 )
 from ..hbp_constants import (
     BC,
@@ -85,6 +115,8 @@ from ..hbp_constants import (
 )
 
 logger = logging.getLogger(__name__)
+
+_DEFAULT_MESH_REGISTRY = MeshCodecRegistry()
 
 
 def get_user_password(radio_id: int):
@@ -147,28 +179,38 @@ class HBPProtocol(DatagramProtocol):
         on_play_file_request: Callable[[str, str], None] | None = None,
         on_handle_recording: Callable[..., None] | None = None,
         on_in_band_signalling: Callable[[str, int, bytes, float], None] | None = None,
-        on_options_received: Callable[[str], None] | None = None,
-        on_deactivate_dynamic_bridges: Callable[[str], None] | None = None,
+        on_options_received: Callable[..., None] | None = None,
+        on_deactivate_dynamic_relays: Callable[[str], None] | None = None,
         on_obp_bcsq_received: Callable[[str, bytes, bytes], None] | None = None,
         on_talker_alias_local_repeat: Callable[[str, bytes, bytes, bytes], None] | None = None,
+        on_talker_alias_repeat_prepare: Callable[[str, bytes, bytes, bytes, int, bytes], None] | None = None,
+        on_talker_alias_repeat_burst: Callable[[str, int, bytes, int, bytes], bytes] | None = None,
         on_talker_alias_stream_end: Callable[[str, bytes], None] | None = None,
         on_dmra_fragment_stored: Callable[[str, bytes, bytes, bytes], None] | None = None,
+        routing_table_for_report: Callable[[], dict[str, Any]] | None = None,
+        get_subscription_store: Callable[[], Any] | None = None,
+        mesh_registry: MeshCodecRegistry | None = None,
     ) -> None:
         self._CONFIG = config
         self._system = system_name
         self._report = report_factory
         self._router = router
+        self._routing_table_for_report = routing_table_for_report
+        self._get_subscription_store = get_subscription_store
         self._dmrd_received = dmrd_received
         self._get_user_password = get_user_password_callback if get_user_password_callback is not None else get_user_password
         self._on_play_file_request = on_play_file_request
         self._on_handle_recording = on_handle_recording
         self._on_in_band_signalling = on_in_band_signalling
         self._on_options_received = on_options_received
-        self._on_deactivate_dynamic_bridges = on_deactivate_dynamic_bridges
+        self._on_deactivate_dynamic_relays = on_deactivate_dynamic_relays
         self._on_obp_bcsq_received = on_obp_bcsq_received
         self._on_talker_alias_local_repeat = on_talker_alias_local_repeat
+        self._on_talker_alias_repeat_prepare = on_talker_alias_repeat_prepare
+        self._on_talker_alias_repeat_burst = on_talker_alias_repeat_burst
         self._on_talker_alias_stream_end = on_talker_alias_stream_end
         self._on_dmra_fragment_stored = on_dmra_fragment_stored
+        self._mesh_registry = mesh_registry if mesh_registry is not None else _DEFAULT_MESH_REGISTRY
         self._config = config.get("SYSTEMS", {}).get(system_name, {})
         if self._config.get("MODE") == "OPENBRIDGE":
             self._laststrid = deque([], 20)
@@ -183,12 +225,20 @@ class HBPProtocol(DatagramProtocol):
             self.STATUS = {1: _make_slot_status(), 2: _make_slot_status()}
         if self._config.get("MODE") == "MASTER":
             self._peers = self._config.setdefault("PEERS", {})
+            self._downlink_index_dirty = True
+            self._downlink_index = None
+            self._connected_peer_count = 0
+            self._config_push_delayed = None
+            self._config_push_throttle = ConfigPushThrottle()
+            self._refresh_connected_peer_count()
+        else:
+            self._peers = {}
+        if self._config.get("MODE") in ("MASTER", "OPENBRIDGE"):
             self._dmra_by_stream: dict[bytes, dict[str, Any]] = {}
             self._dmra_rf_stream: dict[tuple[bytes, bytes], bytes] = {}
             self._ta_voice_acc: dict[bytes, dict[int, Any]] = {}
             self._ta_decoded_logged: set[bytes] = set()
         else:
-            self._peers = {}
             self._dmra_by_stream = {}
             self._dmra_rf_stream = {}
             self._ta_voice_acc = {}
@@ -236,25 +286,226 @@ class HBPProtocol(DatagramProtocol):
         self._config = sys_cfg
         if sys_cfg.get("MODE") == "MASTER":
             self._peers = sys_cfg.setdefault("PEERS", {})
+            self._refresh_connected_peer_count()
+            self._mark_downlink_index_dirty()
 
     # ── Exact port of hblink.py send_peers / send_peer / send_master / send_system ──
 
     def send_peers(self, _packet: bytes, _hops: bytes = b"", _ber: bytes = b"\x00", _rssi: bytes = b"\x00", _source_server: bytes = b"\x00\x00\x00\x00", _source_rptr: bytes = b"\x00\x00\x00\x00") -> None:
-        for _peer in self._peers:
-            if len(_packet) < 54:
-                _packet = b"".join([_packet, _ber, _rssi])
+        if len(_packet) < 54:
+            _packet = b"".join([_packet, _ber, _rssi])
+        for _peer in self._iter_downlink_peers(_packet):
             self.send_peer(_peer, _packet)
+
+    def _inject_multi_peer_options_filter(self) -> bool:
+        """Inject-only proxy: always filter downlink by each peer's own OPTIONS."""
+        return is_proxy_inject_only(self._CONFIG, self._system)
+
+    def _mark_downlink_index_dirty(self) -> None:
+        self._downlink_index_dirty = True
+
+    def _refresh_connected_peer_count(self) -> None:
+        self._connected_peer_count = count_connected_peers(self._peers)
+
+    def _cached_connected_peer_count(self) -> int:
+        """Return cached count; refresh once if cache is zero but peers exist."""
+        n = self._connected_peer_count
+        if n <= 0 and self._peers:
+            self._refresh_connected_peer_count()
+            n = self._connected_peer_count
+        return n
+
+    def _ensure_downlink_index(self):
+        if not self._downlink_index_dirty and self._downlink_index is not None:
+            return self._downlink_index
+        self._downlink_index = build_peer_downlink_index(self._peers, self._config)
+        self._downlink_index_dirty = False
+        return self._downlink_index
+
+    def _iter_downlink_peers(self, packet: bytes):
+        """Peer ids to consider for MASTER downlink / REPEAT (indexed when inject-only)."""
+        if not self._inject_multi_peer_options_filter():
+            return self._peers.keys()
+        parsed = parse_dmrd_route_fields(packet)
+        if parsed is None:
+            return self._peers.keys()
+        slot, tgid, call_type = parsed
+        if call_type not in ("group", "vcsbk"):
+            return self._peers.keys()
+        if is_special_tg(str(tgid)):
+            return self._peers.keys()
+        connected = self._cached_connected_peer_count()
+        if connected <= 0:
+            return ()
+        index = self._ensure_downlink_index()
+        return index.candidates(slot, tgid, connected_count=connected)
+
+    def _peer_mesh_config(self) -> PeerMeshConfig:
+        _global = self._CONFIG.get("GLOBAL", {})
+        _sid = _global.get("SERVER_ID", b"\x00\x00\x00\x00")
+        _server_id = (
+            _sid
+            if isinstance(_sid, bytes) and len(_sid) >= 4
+            else bytes_4(int(_sid) & 0xFFFFFFFF if isinstance(_sid, int) else 0)
+        )
+        _ver_cfg = self._config.get("VER")
+        wire_ver = int(_ver_cfg) if _ver_cfg is not None else None
+        return PeerMeshConfig(
+            passphrase=_get_passphrase_bytes(self._config),
+            server_id=_server_id,
+            wire_ver=wire_ver,
+        )
+
+    def _mesh_session_codec(self) -> str | None:
+        codec = self._config.get("_mesh_session_codec")
+        return codec if isinstance(codec, str) else None
+
+    def _note_mesh_ingress(self, ingress: MeshIngress) -> None:
+        self._config["_mesh_session_codec"] = ingress.codec
+        if ingress.embedded_ver is not None:
+            self._config["VER"] = ingress.embedded_ver
+
+    def _try_decode_mesh_ingress(self, datagram: bytes) -> MeshIngress | None:
+        ingress = self._mesh_registry.decode_auto(datagram, self._peer_mesh_config())
+        if ingress is not None:
+            self._note_mesh_ingress(ingress)
+        return ingress
+
+    def _encode_mesh_egress(
+        self,
+        inner_packet: bytes,
+        *,
+        hops: bytes,
+        ber: bytes,
+        rssi: bytes,
+        source_server: bytes,
+        source_rptr: bytes,
+    ) -> bytes | None:
+        mesh_protocol = str(self._config.get("MESH_PROTOCOL", "auto"))
+        egress = MeshEgress(
+            inner_packet=inner_packet,
+            hops=hops or b"\x01",
+            ber=ber,
+            rssi=rssi,
+            source_server=source_server,
+            source_rptr=source_rptr,
+        )
+        return self._mesh_registry.encode(
+            mesh_protocol,
+            egress,
+            self._peer_mesh_config(),
+            session_codec=self._mesh_session_codec(),
+        )
+
+    def _apply_tg4000_reset(self, peer_id: bytes, slot: int, call_type: str) -> None:
+        """Clear per-peer UA dynamics; legacy bridge reset only outside inject-only."""
+        peer = self._peers.get(peer_id, {})
+        clear_peer_ua_sessions(peer, self._config, peer_id, slot=slot)
+        _kind = "Private call to ID" if call_type == "unit" else "Group call to TG"
+        if self._inject_multi_peer_options_filter():
+            self._push_config_to_monitor()
+            logger.info(
+                "(%s) %s 4000 received on TS %s — clearing dynamic TGs for peer %s",
+                self._system, _kind, slot, int_id(peer_id),
+            )
+            return
+        if self._on_deactivate_dynamic_relays:
+            logger.info(
+                "(%s) %s 4000 received on TS %s — deactivating all dynamic bridges",
+                self._system, _kind, slot,
+            )
+            self._on_deactivate_dynamic_relays(self._system)
+
+    def _handle_tg4000_packet(
+        self,
+        peer_id: bytes,
+        slot: int,
+        int_dst_id: int,
+        call_type: str,
+        frame_type: int,
+        dtype_vseq: int,
+    ) -> bool:
+        """Legacy early return for TG/ID 4000; reset once per PTT on voice header only."""
+        if int_dst_id != 4000:
+            return False
+        if tg4000_reset_on_vhead(int_dst_id, frame_type, dtype_vseq):
+            self._apply_tg4000_reset(peer_id, slot, call_type)
+        return True
+
+    def _peer_should_receive_dmrd(self, peer_id: bytes, packet: bytes) -> bool:
+        if not self._inject_multi_peer_options_filter():
+            return True
+        if peer_id not in self._peers:
+            return False
+        parsed = parse_dmrd_route_fields(packet)
+        if parsed is None:
+            return self._cached_connected_peer_count() <= 1
+        slot, tgid, call_type = parsed
+        if call_type not in ("group", "vcsbk"):
+            return True
+        # Parrot / echo (9990–9999): not in per-hotspot OPTIONS; deliver to last RX peer on slot.
+        if is_special_tg(str(tgid)):
+            slot_st = self.STATUS.get(slot, {})
+            if int_id(slot_st.get("RX_TGID", b"\x00\x00\x00")) == tgid:
+                rx_peer = slot_st.get("RX_PEER", b"")
+                if rx_peer and rx_peer != b"\x00\x00\x00\x00":
+                    return bytes_4(int_id(peer_id)) == bytes_4(int_id(rx_peer))
+            if len(packet) >= 8 and peer_matches_rf_source(peer_id, packet[5:8], self._peers):
+                return True
+            return self._cached_connected_peer_count() == 1
+        connected = self._cached_connected_peer_count()
+        store = self._get_subscription_store() if self._get_subscription_store else None
+        return peer_should_receive_group_voice(
+            self._peers[peer_id],
+            slot,
+            tgid,
+            peer_id=peer_id,
+            system=self._system,
+            bridges=None,
+            subscription_store=store,
+            connected_count=connected,
+            sys_cfg=self._config,
+        )
 
     def send_peer(self, _peer: bytes, _packet: bytes) -> None:
         if _packet[:4] == DMRD:
+            if not self._peer_should_receive_dmrd(_peer, _packet):
+                return
             _packet = b"".join([_packet[:11], _peer, _packet[15:]])
         self.transport.write(_packet, self._peers[_peer]["SOCKADDR"])
 
+    def _ta_buffer_enabled(self) -> bool:
+        return self._config.get("MODE") in ("MASTER", "OPENBRIDGE")
+
     def note_dmrd_stream(self, peer_id: bytes, rf_src: bytes, stream_id: bytes) -> None:
         """Associate active stream with source for DMRA pass-through buffering."""
-        if self._config.get("MODE") != "MASTER" or not stream_id:
+        if not self._ta_buffer_enabled() or not stream_id:
             return
         self._dmra_rf_stream[(peer_id, rf_src)] = stream_id
+        self._promote_dmra_provisional_key(rf_src, stream_id)
+
+    def _promote_dmra_provisional_key(self, provisional: bytes, stream_id: bytes) -> None:
+        """Move TA blocks buffered under ``rf_src`` (pre-VHEAD) to the real stream id."""
+        if provisional == stream_id:
+            return
+        entry = self._dmra_by_stream.pop(provisional, None)
+        if not entry:
+            return
+        target = self._dmra_by_stream.setdefault(
+            stream_id,
+            {
+                "blocks": {},
+                "rf_src": entry.get("rf_src", b""),
+                "peer": entry.get("peer", b""),
+                "last": entry.get("last", time.time()),
+            },
+        )
+        target["blocks"].update(entry.get("blocks", {}))
+        target["last"] = max(float(target.get("last", 0)), float(entry.get("last", 0)))
+        if entry.get("rf_src"):
+            target["rf_src"] = entry["rf_src"]
+        if entry.get("peer"):
+            target["peer"] = entry["peer"]
 
     def store_dmra_packet(self, peer_id: bytes, data: bytes) -> None:
         """Buffer one DMRA block from a hotspot (MASTER receive path)."""
@@ -264,7 +515,8 @@ class HBPProtocol(DatagramProtocol):
         rf_src, block_id, payload = parsed
         stream_id = self._dmra_rf_stream.get((peer_id, rf_src))
         if not stream_id:
-            return
+            # Legacy hblink: DMRA may arrive before the first DMRD; key by rf_src until then.
+            stream_id = rf_src
         now = time.time()
         entry = self._dmra_by_stream.setdefault(
             stream_id,
@@ -286,7 +538,7 @@ class HBPProtocol(DatagramProtocol):
         dmrpkt: bytes,
     ) -> None:
         """Buffer TA from embedded LC in voice bursts B–E (MMDVM DMRSlot path)."""
-        if self._config.get("MODE") != "MASTER" or not stream_id:
+        if not self._ta_buffer_enabled() or not stream_id:
             return
         if not self._CONFIG.get("GLOBAL", {}).get("TALKER_ALIAS", False):
             return
@@ -316,7 +568,7 @@ class HBPProtocol(DatagramProtocol):
         self._ta_decoded_logged.discard(stream_id)
 
     def copy_ta_stream_buffer(self, from_stream: bytes, to_stream: bytes) -> None:
-        """Carry decoded TA blocks from recording stream to parrot playback stream."""
+        """Carry decoded TA blocks from recording stream to echo playback stream."""
         entry = self._dmra_by_stream.get(from_stream)
         if not entry or not entry.get("blocks"):
             return
@@ -337,7 +589,7 @@ class HBPProtocol(DatagramProtocol):
 
     def trim_dmra_streams(self, max_age: float = 180.0) -> None:
         """Drop stale DMRA buffers (same order of magnitude as stream trimmer)."""
-        if self._config.get("MODE") != "MASTER":
+        if not self._ta_buffer_enabled():
             return
         now = time.time()
         cutoff = now - max_age
@@ -396,34 +648,21 @@ class HBPProtocol(DatagramProtocol):
             if not _hops:
                 _hops = (1).to_bytes(1, "big")
             if _packet[:3] == DMR and self._config.get("TARGET_IP"):
-                _sid = self._CONFIG.get("GLOBAL", {}).get("SERVER_ID", b"\x00\x00\x00\x00")
-                _server_id = _sid if isinstance(_sid, bytes) and len(_sid) >= 4 else bytes_4(int(_sid) & 0xFFFFFFFF if isinstance(_sid, int) else 0)
-                _passphrase = _get_passphrase_bytes(self._config)
                 _target_addr = (self._config["TARGET_IP"], self._config["TARGET_PORT"])
-                if "VER" in self._config and self._config["VER"] > 4:
-                    _ver = VER.to_bytes(1, "big")
-                    _packet = b"".join([DMRE, _packet[4:11], _server_id, _packet[15:], _ber, _rssi, _ver, time.time_ns().to_bytes(8, "big"), _source_server, _source_rptr, _hops])
-                    _h = blake2b(key=_passphrase, digest_size=16)
-                    _h.update(_packet)
-                    _hash = _h.digest()
-                    _packet = b"".join([_packet, _hash])
-                    self.transport.write(_packet, _target_addr)
-                elif "VER" in self._config and self._config["VER"] == 4:
-                    _ver = VER.to_bytes(1, "big")
-                    _packet = b"".join([DMRE, _packet[4:11], _server_id, _packet[15:], _ber, _rssi, _ver, time.time_ns().to_bytes(8, "big"), _source_server, _hops])
-                    _h = blake2b(key=_passphrase, digest_size=16)
-                    _h.update(_packet)
-                    _hash = _h.digest()
-                    _packet = b"".join([_packet, _hash])
-                    self.transport.write(_packet, _target_addr)
-                elif "VER" in self._config and self._config["VER"] == 3:
-                    logger.error("(%s) protocol version 3 no longer supported", self._system)
-                elif "VER" in self._config and self._config["VER"] == 2:
-                    logger.error("(%s) protocol version 2 no longer supported", self._system)
+                _ver_cfg = self._config.get("VER")
+                if "VER" in self._config and _ver_cfg in (2, 3):
+                    logger.error("(%s) protocol version %s no longer supported", self._system, _ver_cfg)
                 else:
-                    _packet = b"".join([DMRD, _packet[4:11], _server_id, _packet[15:]])
-                    _packet = b"".join([_packet, hmac_new(_passphrase, _packet, sha1).digest()])
-                    self.transport.write(_packet, _target_addr)
+                    _wire = self._encode_mesh_egress(
+                        _packet,
+                        hops=_hops,
+                        ber=_ber,
+                        rssi=_rssi,
+                        source_server=_source_server,
+                        source_rptr=_source_rptr,
+                    )
+                    if _wire is not None:
+                        self.transport.write(_wire, _target_addr)
             else:
                 if not self._config.get("TARGET_IP"):
                     logger.debug("(%s) Not sent packet as TARGET_IP not currently known", self._system)
@@ -496,7 +735,14 @@ class HBPProtocol(DatagramProtocol):
             self.proxy_IPBlackList(_pi, self._peers[_pi]["SOCKADDR"])
 
     def _push_config_to_monitor(self) -> None:
-        """Push CONFIG_SND when MASTER peer list or connection state changes."""
+        """Schedule debounced CONFIG_SND when MASTER peer list or OPTIONS change."""
+        if self._config_push_delayed is not None:
+            return
+        delay = self._config_push_throttle.debounce_seconds()
+        self._config_push_delayed = reactor.callLater(delay, self._flush_config_to_monitor)
+
+    def _flush_config_to_monitor(self) -> None:
+        self._config_push_delayed = None
         report = self._report
         if report is None:
             return
@@ -506,7 +752,7 @@ class HBPProtocol(DatagramProtocol):
         if hasattr(report, "set_systems"):
             report.set_systems(systems)
         if hasattr(report, "send_config"):
-            report.send_config()
+            report.send_config(systems)
             logger.debug("(REPORT) Pushed CONFIG_SND after peer state change on %s", self._system)
 
     def datagramReceived(self, data: bytes, addr: tuple[str, int]) -> None:
@@ -538,7 +784,7 @@ class HBPProtocol(DatagramProtocol):
                 self._system, self._peers[peer].get("CALLSIGN", b""), self._peers[peer].get("RADIO_ID", b""),
             )
             self.transport.write(b"".join([MSTCL, peer]), self._peers[peer]["SOCKADDR"])
-            del self._peers[peer]
+            self._remove_peer(peer)
             if not self._peers:
                 sys_cfg = self._CONFIG["SYSTEMS"][self._system]
                 if "OPTIONS" in sys_cfg:
@@ -551,6 +797,22 @@ class HBPProtocol(DatagramProtocol):
                 sys_cfg["_reset"] = True
         if remove_list:
             self._push_config_to_monitor()
+
+    def _on_peer_disconnected(self, peer_id: bytes) -> None:
+        """Drop SINGLE/UA session and stale slot STATUS when a hotspot leaves or re-logs in."""
+        peer = self._peers.get(peer_id)
+        sys_cfg = self._config
+        if peer is not None:
+            clear_peer_ua_sessions(peer, sys_cfg, peer_id)
+        else:
+            clear_peer_ua_sessions({}, sys_cfg, peer_id)
+        clear_peer_rx_status_slots(self.STATUS, peer_id)
+
+    def _remove_peer(self, peer_id: bytes) -> None:
+        self._on_peer_disconnected(peer_id)
+        self._peers.pop(peer_id, None)
+        self._refresh_connected_peer_count()
+        self._mark_downlink_index_dirty()
 
     def _master_datagram_received(self, _data: bytes, _sockaddr: tuple[str, int]) -> None:
         """Direct port of hblink.py master_datagramReceived (lines 888-1146)."""
@@ -634,6 +896,30 @@ class HBPProtocol(DatagramProtocol):
                 self.note_dmrd_stream(_peer_id, _rf_src, _stream_id)
                 if (
                     _call_type in ("group", "vcsbk")
+                    and _frame_type == HBPF_DATA_SYNC
+                    and _dtype_vseq == HBPF_SLT_VHEAD
+                ):
+                    _prev_single_tg = peer_single_exclusive_tgid(
+                        self._peers[_peer_id],
+                        _slot,
+                        self._config,
+                        peer_id=_peer_id,
+                        now=pkt_time,
+                    )
+                    if _int_dst_id != 4000:
+                        register_peer_ua_session(
+                            self._peers[_peer_id],
+                            _peer_id,
+                            _slot,
+                            _int_dst_id,
+                            self._config,
+                            now=pkt_time,
+                        )
+                        self._mark_downlink_index_dirty()
+                        if _prev_single_tg != _int_dst_id:
+                            self._push_config_to_monitor()
+                if (
+                    _call_type in ("group", "vcsbk")
                     and _frame_type != HBPF_DATA_SYNC
                     and _dtype_vseq in (1, 2, 3, 4)
                     and len(_data) >= 53
@@ -641,30 +927,39 @@ class HBPProtocol(DatagramProtocol):
                     self.store_ta_from_voice_burst(
                         _peer_id, _rf_src, _stream_id, _dtype_vseq, _data[20:53],
                     )
-                if self._config.get("REPEAT", True):
-                    pkt = [_data[:11], b"", _data[15:]]
-                    for _peer in self._peers:
-                        if _peer != _peer_id:
-                            pkt[1] = _peer
-                            self.transport.write(b"".join(pkt), self._peers[_peer]["SOCKADDR"])
                 if (
                     self._config.get("REPEAT", True)
                     and _call_type in ("group", "vcsbk")
                     and _frame_type == HBPF_DATA_SYNC
                     and _dtype_vseq == HBPF_SLT_VHEAD
-                    and self._on_talker_alias_local_repeat
                 ):
-                    self._on_talker_alias_local_repeat(
-                        self._system, _peer_id, _rf_src, _stream_id,
-                    )
-                # TG 4000: deactivate after REPEAT so peers see the packet (legacy order)
-                if _int_dst_id == 4000 and self._on_deactivate_dynamic_bridges:
-                    _kind = "Private call to ID" if _call_type == "unit" else "Group call to TG"
-                    logger.info(
-                        "(%s) %s 4000 received on TS %s — deactivating all dynamic bridges",
-                        self._system, _kind, _slot,
-                    )
-                    self._on_deactivate_dynamic_bridges(self._system)
+                    if self._on_talker_alias_repeat_prepare:
+                        self._on_talker_alias_repeat_prepare(
+                            self._system, _peer_id, _rf_src, _dst_id, _slot, _stream_id,
+                        )
+                    elif self._on_talker_alias_local_repeat:
+                        self._on_talker_alias_local_repeat(
+                            self._system, _peer_id, _rf_src, _stream_id,
+                        )
+                if self._config.get("REPEAT", True) and _call_type in ("group", "vcsbk"):
+                    _repeat_tail = _data[15:]
+                    if (
+                        _dtype_vseq in (1, 2, 3, 4)
+                        and len(_data) >= 53
+                        and self._on_talker_alias_repeat_burst
+                    ):
+                        _dmrpkt_out = self._on_talker_alias_repeat_burst(
+                            self._system, _slot, _stream_id, _dtype_vseq, _data[20:53],
+                        )
+                        _repeat_tail = b"".join([_data[15:20], _dmrpkt_out, _data[53:]])
+                    _repeat_pkt = b"".join([_data[:11], _peer_id, _repeat_tail])
+                    for _peer in self._iter_downlink_peers(_repeat_pkt):
+                        if _peer != _peer_id:
+                            self.send_peer(_peer, _repeat_pkt)
+                # TG 4000: reset after REPEAT so peers see the packet (legacy order)
+                if self._handle_tg4000_packet(
+                    _peer_id, _slot, _int_dst_id, _call_type, _frame_type, _dtype_vseq,
+                ):
                     return
                 if _call_type == "group" and _frame_type == HBPF_DATA_SYNC and _dtype_vseq == HBPF_SLT_VHEAD:
                     logger.info(
@@ -674,10 +969,14 @@ class HBPProtocol(DatagramProtocol):
                 # Legacy parity (bridge_master.py:3270-3310, routerHBP.dmrd_received):
                 # the HBP source path only writes per-slot state. The full LC is stored
                 # in STATUS[_slot]['RX_LC'] (decoded from the voice-header LC), and
-                # bridge_use_cases.py:2080 reads exactly that. Never write STATUS[stream_id]
+                # routing_use_cases.py:2080 reads exactly that. Never write STATUS[stream_id]
                 # for HBP — that pattern is only legal for routerOBP (flat dict).
                 dmrpkt = _data[20:53] if len(_data) >= 53 else b""
-                if _slot in self.STATUS:
+                _unit_data = is_unit_data_ingress(
+                    _call_type, _dtype_vseq, _stream_id,
+                    self.STATUS.get(_slot, {}).get("RX_STREAM_ID") if _slot in self.STATUS else None,
+                )
+                if _slot in self.STATUS and not _unit_data:
                     if _stream_id != self.STATUS[_slot].get("RX_STREAM_ID"):
                         self.STATUS[_slot]["RX_START"] = pkt_time
                         if _frame_type == HBPF_DATA_SYNC and _dtype_vseq == HBPF_SLT_VHEAD and len(dmrpkt) >= 33:
@@ -709,8 +1008,7 @@ class HBPProtocol(DatagramProtocol):
                     reactor.callInThread(self._on_play_file_request, str(_int_dst_id), self._system)
                 if (
                     _call_type in ("group", "vcsbk")
-                    and
-                    _frame_type == HBPF_DATA_SYNC
+                    and _frame_type == HBPF_DATA_SYNC
                     and _dtype_vseq == HBPF_SLT_VTERM
                     and _slot in self.STATUS
                     and self.STATUS[_slot].get("RX_TYPE") != HBPF_SLT_VTERM
@@ -724,7 +1022,8 @@ class HBPProtocol(DatagramProtocol):
                     and self._on_talker_alias_stream_end
                 ):
                     self._on_talker_alias_stream_end(self._system, _stream_id)
-                if _slot in self.STATUS:
+                # Legacy routerHBP: unit data (_data_call) does not mark slot RX busy.
+                if _slot in self.STATUS and not _unit_data:
                     self.STATUS[_slot]["RX_PEER"] = _peer_id
                     self.STATUS[_slot]["RX_SEQ"] = _seq
                     self.STATUS[_slot]["RX_RFS"] = _rf_src
@@ -742,6 +1041,7 @@ class HBPProtocol(DatagramProtocol):
                     and self._router.acl_check(_peer_id, self._config.get("REG_ACL", (True, [])))
                     and self.validate_id(_peer_id)
                 ):
+                    self._on_peer_disconnected(_peer_id)
                     self._peers[_peer_id] = {
                         "CONNECTION": "RPTL-RECEIVED",
                         "CONNECTED": time.time(),
@@ -805,7 +1105,7 @@ class HBPProtocol(DatagramProtocol):
                     else:
                         logger.warning("(%s) Peer %s has FAILED the login exchange (wrong individual password)", self._system, _this_peer["RADIO_ID"])
                         self.transport.write(b"".join([MSTNAK, _peer_id]), _sockaddr)
-                        del self._peers[_peer_id]
+                        self._remove_peer(_peer_id)
                 elif len(_passphrase) > 0:
                     _calc_hash_val = _calc_hash(_salt_str, _passphrase)
                     if _sent_hash == _calc_hash_val:
@@ -815,11 +1115,11 @@ class HBPProtocol(DatagramProtocol):
                     else:
                         logger.warning("(%s) Peer %s has FAILED the login exchange (wrong global passphrase)", self._system, _this_peer["RADIO_ID"])
                         self.transport.write(b"".join([MSTNAK, _peer_id]), _sockaddr)
-                        del self._peers[_peer_id]
+                        self._remove_peer(_peer_id)
                 else:
                     logger.warning("(%s) Peer %s has FAILED - no individual password configured and no global passphrase", self._system, _this_peer["RADIO_ID"])
                     self.transport.write(b"".join([MSTNAK, _peer_id]), _sockaddr)
-                    del self._peers[_peer_id]
+                    self._remove_peer(_peer_id)
             else:
                 self.transport.write(b"".join([MSTNAK, _peer_id]), _sockaddr)
                 logger.info("(%s) Login challenge from Radio ID that has not logged in: %s", self._system, int_id(_peer_id))
@@ -830,7 +1130,7 @@ class HBPProtocol(DatagramProtocol):
                 if _peer_id in self._peers and self._peers[_peer_id]["CONNECTION"] == "YES" and self._peers[_peer_id]["SOCKADDR"] == _sockaddr:
                     logger.info("(%s) Peer is closing down: %s (%s)", self._system, self._peers[_peer_id]["CALLSIGN"], int_id(_peer_id))
                     self.transport.write(b"".join([MSTNAK, _peer_id]), _sockaddr)
-                    del self._peers[_peer_id]
+                    self._remove_peer(_peer_id)
                     sys_cfg = self._CONFIG.get("SYSTEMS", {}).get(self._system, {})
                     if "OPTIONS" in sys_cfg:
                         if "_default_options" in sys_cfg:
@@ -863,7 +1163,7 @@ class HBPProtocol(DatagramProtocol):
                     _this_peer["SOFTWARE_ID"] = _data[222:262]
                     _this_peer["PACKAGE_ID"] = _data[262:302]
                     if ("ALLOW_UNREG_ID" in self._config and not self._config["ALLOW_UNREG_ID"]) and _this_peer["CALLSIGN"].decode("utf8", errors="replace").rstrip() != self.validate_id(_peer_id):
-                        del self._peers[_peer_id]
+                        self._remove_peer(_peer_id)
                         if self._config.get("PROXY_CONTROL"):
                             self.proxy_IPBlackList(_peer_id, _sockaddr)
                         self.transport.write(b"".join([MSTNAK, _peer_id]), _sockaddr)
@@ -872,6 +1172,9 @@ class HBPProtocol(DatagramProtocol):
                     else:
                         self.send_peer(_peer_id, b"".join([RPTACK, _peer_id]))
                         logger.info("(%s) Peer %s (%s) has sent repeater configuration, Package ID: %s, Software ID: %s, Desc: %s", self._system, _this_peer["CALLSIGN"], _this_peer["RADIO_ID"], self._peers[_peer_id]["PACKAGE_ID"].decode("utf8", errors="replace").rstrip(), self._peers[_peer_id]["SOFTWARE_ID"].decode("utf8", errors="replace").rstrip(), self._peers[_peer_id]["DESCRIPTION"].decode("utf8", errors="replace").rstrip())
+                        self._refresh_connected_peer_count()
+                        self._mark_downlink_index_dirty()
+                        self._config_push_throttle.note_peer_connected()
                         self._push_config_to_monitor()
                 else:
                     self.transport.write(b"".join([MSTNAK, _peer_id]), _sockaddr)
@@ -882,14 +1185,32 @@ class HBPProtocol(DatagramProtocol):
             if _peer_id in self._peers and self._peers[_peer_id]["SOCKADDR"] == _sockaddr:
                 _this_peer = self._peers[_peer_id]
                 _this_peer["OPTIONS"] = _data[8:]
+                invalidate_peer_options_cache(_this_peer)
+                self._mark_downlink_index_dirty()
                 self.send_peer(_peer_id, b"".join([RPTACK, _peer_id]))
                 logger.info("(%s) Peer %s has sent options %s", self._system, _this_peer["CALLSIGN"], _this_peer["OPTIONS"])
-                self._CONFIG.setdefault("SYSTEMS", {}).setdefault(self._system, {})["OPTIONS"] = _this_peer["OPTIONS"].decode("utf8", errors="replace")
+                if is_proxy_inject_only(self._CONFIG, self._system):
+                    for _slot in (1, 2):
+                        if _slot in self.STATUS:
+                            seed_peer_ua_session_from_status(
+                                _this_peer,
+                                _peer_id,
+                                _slot,
+                                self.STATUS[_slot],
+                                self._config,
+                            )
+                # Inject-only multi-hotspot: OPTIONS live on each peer; do not let last RPTO
+                # overwrite the shared SYSTEM row (legacy had one peer per virtual master).
+                if not is_proxy_inject_only(self._CONFIG, self._system):
+                    self._CONFIG.setdefault("SYSTEMS", {}).setdefault(self._system, {})[
+                        "OPTIONS"
+                    ] = _this_peer["OPTIONS"].decode("utf8", errors="replace")
                 if self._on_options_received:
                     try:
-                        self._on_options_received(self._system)
+                        self._on_options_received(self._system, _this_peer["OPTIONS"])
                     except Exception:
                         pass
+                self._push_config_to_monitor()
             else:
                 self.transport.write(b"".join([MSTNAK, _peer_id]), _sockaddr)
                 logger.info("(%s) Options from Radio ID that is not logged: %s", self._system, int_id(_peer_id))
@@ -1028,14 +1349,10 @@ class HBPProtocol(DatagramProtocol):
                 sub_map = self._CONFIG.get("_SUB_MAP")
                 if sub_map is not None:
                     sub_map[_rf_src] = (self._system, _slot, pkt_time)
-                # TG 4000: deactivate after ACL/SUB_MAP (legacy order — routerHBP.dmrd_received)
-                if _int_dst_id == 4000 and self._on_deactivate_dynamic_bridges:
-                    _kind = "Private call to ID" if _call_type == "unit" else "Group call to TG"
-                    logger.info(
-                        "(%s) %s 4000 received on TS %s — deactivating all dynamic bridges",
-                        self._system, _kind, _slot,
-                    )
-                    self._on_deactivate_dynamic_bridges(self._system)
+                # TG 4000: reset after ACL/SUB_MAP (legacy order — routerHBP.dmrd_received)
+                if self._handle_tg4000_packet(
+                    _peer_id, _slot, _int_dst_id, _call_type, _frame_type, _dtype_vseq,
+                ):
                     return
                 if _call_type == "group" and _frame_type == HBPF_DATA_SYNC and _dtype_vseq == HBPF_SLT_VHEAD:
                     logger.info(
@@ -1044,11 +1361,15 @@ class HBPProtocol(DatagramProtocol):
                     )
                 # Legacy parity (bridge_master.py:3270-3310, routerHBP.dmrd_received):
                 # PEER source path only writes per-slot state. Full LC stored in
-                # STATUS[_slot]['RX_LC'] (decoded voice-header LC). bridge_use_cases
+                # STATUS[_slot]['RX_LC'] (decoded voice-header LC). routing_use_cases
                 # reads STATUS[_slot]['RX_LC'] for HBP sources. Never write
                 # STATUS[stream_id] for HBP — that pattern is only legal for routerOBP.
                 dmrpkt = _data[20:53] if len(_data) >= 53 else b""
-                if _slot in self.STATUS:
+                _unit_data = is_unit_data_ingress(
+                    _call_type, _dtype_vseq, _stream_id,
+                    self.STATUS.get(_slot, {}).get("RX_STREAM_ID") if _slot in self.STATUS else None,
+                )
+                if _slot in self.STATUS and not _unit_data:
                     if _stream_id != self.STATUS[_slot].get("RX_STREAM_ID"):
                         self.STATUS[_slot]["RX_START"] = pkt_time
                         if _frame_type == HBPF_DATA_SYNC and _dtype_vseq == HBPF_SLT_VHEAD and len(dmrpkt) >= 33:
@@ -1088,7 +1409,7 @@ class HBPProtocol(DatagramProtocol):
                     and self._on_in_band_signalling
                 ):
                     self._on_in_band_signalling(self._system, _slot, _dst_id, pkt_time)
-                if _slot in self.STATUS:
+                if _slot in self.STATUS and not _unit_data:
                     if _stream_id != self.STATUS[_slot].get("RX_STREAM_ID"):
                         self.STATUS[_slot]["RX_START"] = pkt_time
                     self.STATUS[_slot]["RX_PEER"] = _peer_id
@@ -1205,8 +1526,7 @@ class HBPProtocol(DatagramProtocol):
         """Legacy send_bcka: BCKA + HMAC-SHA1 to TARGET. Uses TARGET_SOCK (IP only; hostnames resolved at startup or on first peer packet)."""
         _addr = self._config.get("TARGET_SOCK")
         if _addr and _addr[0]:
-            _packet = BCKA + hmac_new(self._config["PASSPHRASE"], BCKA, sha1).digest()
-            self.transport.write(_packet, _addr)
+            self.transport.write(build_bcka(_get_passphrase_bytes(self._config)), _addr)
         else:
             logger.debug("(%s) *BridgeControl* not sending KeepAlive, TARGET not currently known", self._system)
 
@@ -1214,9 +1534,7 @@ class HBPProtocol(DatagramProtocol):
         """Legacy send_bcve: BCVE + VER byte + HMAC-SHA1. Uses TARGET_SOCK (IP only)."""
         _addr = self._config.get("TARGET_SOCK")
         if self._config.get("ENHANCED_OBP") and _addr and _addr[0]:
-            _packet = BCVE + VER.to_bytes(1, "big")
-            _packet = _packet + hmac_new(self._config["PASSPHRASE"], _packet[4:5], sha1).digest()
-            self.transport.write(_packet, _addr)
+            self.transport.write(build_bcve(VER, _get_passphrase_bytes(self._config)), _addr)
         else:
             logger.debug("(%s) *BridgeControl* not sending BCVE, TARGET not currently known", self._system)
 
@@ -1253,9 +1571,10 @@ class HBPProtocol(DatagramProtocol):
                 _addr = (tip, tport)
                 self._config["TARGET_SOCK"] = _addr
         if _addr and _addr[0]:
-            _packet = BCSQ + _tgid + _stream_id
-            _packet = _packet + hmac_new(self._config["PASSPHRASE"], _packet, sha1).digest()
-            self.transport.write(_packet, _addr)
+            self.transport.write(
+                build_bcsq(_tgid, _stream_id, _get_passphrase_bytes(self._config)),
+                _addr,
+            )
         else:
             logger.warning(
                 "(%s) *BridgeControl* BCSQ not sent: no TARGET_SOCK/TARGET_IP — peer cannot be quenched",
@@ -1273,9 +1592,9 @@ class HBPProtocol(DatagramProtocol):
                     self._laststrid.append(_stream_id)
                 self._obp_send_bcve()
                 return
-            _hash = _packet[53:73]
-            _ckhs = hmac_new(self._config["PASSPHRASE"], _data, sha1).digest()
-            if compare_digest(_hash, _ckhs) and (_sockaddr == self._config.get("TARGET_SOCK") or self._config.get("RELAX_CHECKS")):
+            _ingress = self._try_decode_mesh_ingress(_packet)
+            if _ingress is not None and _ingress.codec == "obp_v1" and (_sockaddr == self._config.get("TARGET_SOCK") or self._config.get("RELAX_CHECKS")):
+                _data = _ingress.voice_frame
                 self._obp_sync_target_sock_from_peer(_sockaddr)
                 _peer_id = _data[11:15]
                 if self._config.get("NETWORK_ID") != _peer_id:
@@ -1344,7 +1663,17 @@ class HBPProtocol(DatagramProtocol):
                         "(%s) CALL RX (OBP) src %s -> TG %s slot %s",
                         self._system, int_id(_rf_src), int_id(_dst_id), _slot,
                     )
-                # Group/vcsbk stream state, LC, duplicates: bridge_use_cases._obp_group_voice_router_obp (legacy routerOBP.dmrd_received)
+                self.note_dmrd_stream(_peer_id, _rf_src, _stream_id)
+                if (
+                    _call_type in ("group", "vcsbk")
+                    and _frame_type != HBPF_DATA_SYNC
+                    and _dtype_vseq in (1, 2, 3, 4)
+                    and len(_data) >= 53
+                ):
+                    self.store_ta_from_voice_burst(
+                        _peer_id, _rf_src, _stream_id, _dtype_vseq, _data[20:53],
+                    )
+                # Group/vcsbk stream state, LC, duplicates: routing_use_cases._obp_group_voice_router_obp (legacy routerOBP.dmrd_received)
                 if self._dmrd_received:
                     # Legacy hblink DMRD v1: SERVER_ID + default rptr/hops/ber/rssi (`hblink.py` ~338–345, ~416)
                     _global = self._CONFIG.get("GLOBAL", {})
@@ -1378,40 +1707,22 @@ class HBPProtocol(DatagramProtocol):
                 logger.warning("(%s) OpenBridge HMAC failed, packet discarded - OPCODE: %s SRC: %s", self._system, _packet[:4], _sockaddr)
         elif _packet[:4] == DMRE:
             # Legacy hblink.py OPENBRIDGE: DMRE (v5) incoming – 89-byte or 85-byte format, BLAKE2b
-            if len(_packet) < 69:
+            _ingress = self._try_decode_mesh_ingress(_packet)
+            if _ingress is None or _ingress.codec != "dmre_v5":
                 return
-            _data = _packet[:53]
-            # Legacy hblink OPENBRIDGE DMRE: BER/RSSI before version split (`hblink.py` ~432–433)
-            _ber = _packet[53:54]
-            _rssi = _packet[54:55]
-            _embedded_version = _packet[55]
-            if _embedded_version > 4:
-                if len(_packet) < 89:
-                    return
-                _timestamp = _packet[56:64]
-                _source_server = _packet[64:68]
-                _source_rptr = _packet[68:72]
-                _hops = _packet[72]
-                _hash = _packet[73:89]
-                _hash_len = 73
-            else:
-                if len(_packet) < 85:
-                    return
-                _timestamp = _packet[56:64]
-                _source_server = _packet[64:68]
-                _source_rptr = b"\x00\x00\x00\x00"
-                _hops = _packet[68]
-                _hash = _packet[69:85]
-                _hash_len = 69
-            self._config["VER"] = _embedded_version
-            _passphrase = _get_passphrase_bytes(self._config)
-            _h = blake2b(key=_passphrase, digest_size=16)
-            _h.update(_packet[:_hash_len])
-            _ckhs = _h.digest()
-            _stream_id = _data[16:20]
-            if not (compare_digest(_hash, _ckhs) and (_sockaddr == self._config.get("TARGET_SOCK") or self._config.get("RELAX_CHECKS"))):
+            if not (_sockaddr == self._config.get("TARGET_SOCK") or self._config.get("RELAX_CHECKS")):
                 logger.warning("(%s) OpenBridge DMRE BLAKE2b failed, packet discarded - SRC: %s", self._system, _sockaddr)
                 return
+            _data = _ingress.voice_frame
+            _ber = _ingress.ber
+            _rssi = _ingress.rssi
+            _embedded_version = _ingress.embedded_ver if _ingress.embedded_ver is not None else self._config.get("VER", 5)
+            _source_server = _ingress.source_server
+            _source_rptr = _ingress.source_rptr
+            _hops = _ingress.hops
+            _trailer = parse_dmre_trailer(_packet)
+            _timestamp = _trailer.timestamp if _trailer is not None else b"\x00" * 8
+            _stream_id = _data[16:20]
             self._obp_sync_target_sock_from_peer(_sockaddr)
             _peer_id = _data[11:15]
             if self._config.get("NETWORK_ID") != _peer_id:
@@ -1538,6 +1849,16 @@ class HBPProtocol(DatagramProtocol):
                     return
             if _call_type == "group" and _frame_type == HBPF_DATA_SYNC and _dtype_vseq == HBPF_SLT_VHEAD:
                 logger.info("(%s) CALL RX (OBP DMRE) src %s -> TG %s slot %s", self._system, int_id(_rf_src), int_id(_dst_id), _slot)
+            self.note_dmrd_stream(_peer_id, _rf_src, _stream_id)
+            if (
+                _call_type in ("group", "vcsbk")
+                and _frame_type != HBPF_DATA_SYNC
+                and _dtype_vseq in (1, 2, 3, 4)
+                and len(_data) >= 53
+            ):
+                self.store_ta_from_voice_burst(
+                    _peer_id, _rf_src, _stream_id, _dtype_vseq, _data[20:53],
+                )
             _data_dmrd = DMRD + _data[4:]
             _hops_out = _inthops.to_bytes(1, "big")
             if self._dmrd_received:
@@ -1565,10 +1886,9 @@ class HBPProtocol(DatagramProtocol):
         elif _packet[:4] == EOBP:
             logger.warning("(%s) *ProtoControl* KF7EEL EOBP protocol not supported", self._system)
         elif self._config.get("ENHANCED_OBP") and _packet[:2] == BC:
+            _passphrase = _get_passphrase_bytes(self._config)
             if _packet[:4] == BCKA and len(_packet) >= 24:
-                _hash = _packet[4:24]
-                _ckhs = hmac_new(self._config["PASSPHRASE"], _packet[:4], sha1).digest()
-                if compare_digest(_hash, _ckhs):
+                if verify_bcka(_packet, _passphrase):
                     self._config["_bcka"] = time.time()
                     if _sockaddr != self._config.get("TARGET_SOCK"):
                         logger.info("(%s) *BridgeControl* Source IP and Port has changed for OBP from %s:%s to %s:%s, updating", self._system, self._config.get("TARGET_IP"), self._config.get("TARGET_PORT"), _sockaddr[0], _sockaddr[1])
@@ -1580,11 +1900,10 @@ class HBPProtocol(DatagramProtocol):
                     logger.info("(%s) *BridgeControl* BCKA invalid KeepAlive, packet discarded", self._system)
             # Source quench — legacy hblink.py OPENBRIDGE ~629-639 (sets CONFIG['_bcsq'][tgid]=stream_id)
             if _packet[:4] == BCSQ and len(_packet) >= 31:
-                _hash_bcsq = _packet[11:]
-                _tgid_bcsq = _packet[4:7]
-                _stream_bcsq = _packet[7:11]
-                _ckhs_bcsq = hmac_new(self._config["PASSPHRASE"], _packet[:11], sha1).digest()
-                if compare_digest(_hash_bcsq, _ckhs_bcsq):
+                _bcsq = verify_bcsq(_packet, _passphrase)
+                if _bcsq is not None:
+                    _tgid_bcsq = _bcsq.tgid
+                    _stream_bcsq = _bcsq.stream_id
                     if "_bcsq" not in self._config:
                         self._config["_bcsq"] = {}
                     self._config["_bcsq"][_tgid_bcsq] = _stream_bcsq
@@ -1613,9 +1932,7 @@ class HBPProtocol(DatagramProtocol):
                     )
             # STUN — must match send_bcst: HMAC-SHA1 over opcode only (hblink.py ~282-285). RX used _packet[4:] in ~647 but that does not match TX.
             if _packet[:4] == BCST and len(_packet) >= 24:
-                _hash_bcst = _packet[4:24]
-                _ckhs_bcst = hmac_new(self._config["PASSPHRASE"], _packet[:4], sha1).digest()
-                if compare_digest(_hash_bcst, _ckhs_bcst):
+                if verify_bcst(_packet, _passphrase):
                     logger.trace("(%s) *BridgeControl* BCST STUN request received", self._system)
                     self._config["_STUN"] = True
                 else:
@@ -1625,10 +1942,8 @@ class HBPProtocol(DatagramProtocol):
                         _sockaddr,
                     )
             if _packet[:4] == BCVE and len(_packet) >= 25:
-                _ver = int.from_bytes(_packet[4:5], "big")
-                _hash = _packet[5:25]
-                _ckhs = hmac_new(self._config["PASSPHRASE"], _packet[4:5], sha1).digest()
-                if compare_digest(_hash, _ckhs):
+                _bcve_ok, _ver = verify_bcve(_packet, _passphrase)
+                if _bcve_ok and _ver is not None:
                     if _ver in (2, 3) or _ver > 5:
                         logger.info("(%s) *ProtoControl* BCVE Version not supported, Ver: %s", self._system, _ver)
                     elif _ver > self._config.get("VER", 5):
@@ -1652,12 +1967,17 @@ def HBPProtocolFactory(
     on_play_file_request: Callable[[str, str], None] | None = None,
     on_handle_recording: Callable[..., None] | None = None,
     on_in_band_signalling: Callable[[str, int, bytes, float], None] | None = None,
-    on_options_received: Callable[[str], None] | None = None,
-    on_deactivate_dynamic_bridges: Callable[[str], None] | None = None,
+    on_options_received: Callable[..., None] | None = None,
+    on_deactivate_dynamic_relays: Callable[[str], None] | None = None,
     on_obp_bcsq_received: Callable[[str, bytes, bytes], None] | None = None,
     on_talker_alias_local_repeat: Callable[[str, bytes, bytes, bytes], None] | None = None,
+    on_talker_alias_repeat_prepare: Callable[[str, bytes, bytes, bytes, int, bytes], None] | None = None,
+    on_talker_alias_repeat_burst: Callable[[str, int, bytes, int, bytes], bytes] | None = None,
     on_talker_alias_stream_end: Callable[[str, bytes], None] | None = None,
     on_dmra_fragment_stored: Callable[[str, bytes, bytes, bytes], None] | None = None,
+    routing_table_for_report: Callable[[], dict[str, Any]] | None = None,
+    get_subscription_store: Callable[[], Any] | None = None,
+    mesh_registry: MeshCodecRegistry | None = None,
 ) -> HBPProtocol:
     """Create HBP protocol instance (legacy: one HBSYSTEM per system)."""
     return HBPProtocol(
@@ -1671,9 +1991,14 @@ def HBPProtocolFactory(
         on_handle_recording=on_handle_recording,
         on_in_band_signalling=on_in_band_signalling,
         on_options_received=on_options_received,
-        on_deactivate_dynamic_bridges=on_deactivate_dynamic_bridges,
+        on_deactivate_dynamic_relays=on_deactivate_dynamic_relays,
         on_obp_bcsq_received=on_obp_bcsq_received,
         on_talker_alias_local_repeat=on_talker_alias_local_repeat,
+        on_talker_alias_repeat_prepare=on_talker_alias_repeat_prepare,
+        on_talker_alias_repeat_burst=on_talker_alias_repeat_burst,
         on_talker_alias_stream_end=on_talker_alias_stream_end,
         on_dmra_fragment_stored=on_dmra_fragment_stored,
+        routing_table_for_report=routing_table_for_report,
+        get_subscription_store=get_subscription_store,
+        mesh_registry=mesh_registry,
     )

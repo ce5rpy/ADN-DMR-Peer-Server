@@ -1,6 +1,6 @@
 # ADN DMR Peer Server
 
-**Version 1.0.0** — first stable release (SemVer). Compatible with **adn-monitor 1.0.0**.
+**Version 1.0.0** — first stable release. Compatible with **adn-monitor 1.0.0**.
 
 ADN DMR conference bridge server. Configuration is YAML; the codebase follows clean architecture (domain, application, infrastructure).
 
@@ -20,6 +20,8 @@ GPL v3. Derived from FreeDMR / HBlink.
 ## Configuration
 
 Copy `adn-server.example.yaml` to `adn-server.yaml` and edit with your settings. Production config is not committed.
+
+The example includes an **integrated hotspot proxy** (`PROXY`) and optional **MySQL self-service** (`SELF_SERVICE`). For self-service, install the optional extra: `pip install -e ".[selfservice]"`. See [Hotspot proxy (integrated)](docs/en/server/user-guide/hotspot-proxy.md). Disable standalone **`adn-proxy`** if you use the integrated proxy on the same host.
 
 ### Voice configuration
 
@@ -43,6 +45,15 @@ Use the same `python3` you use for the project (e.g. pyenv’s `3.11.8`). Previe
 
 Output: **`site/en/`** and **`site/es/`** under gitignored **`site/`**.
 
+## Tests
+
+```bash
+python3 -m pip install -e ".[dev]"
+python3 -m pytest tests/ -q
+```
+
+See [Testing](docs/en/server/development/testing.md) in the docs site. File index: [`tests/README.md`](tests/README.md).
+
 ## Run
 
 ```bash
@@ -55,15 +66,19 @@ Options:
 ```bash
 python adn-server.py -c /path/to/adn-server.yaml
 python adn-server.py --logging DEBUG
+python adn-server.py --doctor          # config, ports, peers (exit 1 on errors)
+python adn-server.py --no-proxy        # disable integrated PROXY
 ```
 
-## Parrot (Playback)
+## Echo (playback)
 
-A separate entrypoint records incoming group voice and plays it back (echo/parrot).
+Separate process (same binary) records group voice and plays it back on TG 9990.
 
 ```bash
-cp adn-parrot.example.yaml adn-parrot.yaml
-python adn-parrot.py
+cp adn-echo.example.yaml adn-echo.yaml
+python adn-server.py --echo -c adn-echo.yaml
 ```
 
-See [Parrot (playback)](docs/en/server/user-guide/parrot.md) in the docs site for an overview; extended notes may exist in private `docs-priv/` checkouts.
+See [Echo (playback)](docs/en/server/user-guide/echo.md) in the docs site for an overview.
+
+**systemd:** example units in `examples/systemd/` (`adn-server.service`, `adn-echo.service`).

@@ -43,12 +43,14 @@ More: [Introduction](server/user-guide/introduction.md).
 
 ## ADN Monitor
 
-Dashboard, WebSocket live view, optional **PHP API**, **MySQL** self-service, and **hotspot proxy** — see [Monitor overview](monitor/index.md).
+Dashboard, WebSocket live view, FastAPI API, **MySQL** self-service — see [Monitor overview](monitor/index.md). **Hotspot proxy** is integrated in **adn-server**.
 
 | I want to… | Start here |
 |------------|------------|
-| `adn-monitor.yaml`, `adn-proxy.yaml`, layout | [Monitor configuration](monitor/configuration.md), [Hotspot proxy](monitor/hotspot-proxy.md) |
-| Hotspot proxy (UDP, `PROXY`, peer port range) | [Hotspot proxy](monitor/hotspot-proxy.md) |
+| `adn-server.yaml` — integrated `PROXY` / `SELF_SERVICE` | [Hotspot proxy (integrated)](server/user-guide/hotspot-proxy.md) |
+| `adn-monitor.yaml`, layout | [Monitor configuration](monitor/configuration.md) |
+| Integrated hotspot proxy | [Hotspot proxy](server/user-guide/hotspot-proxy.md) |
+| Standalone hotspot proxy (UDP port range) | [Hotspot proxy — standalone](monitor/hotspot-proxy.md#standalone-proxy-legacy-adn-monitor-repo) |
 | Self-service | [Self-service](monitor/self-service.md) |
 | How it connects to the server | [Monitoring and reports](server/user-guide/monitoring.md) |
 

@@ -1,0 +1,25 @@
+{
+  "type": "delta",
+  "seq": 43,
+  "ts": 1717555261.0,
+  "since_seq": 42,
+  "patch": {
+    "type": "routing_table",
+    "seq": 43,
+    "ts": 1717555261.0,
+    "routes": [
+      {
+        "relay_table_key": "52090",
+        "legs": [
+          {
+            "system": "MASTER-A",
+            "ts": 2,
+            "tgid": 52090,
+            "active": false,
+            "to_type": "ON"
+          }
+        ]
+      }
+    ]
+  }
+}

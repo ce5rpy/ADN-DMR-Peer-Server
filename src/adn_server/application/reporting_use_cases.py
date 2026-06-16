@@ -41,17 +41,17 @@ class ReportingUseCases:
         self._sender = report_sender
         self._config = config
 
-    def send_config(self, systems: dict[str, Any]) -> None:
-        """Send CONFIG_SND to all report clients."""
-        self._sender.send_config(systems)
+    def send_config(self, systems: dict[str, Any], *, incremental: bool = False) -> None:
+        """Send CONFIG_SND or v2 topology to all report clients."""
+        self._sender.send_config(systems, incremental=incremental)
 
-    def send_bridge(self, bridges: dict[str, Any]) -> None:
-        """Send BRIDGE_SND to all report clients."""
-        self._sender.send_bridge(bridges)
+    def send_routing_table(self, bridges: dict[str, Any], *, incremental: bool = False) -> None:
+        """Send BRIDGE_SND or v2 routing_table to all report clients."""
+        self._sender.send_routing_table(bridges, incremental=incremental)
 
-    def send_bridge_event(self, event: str) -> None:
+    def send_routing_event(self, event: str) -> None:
         """Send BRDG_EVENT to all report clients."""
-        self._sender.send_bridge_event(event)
+        self._sender.send_routing_event(event)
 
     def ka_reporting_loop(self) -> None:
         """Legacy kaReporting (60s): check OBP keepalive status and log warnings for stale connections."""

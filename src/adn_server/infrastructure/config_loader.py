@@ -35,6 +35,7 @@ import yaml
 from ..domain import ID_MAX, ID_MIN, PEER_MAX
 from ..domain.errors import ConfigError
 from .config_validator import validate_config
+from .proxy.config import apply_proxy_env_overrides
 
 
 def acl_build(acl_str: str | None, max_id: int) -> tuple[bool, list[tuple[int, int]]]:
@@ -105,7 +106,10 @@ class YamlConfigLoader:
             "LOGGER": data.get("LOGGER", {}),
             "ALIASES": data.get("ALIASES", {}),
             "SYSTEMS": data.get("SYSTEMS", {}),
+            "PROXY": data.get("PROXY", {}),
+            "SELF_SERVICE": data.get("SELF_SERVICE", {}),
         }
+        apply_proxy_env_overrides(config)
         # Ensure REPORT_CLIENTS is list
         if "REPORT_CLIENTS" in config["REPORTS"] and isinstance(config["REPORTS"]["REPORT_CLIENTS"], str):
             config["REPORTS"]["REPORT_CLIENTS"] = [

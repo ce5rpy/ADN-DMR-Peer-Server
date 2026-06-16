@@ -56,15 +56,18 @@ nav:
           - Private calls: server/user-guide/private-calls.md
           - Voice, announcements, and TTS: server/user-guide/voice-and-tts.md
           - Monitoring and reports: server/user-guide/monitoring.md
-          - Parrot (playback): server/user-guide/parrot.md
+          - Hotspot proxy (integrated): server/user-guide/hotspot-proxy.md
+          - Echo (playback): server/user-guide/echo.md
           - Credits & license: server/user-guide/attribution.md
       - Protocols:
           - HBP (DMRD): server/protocols/hbp.md
           - OpenBridge (DMRE): server/protocols/openbridge.md
           - DMRE v5 frame layout: server/protocols/dmre-v5.md
+          - Report protocol v2 (JSON): server/protocols/report-v2.md
       - Development:
           - Architecture: server/development/architecture.md
           - Behaviour and timers: server/development/behaviour-and-timers.md
+          - Testing: server/development/testing.md
       - Contributing:
           - Translations: server/contributing/translations.md
   - Monitor:

@@ -11,7 +11,7 @@
 
 ## OpenBridge vs MASTER
 
-Private handling uses CSBK/data/unit branches, `SUB_MAP` lookup, and busy-slot checks where applicable (see `BridgeUseCases` in source).
+Private handling uses CSBK/data/unit branches, `SUB_MAP` lookup, and busy-slot checks where applicable (see `RoutingUseCases` in source).
 
 ## TG / ID 4000 (unit)
 
@@ -21,4 +21,4 @@ As documented in [Special numbers](special-numbers.md), a **private** call to **
 
 Private **START/END** events may be emitted to the report TCP client when **`REPORTS.REPORT`** is enabled, analogous to group voice (shape `PRIVATE VOICE,...` where implemented).
 
-For protocol ingress details, see [HBP](../protocols/hbp.md) and the bridge use cases in source (`BridgeUseCases._pvt_call_received`).
+For protocol ingress details, see [HBP](../protocols/hbp.md) and the routing use cases in source (`RoutingUseCases._pvt_call_received`).

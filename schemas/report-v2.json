@@ -1,0 +1,279 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://adn.systems/schemas/report-v2.json",
+  "title": "ADN Monitor Report Protocol v2",
+  "description": "JSON payloads for the TCP report channel (netstring-framed). Legacy v1 uses pickle CONFIG_SND/BRIDGE_SND and CSV BRDG_EVENT; v2 replaces those with typed JSON. Wire opcodes are defined in docs/en/server/protocols/report-v2.md.",
+  "type": "object",
+  "required": ["type"],
+  "oneOf": [
+    { "$ref": "#/$defs/hello" },
+    { "$ref": "#/$defs/topology" },
+    { "$ref": "#/$defs/routing_table" },
+    { "$ref": "#/$defs/voice_event" },
+    { "$ref": "#/$defs/delta" }
+  ],
+  "$defs": {
+    "dmr_id": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 16777215,
+      "description": "DMR radio ID or talkgroup (24-bit)."
+    },
+    "stream_id": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 4294967295,
+      "description": "HBP stream identifier (32-bit, unsigned)."
+    },
+    "slot": {
+      "type": "integer",
+      "enum": [1, 2]
+    },
+    "system_mode": {
+      "type": "string",
+      "enum": ["MASTER", "PEER", "OPENBRIDGE"]
+    },
+    "to_type": {
+      "type": "string",
+      "enum": ["ON", "OFF", "STAT", "NONE"],
+      "description": "Legacy BRIDGES TO_TYPE semantics until subscription model (Phase 2)."
+    },
+    "hello": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "server", "version", "report_protocol", "features"],
+      "properties": {
+        "type": { "const": "hello" },
+        "server": { "type": "string", "minLength": 1 },
+        "version": { "type": "string", "minLength": 1, "description": "adn-server package version." },
+        "report_protocol": {
+          "type": "integer",
+          "const": 2,
+          "description": "Report payload schema version (distinct from legacy HELLO protocol field value 1)."
+        },
+        "features": {
+          "type": "array",
+          "items": { "type": "string" },
+          "uniqueItems": true,
+          "description": "Capability tokens. v1: INGRESS, END_TX_FORWARD, PUSH_ON_CONNECT. v2 adds REPORT_V2, TOPOLOGY_JSON, ROUTING_TABLE_JSON, VOICE_EVENT_JSON, DELTA_UPDATES."
+        },
+        "systems": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Optional hint: enabled system names with at least one connected peer or upstream link. Omitted when none. Full topology (all systems) follows in the topology message."
+        }
+      }
+    },
+    "topology_system": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "mode", "enabled"],
+      "properties": {
+        "name": { "type": "string" },
+        "mode": { "$ref": "#/$defs/system_mode" },
+        "enabled": { "type": "boolean" },
+        "ip": { "type": "string" },
+        "port": { "type": "integer", "minimum": 0, "maximum": 65535 },
+        "repeat": { "type": "boolean" },
+        "enhanced_obp": { "type": "boolean" },
+        "network_id": {
+          "$ref": "#/$defs/dmr_id",
+          "description": "OPENBRIDGE NETWORK_ID (legacy CONFIG bytes_4 value as integer)."
+        },
+        "ts1_static": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "MASTER slot-1 static talkgroups (from YAML and peer RPTO OPTIONS)."
+        },
+        "ts2_static": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "MASTER slot-2 static talkgroups (from YAML and peer RPTO OPTIONS)."
+        },
+        "peers": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["id", "connected"],
+            "properties": {
+              "id": { "$ref": "#/$defs/dmr_id" },
+              "connected": { "type": "boolean" },
+              "ip": { "type": "string" },
+              "port": { "type": "integer", "minimum": 0, "maximum": 65535 },
+              "callsign": { "type": "string" },
+              "rx_freq": { "type": "string", "description": "RX frequency digits or formatted string from HBP config." },
+              "tx_freq": { "type": "string" },
+              "location": { "type": "string" },
+              "description": { "type": "string" },
+              "url": { "type": "string" },
+              "slots": { "type": "string" },
+              "package_id": { "type": "string" },
+              "software_id": { "type": "string" },
+              "colorcode": { "type": "string" },
+              "tx_power": { "type": "string" },
+              "ts1_static": {
+                "type": "array",
+                "items": { "type": "string" },
+                "description": "Slot-1 static TGs from this peer's RPTO OPTIONS."
+              },
+              "ts2_static": {
+                "type": "array",
+                "items": { "type": "string" },
+                "description": "Slot-2 static TGs from this peer's RPTO OPTIONS."
+              },
+              "single_mode": {
+                "type": "boolean",
+                "description": "Resolved SINGLE=1 from peer OPTIONS, else YAML SINGLE_MODE."
+              },
+              "ua_timer_min": {
+                "type": "number",
+                "minimum": 0,
+                "description": "Resolved TIMER from peer OPTIONS (minutes), else YAML DEFAULT_UA_TIMER."
+              },
+              "ua_sessions": {
+                "type": "object",
+                "description": "Active SINGLE sessions per slot from server runtime (empty when none).",
+                "additionalProperties": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": ["tgid", "expires_at"],
+                  "properties": {
+                    "tgid": { "$ref": "#/$defs/dmr_id" },
+                    "expires_at": { "type": "number" }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "topology": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "seq", "ts", "systems"],
+      "properties": {
+        "type": { "const": "topology" },
+        "seq": { "type": "integer", "minimum": 0 },
+        "ts": { "type": "number", "description": "Unix epoch seconds (fractional allowed)." },
+        "systems": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/topology_system" }
+        }
+      }
+    },
+    "routing_leg": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["system", "ts", "tgid", "active", "to_type"],
+      "properties": {
+        "system": { "type": "string" },
+        "ts": { "$ref": "#/$defs/slot" },
+        "tgid": { "$ref": "#/$defs/dmr_id" },
+        "active": { "type": "boolean" },
+        "to_type": { "$ref": "#/$defs/to_type" },
+        "timer_expires_at": {
+          "type": "number",
+          "description": "Unix time when rule_timer deactivates leg (legacy TIMER field)."
+        }
+      }
+    },
+    "routing_table": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "seq", "ts", "routes"],
+      "properties": {
+        "type": { "const": "routing_table" },
+        "seq": { "type": "integer", "minimum": 0 },
+        "ts": { "type": "number" },
+        "routes": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["relay_table_key", "legs"],
+            "properties": {
+              "relay_table_key": {
+                "type": "string",
+                "description": "Talkgroup id string or reflector key (#xxx)."
+              },
+              "legs": {
+                "type": "array",
+                "items": { "$ref": "#/$defs/routing_leg" }
+              }
+            }
+          }
+        }
+      }
+    },
+    "voice_event": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "type",
+        "ts",
+        "call_family",
+        "phase",
+        "direction",
+        "system",
+        "stream_id",
+        "peer_id",
+        "src_id",
+        "slot",
+        "dst_id"
+      ],
+      "properties": {
+        "type": { "const": "voice_event" },
+        "ts": { "type": "number" },
+        "call_family": {
+          "type": "string",
+          "enum": ["GROUP", "PRIVATE", "UNIT", "VCSSBK"],
+          "description": "Replaces BRDG_EVENT prefix (e.g. GROUP VOICE)."
+        },
+        "phase": {
+          "type": "string",
+          "enum": ["INGRESS", "START", "END", "DATA"],
+          "description": "DATA is used for UNIT DATA events (legacy BRDG_EVENT CSV)."
+        },
+        "direction": {
+          "type": "string",
+          "enum": ["RX", "TX"]
+        },
+        "system": { "type": "string" },
+        "stream_id": { "$ref": "#/$defs/stream_id" },
+        "peer_id": { "$ref": "#/$defs/dmr_id" },
+        "src_id": { "$ref": "#/$defs/dmr_id" },
+        "slot": { "$ref": "#/$defs/slot" },
+        "dst_id": { "$ref": "#/$defs/dmr_id" },
+        "duration_s": {
+          "type": ["number", "null"],
+          "minimum": 0,
+          "description": "Present on END events."
+        }
+      }
+    },
+    "delta": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "seq", "ts", "since_seq", "patch"],
+      "properties": {
+        "type": { "const": "delta" },
+        "seq": { "type": "integer", "minimum": 1 },
+        "ts": { "type": "number" },
+        "since_seq": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Client last applied seq; server sends changes after this."
+        },
+        "patch": {
+          "description": "Partial topology or routing_table payload (same shape, may omit unchanged branches).",
+          "oneOf": [
+            { "$ref": "#/$defs/topology" },
+            { "$ref": "#/$defs/routing_table" }
+          ]
+        }
+      }
+    }
+  }
+}

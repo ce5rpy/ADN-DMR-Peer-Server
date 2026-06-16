@@ -1,0 +1,33 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>ADN Systems documentation</title>
+  <script>
+(function () {
+  function detectLang() {
+    var list = [];
+    if (typeof navigator.languages !== "undefined" && navigator.languages.length) {
+      list = Array.prototype.slice.call(navigator.languages);
+    } else {
+      var one = navigator.language || navigator.userLanguage || "";
+      if (one) list = [one];
+    }
+    for (var i = 0; i < list.length; i++) {
+      var tag = String(list[i] || "").toLowerCase();
+      if (tag === "es" || tag.indexOf("es-") === 0) return "es";
+    }
+    return "en";
+  }
+  window.location.replace("/docs/" + detectLang() + "/");
+})();
+  </script>
+  <noscript>
+    <meta http-equiv="refresh" content="0; url=/docs/en/">
+  </noscript>
+</head>
+<body>
+  <p>Redirecting… <a href="/docs/es/">Español</a> · <a href="/docs/en/">English</a></p>
+</body>
+</html>

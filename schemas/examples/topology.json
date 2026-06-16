@@ -1,0 +1,35 @@
+{
+  "type": "topology",
+  "seq": 1,
+  "ts": 1717555200.0,
+  "systems": [
+    {
+      "name": "MASTER-A",
+      "mode": "MASTER",
+      "enabled": true,
+      "ip": "10.0.0.1",
+      "port": 62030,
+      "repeat": true,
+      "peers": [
+        {
+          "id": 3120001,
+          "connected": true,
+          "ip": "10.0.0.50",
+          "port": 62031,
+          "single_mode": false,
+          "ua_timer_min": 10,
+          "ua_sessions": {}
+        }
+      ]
+    },
+    {
+      "name": "OBP-CL",
+      "mode": "OPENBRIDGE",
+      "enabled": true,
+      "ip": "10.0.0.2",
+      "port": 62044,
+      "enhanced_obp": true,
+      "peers": []
+    }
+  ]
+}

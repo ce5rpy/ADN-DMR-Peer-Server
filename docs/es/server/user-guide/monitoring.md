@@ -5,14 +5,18 @@
 Cuando **`REPORTS`** está habilitado en la config del servidor, el **ADN DMR Peer Server** escucha en TCP y los **clientes de informes** (típicamente **adn-monitor**) se conectan y reciben:
 
 - **HELLO** (opcode **`0xFF`**) — JSON enviado **el primero** en cada conexión TCP por **ADN DMR Server** (`adn-server`): nombre **`server`**, **`version`** del paquete, número de **`protocol`** y lista **`features`** (p. ej. `INGRESS`, `END_TX_FORWARD`, `PUSH_ON_CONNECT`). Permite al monitor marcar la sesión como **v2** antes de las cargas pickle.
-- **CONFIG_SND** / **BRIDGE_SND** — instantáneas pickle de sistemas y bridges (tras HELLO al conectar, en **`CONFIG_REQ`** / **`BRIDGE_REQ`**, en **reload** de config (**SIGHUP**), cuando un hotspot **MASTER** **registra o desconecta**, y en el bucle periódico **`REPORT_INTERVAL`**).
-- **BRDG_EVENT** — eventos de texto para llamadas (`GROUP VOICE`, `PRIVATE VOICE`, etc.).
+- **Report v1 (par 1.0.x):** **CONFIG_SND** / **BRIDGE_SND** (pickle), **BRDG_EVENT** (CSV).
+- **Report v2 (par 2.x):** **TOPOLOGY_SND** / **ROUTING_TABLE_SND** (JSON), **VOICE_EVENT_SND**, **DELTA_SND** opcional — mismos disparadores (conexión, **`CONFIG_REQ`** / **`BRIDGE_REQ`**, reload, peers, **`REPORT_INTERVAL`**).
+
+**Informes v2:** JSON tipado (`topology`, `routing_table`, `voice_event`, `delta`) sustituye pickle/CSV en el par **servidor 2.x + monitor 2.x**. Esquema: [Protocolo de informes v2 (JSON)](../protocols/report-v2.md).
+
+**Acoplamiento de versiones:** **servidor 1.0.x + monitor 1.0.x** = report v1 (tags). **servidor 2.x** emite **solo report v2** — requiere **monitor 2.x**. Sin wire `dual`; monitor 1.0.x no decodifica este servidor.
 
 Las pilas antiguas (**legado** estilo `adn-dmr-server`) pueden **omitir** HELLO. **adn-monitor** espera hasta **`ADN_CONNECTION.HELLO_TIMEOUT_MS`** (ver [Configuración del monitor](../../monitor/configuration.md#adn_connection)); si no llega HELLO, asume informes **legacy**.
 
 El **monitor** decodifica estos mensajes, actualiza **CTABLE** / **BTABLE** y (con MySQL configurado) persiste Last Heard / estadísticas.
 
-**Pila completa:** [Descripción general del ADN Monitor](../../monitor/index.md) (monitor Python, WebSocket, API PHP, proxy y self-service opcionales).
+**Pila completa:** [Descripción general del ADN Monitor](../../monitor/index.md) (monitor FastAPI, WebSocket, self-service).
 
 ### Líneas de log del canal de informes (logger `adn-monitor`)
 
@@ -46,8 +50,7 @@ Estos procesos tratan **`SIGUSR2`** solo para **reabrir** los ficheros de log (`
 
 | Proceso | Claves típicas de configuración |
 |---------|-----------------------------------|
-| **`adn-server`** / **`adn-parrot`** | **`LOGGER.LOG_FILE`** (ver `adn-server.example.yaml`) |
-| **`adn-proxy`** | **`LOG.PATH`** + **`LOG.LOG_FILE`** en `adn-proxy.yaml` |
+| **`adn-server`** / **`adn-echo`** | **`LOGGER.LOG_FILE`** (los logs del proxy integrado van al mismo fichero) |
 | **`adn-monitor`** | **`LOG.PATH`** + **`LOG.LOG_FILE`** en `adn-monitor.yaml` |
 
 Ejemplo de fragmento en **`/etc/logrotate.d/adn`** (adaptar rutas y nombres de unidad):
@@ -67,7 +70,7 @@ Ejemplo de fragmento en **`/etc/logrotate.d/adn`** (adaptar rutas y nombres de u
 }
 ```
 
-Repite **`postrotate`** con **`kill -USR2`** para las unidades **`adn-parrot`**, **`adn-proxy`** y **`adn-monitor`** si rotas sus logs en el mismo host. Usa el **PID** correcto (**`MainPID`** de systemd, pidfile, o el proceso que gestiones).
+Repite **`postrotate`** con **`kill -USR2`** para **`adn-echo`** y **`adn-monitor`** si rotas sus logs en el mismo host. Usa el **PID** correcto (**`MainPID`** de systemd, pidfile, o el proceso que gestiones).
 
 ## Requisitos
 
@@ -76,4 +79,6 @@ Repite **`postrotate`** con **`kill -USR2`** para las unidades **`adn-parrot`**,
 
 ## Self-service y hotspots
 
-Los operadores que editan **opciones de dispositivo** desde el panel usan el flujo **self-service** (MySQL **`Clients`**, proxy **RPTO**). Está documentado en [Self-service](../../monitor/self-service.md); **no** forma parte solo del binario del peer server. Para la configuración del **proxy hotspot** (`PROXY` en **`adn-proxy.yaml`** por defecto), enlace al rango **UDP** del peer server y arranque del proceso, ver [Proxy hotspot](../../monitor/hotspot-proxy.md).
+Los operadores que editan **opciones de dispositivo** desde el panel usan el flujo **self-service** (MySQL **`Clients`**, **RPTO** hacia el MASTER de conferencia). En despliegues actuales de **ADN DMR Peer Server** esto corre **dentro de `adn-server.py`**: configura **`SELF_SERVICE`** y **`PROXY`** en **`adn-server.yaml`** (ver [Proxy hotspot](hotspot-proxy.md)). Semántica del panel: [Self-service](../../monitor/self-service.md).
+
+Los logs del proxy hotspot forman parte de **`adn-server`** cuando **`PROXY`** está activo — ver [Proxy hotspot integrado](hotspot-proxy.md).

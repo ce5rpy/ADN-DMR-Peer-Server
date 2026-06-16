@@ -7,14 +7,13 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "adn-server"
-version = "1.0.0"
+version = "2.0.0-rc.1"
 description = "ADN DMR Peer Server"
 readme = "README.md"
 license = { text = "GPL-3.0-or-later" }
 requires-python = ">=3.10"
 dependencies = [
     "Twisted>=22.0",
-    "dmr_utils3>=0.1.19",
     "pyyaml>=6.0",
     "bitarray>=2.0",
     "cryptography>=41.0",
@@ -22,15 +21,27 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+mqtt = ["paho-mqtt>=2.0"]
+selfservice = ["mysqlclient>=2.0"]
+dev = ["pytest>=7.0", "jsonschema>=4.0", "paho-mqtt>=2.0"]
 docs = ["mkdocs>=1.6", "mkdocs-material>=9.5", "pymdown-extensions>=10.3"]
 
 [tool.setuptools.packages.find]
 where = ["src"]
 
+[tool.pytest.ini_options]
+pythonpath = ["."]
+testpaths = ["tests"]
+markers = [
+    "behavior: integration-style behavior tests (P0/P1)",
+    "integration: real HBP/proxy stack (not DeterministicScenario inject)",
+    "mqtt: requires MQTT broker or heavy mqtt mocks",
+    "smoke: quick routing smoke tests",
+]
+
 [tool.ruff.lint.per-file-ignores]
 # Entrypoints adjust sys.path before importing the package (intentional E402).
 "src/adn_server/main.py" = ["E402"]
-"src/adn_server/parrot_main.py" = ["E402"]
 
 [project.scripts]
 adn-server = "adn_server.main:main"

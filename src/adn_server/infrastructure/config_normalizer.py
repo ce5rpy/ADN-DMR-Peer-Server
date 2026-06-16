@@ -22,7 +22,7 @@
 #   Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301  USA
 ###############################################################################
 
-"""Shared config normalization: PEER, OBP, MASTER runtime state. Used by main.py and parrot_main.py."""
+"""Shared config normalization: PEER, OBP, MASTER runtime state. Used by main and echo runtime."""
 
 from __future__ import annotations
 
@@ -34,6 +34,8 @@ import time
 
 def expand_generator(config: dict, logger: logging.Logger) -> None:
     """Replace MASTER systems with GENERATOR > 1 by SYSTEM-0, SYSTEM-1, ... (legacy generator)."""
+    from adn_server.application.proxy.deployment import is_proxy_inject_only
+
     systems = config.get("SYSTEMS", {})
     to_remove: list[str] = []
     new_systems: dict = {}
@@ -41,6 +43,8 @@ def expand_generator(config: dict, logger: logging.Logger) -> None:
         if not sys_cfg.get("ENABLED", True):
             continue
         if sys_cfg.get("MODE") != "MASTER":
+            continue
+        if is_proxy_inject_only(config, system_name):
             continue
         generator = int(sys_cfg.get("GENERATOR", 1))
         if generator <= 1:

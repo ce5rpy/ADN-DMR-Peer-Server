@@ -21,47 +21,28 @@
 #   Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301  USA
 ###############################################################################
 
-"""Report server: CONFIG_SND, BRIDGE_SND, BRDG_EVENT (legacy reportFactory, bridgeReportFactory)."""
+"""TCP report transport (Twisted). Encoding delegated to ``report/`` wire adapters."""
 
 from __future__ import annotations
 
-import json
 import logging
-import pickle
+from collections.abc import Callable
 from typing import Any
 
 from twisted.internet.protocol import Factory
 from twisted.protocols.basic import NetstringReceiver
 
+from adn_server.application.ports import ReportMqttPublisher, ReportWireEncoder
+from adn_server.application.report.monitor_topology import (
+    expand_inject_proxy_systems,
+    remap_inject_proxy_voice_events,
+)
+
+from .report import REPORT_OPCODES, create_report_wire
+
 logger = logging.getLogger(__name__)
 
-REPORT_OPCODES = {
-    "CONFIG_REQ": b"\x00",
-    "CONFIG_SND": b"\x01",
-    "BRIDGE_REQ": b"\x02",
-    "BRIDGE_SND": b"\x03",
-    "CONFIG_UPD": b"\x04",
-    "BRIDGE_UPD": b"\x05",
-    "LINK_EVENT": b"\x06",
-    "BRDG_EVENT": b"\x07",
-    "HELLO": b"\xff",
-}
-
-SERVER_NAME = "adn-server"
-PROTOCOL_VERSION = 1
-SERVER_FEATURES = ("INGRESS", "END_TX_FORWARD", "PUSH_ON_CONNECT")
-
-
-def _server_version() -> str:
-    try:
-        from importlib.metadata import PackageNotFoundError, version
-
-        try:
-            return version("adn-server")
-        except PackageNotFoundError:
-            return "0.0.0"
-    except Exception:
-        return "0.0.0"
+__all__ = ["REPORT_OPCODES", "ReportServerFactory"]
 
 
 class ReportProtocol(NetstringReceiver):
@@ -76,8 +57,7 @@ class ReportProtocol(NetstringReceiver):
         addr = f"{peer.host}:{peer.port}" if peer else "?"
         logger.info("(REPORT) Client connected from %s (%s client(s))", addr, len(self._factory.clients))
         self._factory._send_hello_to(self)
-        self._factory._send_config_to(self)
-        self._factory._send_bridge_to(self)
+        self._factory._send_state_to(self, force=True)
 
     def connectionLost(self, reason: Any = None) -> None:
         if self in self._factory.clients:
@@ -85,22 +65,30 @@ class ReportProtocol(NetstringReceiver):
         logger.info("(REPORT) Client disconnected (%s client(s))", len(self._factory.clients))
 
     def stringReceived(self, data: bytes) -> None:
-        if data[:1] == REPORT_OPCODES["CONFIG_REQ"]:
-            self._factory._send_config_to(self)
-        elif data[:1] == REPORT_OPCODES["BRIDGE_REQ"]:
-            self._factory._send_bridge_to(self)
-        else:
-            pass  # unknown opcode
+        if data[:1] in (
+            REPORT_OPCODES["STATE_REQ"],
+            REPORT_OPCODES["CONFIG_REQ"],
+            REPORT_OPCODES["BRIDGE_REQ"],
+        ):
+            self._factory._send_state_to(self, force=True)
 
 
 class ReportServerFactory(Factory):
-    """Factory for report protocol; holds config and bridges and sends to clients."""
+    """Twisted factory: ACL, client list, broadcast via injected ``ReportWireEncoder``."""
 
-    def __init__(self, config: dict[str, Any]) -> None:
+    def __init__(
+        self,
+        config: dict[str, Any],
+        *,
+        mqtt: ReportMqttPublisher | None = None,
+    ) -> None:
         self._config = config
+        self._wire: ReportWireEncoder = create_report_wire(config)
+        self._mqtt = mqtt
         self.clients: list[ReportProtocol] = []
         self._systems: dict[str, Any] = {}
         self._bridges: dict[str, Any] = {}
+        self._peer_slot_map: Callable[[], dict[bytes, int]] | None = None
 
     def buildProtocol(self, addr: Any) -> ReportProtocol | None:
         allowed = self._config.get("REPORTS", {}).get("REPORT_CLIENTS", ["127.0.0.1"])
@@ -110,56 +98,73 @@ class ReportServerFactory(Factory):
             return ReportProtocol(self)
         return None
 
+    def set_config(self, config: dict[str, Any]) -> None:
+        self._config = config
+
+    def set_mqtt(self, mqtt: ReportMqttPublisher | None) -> None:
+        self._mqtt = mqtt
+
     def set_systems(self, systems: dict[str, Any]) -> None:
         self._systems = systems
 
-    def set_bridges(self, bridges: dict[str, Any]) -> None:
+    def set_routing_table(self, bridges: dict[str, Any]) -> None:
         self._bridges = bridges
 
+    def set_peer_slot_map(self, provider: Callable[[], dict[bytes, int]] | None) -> None:
+        """Provide proxy upstream slot indices for monitor topology expansion."""
+        self._peer_slot_map = provider
+
+    def _systems_for_report(self) -> dict[str, Any]:
+        systems = self._systems
+        peer_slots = self._peer_slot_map() if self._peer_slot_map is not None else None
+        return expand_inject_proxy_systems(self._config, systems, peer_slots)
+
+    def _send_frames(self, client: ReportProtocol, frames: tuple[bytes, ...]) -> None:
+        for frame in frames:
+            client.sendString(frame)
+
+    def _broadcast_frames(self, frames: tuple[bytes, ...]) -> None:
+        if not frames:
+            return
+        for client in self.clients:
+            self._send_frames(client, frames)
+
+    def start_mqtt(self) -> None:
+        if self._mqtt is not None:
+            self._mqtt.start(self._wire, lambda: self._systems, lambda: self._bridges)
+
     def _send_hello_to(self, client: ReportProtocol) -> None:
-        info = {
-            "server": SERVER_NAME,
-            "version": _server_version(),
-            "protocol": PROTOCOL_VERSION,
-            "features": list(SERVER_FEATURES),
-        }
-        payload = json.dumps(info, separators=(",", ":")).encode("utf-8")
         try:
-            client.sendString(REPORT_OPCODES["HELLO"] + payload)
-            logger.debug("(REPORT) Sent HELLO to client: %s", info)
+            self._send_frames(client, self._wire.hello_frames(self._systems_for_report()))
         except Exception as e:
             logger.warning("(REPORT) Failed to send HELLO: %s", e)
 
-    def _send_config_to(self, client: ReportProtocol) -> None:
-        """Send CONFIG_SND to a single client (e.g. on connect or CONFIG_REQ)."""
-        payload = pickle.dumps(self._systems, protocol=2)
-        msg = REPORT_OPCODES["CONFIG_SND"] + payload
-        client.sendString(msg)
-        logger.debug("(REPORT) Sent CONFIG_SND to client (%d systems)", len(self._systems))
+    def _send_state_to(self, client: ReportProtocol, *, force: bool) -> None:
+        self._send_frames(
+            client,
+            self._wire.state_frames(self._systems_for_report(), force=force),
+        )
 
-    def _send_bridge_to(self, client: ReportProtocol) -> None:
-        """Send BRIDGE_SND to a single client (e.g. on connect or BRIDGE_REQ)."""
-        payload = pickle.dumps(self._bridges, protocol=2)
-        msg = REPORT_OPCODES["BRIDGE_SND"] + payload
-        client.sendString(msg)
-        logger.debug("(REPORT) Sent BRIDGE_SND to client (%d bridges)", len(self._bridges))
+    def send_config(self, *, incremental: bool = False) -> None:
+        systems = self._systems_for_report()
+        frames = self._wire.state_frames(systems, force=not incremental)
+        self._broadcast_frames(frames)
+        if self._mqtt is not None:
+            self._mqtt.publish_dashboard(systems)
 
-    def send_config(self) -> None:
-        """Send CONFIG_SND (pickle SYSTEMS) to all clients."""
-        n = len(self.clients)
-        logger.debug("(REPORT) Sending CONFIG_SND to %s client(s)", n)
-        for c in self.clients:
-            self._send_config_to(c)
+    def send_routing_table(self, *, incremental: bool = False) -> None:
+        frames = self._wire.bridge_frames(self._bridges, full_snapshot=not incremental)
+        self._broadcast_frames(frames)
+        if self._mqtt is not None:
+            self._mqtt.publish_dashboard(self._systems_for_report())
 
-    def send_bridge(self) -> None:
-        """Send BRIDGE_SND (pickle BRIDGES) to all clients."""
-        n = len(self.clients)
-        logger.debug("(REPORT) Sending BRIDGE_SND to %s client(s)", n)
-        for c in self.clients:
-            self._send_bridge_to(c)
-
-    def send_bridge_event(self, event: str) -> None:
-        """Send BRDG_EVENT."""
-        msg = REPORT_OPCODES["BRDG_EVENT"] + event.encode("utf-8", errors="ignore")
-        for c in self.clients:
-            c.sendString(msg)
+    def send_routing_event(self, event: str) -> None:
+        peer_slots = self._peer_slot_map() if self._peer_slot_map is not None else None
+        events = remap_inject_proxy_voice_events(
+            event, self._config, self._systems, peer_slots, self._bridges
+        )
+        for mapped in events:
+            frames = self._wire.bridge_event_frames(mapped)
+            self._broadcast_frames(frames)
+            if self._mqtt is not None:
+                self._mqtt.publish_frames(frames)

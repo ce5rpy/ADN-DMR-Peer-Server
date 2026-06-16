@@ -1,5 +1,22 @@
 # ADN DMR Peer Server - Talker Alias use cases
+#
 # Copyright (C) 2026  Rodrigo Pérez, CE5RPY <ce5rpy@qmd.cl>
+#
+###############################################################################
+#   This program is free software; you can redistribute it and/or modify
+#   it under the terms of the GNU General Public License as published by
+#   the Free Software Foundation; either version 3 of the License, or
+#   (at your option) any later version.
+#
+#   This program is distributed in the hope that it will be useful,
+#   but WITHOUT ANY WARRANTY; without even the implied warranty of
+#   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+#   GNU General Public License for more details.
+#
+#   You should have received a copy of the GNU General Public License
+#   along with this program; if not, write to the Free Software Foundation,
+#   Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301  USA
+###############################################################################
 
 """Talker Alias policy: template formatting, inject vs passthrough."""
 
@@ -133,17 +150,60 @@ class TalkerAliasUseCases:
         self._config = config
         self._ta_emblc = ta_emblc_encoder
         self._sent_streams: set[tuple[str, bytes]] = set()
-        self._embed_logged: set[tuple[str, bytes]] = set()
+        self._sent_kind: dict[tuple[str, bytes], str] = {}
+        self._embed_logged: set[tuple[str, str, bytes]] = set()
+        self._policy_logged: set[tuple[str, str, bytes, str]] = set()
+
+    def clear_dmra_sent(self, system_name: str, stream_id: bytes) -> None:
+        key = (system_name, stream_id)
+        self._sent_streams.discard(key)
+        self._sent_kind.pop(key, None)
 
     def clear_stream(self, system_name: str, stream_id: bytes) -> None:
-        self._sent_streams.discard((system_name, stream_id))
-        self._embed_logged.discard((system_name, stream_id))
+        self.clear_dmra_sent(system_name, stream_id)
+        self._embed_logged = {k for k in self._embed_logged if k[2] != stream_id}
+        self._policy_logged = {k for k in self._policy_logged if k[2] != stream_id}
 
     def should_send_on_vhead(self, target_system: str, stream_id: bytes) -> bool:
         return (target_system, stream_id) not in self._sent_streams
 
-    def mark_dmra_sent(self, target_system: str, stream_id: bytes) -> None:
-        self._sent_streams.add((target_system, stream_id))
+    def should_resend_passthrough_dmra(self, target_system: str, stream_id: bytes) -> bool:
+        """True when passthrough DMRA should replace a prior inject on this leg."""
+        key = (target_system, stream_id)
+        if key not in self._sent_streams:
+            return True
+        return self._sent_kind.get(key) == "inject"
+
+    def mark_dmra_sent(self, target_system: str, stream_id: bytes, *, kind: str) -> None:
+        key = (target_system, stream_id)
+        self._sent_streams.add(key)
+        self._sent_kind[key] = kind
+
+    def _log_policy_once(
+        self,
+        source_system: str,
+        target_system: str,
+        stream_id: bytes,
+        kind: str,
+        text: str,
+        *,
+        suffix: str = "",
+        via: str,
+    ) -> None:
+        log_key = (source_system, target_system, stream_id, kind)
+        if log_key in self._policy_logged:
+            return
+        self._policy_logged.add(log_key)
+        if kind == "passthrough":
+            logger.debug(
+                "(%s) *TALKER ALIAS* passthrough '%s' via %s -> %s stream %s",
+                source_system, text, via, target_system, int_id(stream_id),
+            )
+        else:
+            logger.debug(
+                "(%s) *TALKER ALIAS* inject '%s'%s via %s -> %s stream %s",
+                source_system, text, suffix, via, target_system, int_id(stream_id),
+            )
 
     def packets_for_stream(
         self,
@@ -168,16 +228,14 @@ class TalkerAliasUseCases:
             if not have_passthrough:
                 return None
             text = decode_ta_from_blocks(blocks)
-            logger.debug(
-                "(%s) *TALKER ALIAS* passthrough '%s' via %s -> %s stream %s",
-                source_system, text, via, target, int_id(stream_id),
+            self._log_policy_once(
+                source_system, target, stream_id, "passthrough", text, via=via,
             )
             return passthrough_packets_from_blocks(rf_src, blocks)
         if mode == "inject":
             text = format_talker_alias_text(self._config, rf_src)
-            logger.debug(
-                "(%s) *TALKER ALIAS* inject '%s' via %s -> %s stream %s",
-                source_system, text, via, target, int_id(stream_id),
+            self._log_policy_once(
+                source_system, target, stream_id, "inject", text, via=via,
             )
             return build_dmra_packets(rf_src, text, settings["text_formats"][0])
         # both: prefer the source's own TA. If a valid MMDVM DMRA buffer arrived,
@@ -185,23 +243,17 @@ class TalkerAliasUseCases:
         # through unchanged in the DMRD voice, so do NOT inject a template here.
         if have_passthrough:
             text = decode_ta_from_blocks(blocks)
-            logger.debug(
-                "(%s) *TALKER ALIAS* passthrough '%s' via %s -> %s stream %s",
-                source_system, text, via, target, int_id(stream_id),
+            self._log_policy_once(
+                source_system, target, stream_id, "passthrough", text, via=via,
             )
             return passthrough_packets_from_blocks(rf_src, blocks)
-        if fallback_inject:
-            text = format_talker_alias_text(self._config, rf_src)
-            logger.debug(
-                "(%s) *TALKER ALIAS* inject '%s' (no source TA) via %s -> %s stream %s",
-                source_system, text, via, target, int_id(stream_id),
-            )
-            return build_dmra_packets(rf_src, text, settings["text_formats"][0])
-        logger.debug(
-            "(%s) *TALKER ALIAS* passthrough (source embedded TA) via %s -> %s stream %s",
-            source_system, via, target, int_id(stream_id),
+        # Legacy resolve_ta (both): inject template when no DMRA buffer yet (VHEAD).
+        text = format_talker_alias_text(self._config, rf_src)
+        suffix = " (no source TA yet)" if fallback_inject else ""
+        self._log_policy_once(
+            source_system, target, stream_id, "inject", text, suffix=suffix, via=via,
         )
-        return None
+        return build_dmra_packets(rf_src, text, settings["text_formats"][0])
 
     def embedded_emblc_for_stream(
         self,
@@ -229,7 +281,7 @@ class TalkerAliasUseCases:
         mode = settings["mode"]
         target = target_system or source_system
         via = "repeat" if source_system == target else "bridge"
-        log_key = (source_system, stream_id)
+        log_key = (source_system, target, stream_id)
 
         def _log(text: str, suffix: str) -> None:
             if log_key in self._embed_logged:
@@ -244,8 +296,8 @@ class TalkerAliasUseCases:
         if mode in ("passthrough", "both") and blocks and passthrough_complete(blocks):
             _log(decode_ta_from_blocks(blocks), " (source TA)")
             return self._ta_emblc.encode_blocks(blocks)
-        if mode == "inject" or fallback_inject:
-            suffix = "" if mode == "inject" else " (no source TA)"
+        if mode in ("inject", "both") or fallback_inject:
+            suffix = "" if mode == "inject" else " (no source TA yet)"
             text = format_talker_alias_text(self._config, rf_src)
             _log(text, suffix)
             return self._ta_emblc.encode_text(text, text_formats=settings["text_formats"])

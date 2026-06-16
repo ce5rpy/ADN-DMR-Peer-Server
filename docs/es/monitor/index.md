@@ -1,6 +1,6 @@
 # ADN Monitor (descripción general)
 
-**ADN Monitor** es un proyecto distinto del **ADN DMR Peer Server**, pero ambos suelen desplegarse **juntos**: el servidor envía **informes TCP** (config, bridges, eventos de llamada) al monitor; el monitor alimenta el **panel web** (React) y las actualizaciones **WebSocket**. Los componentes opcionales incluyen la **API PHP** (Slim), **MySQL** (self-service / registro de dispositivos) y el **proxy hotspot** (UDP entre hotspots y el peer server).
+**ADN Monitor** es un proyecto distinto del **ADN DMR Peer Server**, pero ambos suelen desplegarse **juntos**: el servidor envía **informes TCP** (o MQTT) al monitor; el monitor alimenta el **panel web** (React) y las actualizaciones **WebSocket**. Un único proceso **`monitor.py`** (FastAPI) sirve **REST** (`/api/*`), **WebSocket** (`/ws`) e **ingest** de informes. Opcional: **MySQL** (self-service / Last Heard) y **proxy hotspot** integrado en **`adn-server.py`**.
 
 Este capítulo documenta la pila **adn-monitor** con el mismo nivel de detalle que las guías del servidor. El código fuente está en el repositorio **adn-monitor**, no en el repositorio **adn-server** (donde se mantiene esta documentación).
 
@@ -8,19 +8,17 @@ Este capítulo documenta la pila **adn-monitor** con el mismo nivel de detalle q
 
 | Parte | Rol |
 |-------|-----|
-| **`monitor/monitor.py`** | Python (Twisted): se conecta al **puerto TCP de informes** del peer server, decodifica cargas netstring (`CONFIG_SND`, `BRIDGE_SND`, `BRDG_EVENT`), mantiene **CTABLE** / **BTABLE**, escribe **Last Heard** / estadísticas de TG en **MySQL** si está configurado, sirve JSON **WebSocket** al panel. |
-| **`backend/`** | PHP **Slim**: `/api/config/dashboard`, auth, APIs **self-service** opcionales, proxy de alias. Lee **`adn-monitor.yaml`** vía **`ADN_CONFIG_PATH`**. |
-| **`frontend/`** | React (Vite): UI del panel; consume API del backend + WebSocket. |
-| **`proxy/`** | Python (Twisted): **proxy hotspot** UDP; reenvía Homebrew entre hotspots y el peer server; lee **`Clients`** en MySQL para opciones **RPTO** (self-service). Carga **`adn-proxy.yaml`** por defecto (ver [Proxy hotspot](hotspot-proxy.md)). |
+| **`monitor/monitor.py`** | FastAPI: REST (`/api/*`), WebSocket (`/ws`), ingest TCP o MQTT, estado **CTABLE** / Last Heard, self-service MySQL. |
+| **`frontend/`** | React (Vite): UI del panel; mismo origen `/api` + `/ws`. |
 
 ## Ficheros de configuración
 
 | Fichero | Quién lo usa | Variable típica |
 |---------|----------------|-----------------|
-| **`monitor/adn-monitor.yaml`** | **`monitor.py`**, **backend PHP** | **`ADN_CONFIG_PATH`** |
-| **`proxy/adn-proxy.yaml`** | **`proxy/proxy.py`** | **`ADN_PROXY_CONFIG_PATH`** (opcional; valores por defecto y legado en [Proxy hotspot](hotspot-proxy.md#configuration-file)) |
+| **`adn-server.yaml`** | **`adn-server.py`** (**`PROXY`** / **`SELF_SERVICE`** integrados) | `-c` / ruta por defecto junto al binario |
+| **`monitor/adn-monitor.yaml`** | **`monitor.py`** | **`ADN_CONFIG_PATH`** |
 
-**`SELF_SERVICE`** (MySQL / PBKDF2) debe **coincidir** entre ambos YAML cuando separas la config. **`ADN_CONNECTION`**, panel, WebSocket y alias van en **`adn-monitor.yaml`**; los ajustes **`PROXY`** de escucha/master/rango van en **`adn-proxy.yaml`**, salvo que uses un **fichero único legado** vía **`ADN_CONFIG_PATH`** para el proxy.
+**`SELF_SERVICE`** (MySQL / PBKDF2) debe **coincidir** entre **`adn-server.yaml`** y **`adn-monitor.yaml`**. **`ADN_CONNECTION`**, panel, WebSocket y alias van en **`adn-monitor.yaml`**; **`PROXY`** integrado va en **`adn-server.yaml`** — ver [Proxy hotspot integrado](../server/user-guide/hotspot-proxy.md).
 
 ## Enlace con el peer server
 
@@ -33,7 +31,7 @@ Ver [Monitor e informes](../server/user-guide/monitoring.md) para los opcodes de
 
 ## Ver también
 
-- [Proxy hotspot](hotspot-proxy.md) — `PROXY`, rango de puertos del peer, carga de config y arranque
+- [Proxy hotspot (integrado)](../server/user-guide/hotspot-proxy.md) — `PROXY` en `adn-server.yaml`
 - [Arquitectura e implantación](architecture.md)
 - [Configuración (`adn-monitor.yaml`)](configuration.md)
 - [Self-service](self-service.md)

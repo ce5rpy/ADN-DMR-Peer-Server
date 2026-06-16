@@ -1,7 +1,24 @@
 # ADN DMR Peer Server - Talker Alias embedded LC wire encoding
+#
 # Copyright (C) 2026  Rodrigo Pérez, CE5RPY <ce5rpy@qmd.cl>
+#
+###############################################################################
+#   This program is free software; you can redistribute it and/or modify
+#   it under the terms of the GNU General Public License as published by
+#   the Free Software Foundation; either version 3 of the License, or
+#   (at your option) any later version.
+#
+#   This program is distributed in the hope that it will be useful,
+#   but WITHOUT ANY WARRANTY; without even the implied warranty of
+#   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+#   GNU General Public License for more details.
+#
+#   You should have received a copy of the GNU General Public License
+#   along with this program; if not, write to the Free Software Foundation,
+#   Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301  USA
+###############################################################################
 
-"""Build embedded-LC burst dicts for Talker Alias (uses domain TA rules + ``dmr_bptc``)."""
+"""Build embedded-LC burst dicts for Talker Alias (uses domain TA rules + domain DMR BPTC)."""
 
 from __future__ import annotations
 
@@ -18,7 +35,7 @@ from ..domain.talker_alias import (
     talker_alias_decode_complete,
     talker_alias_lc_bytes,
 )
-from .dmr_bptc import encode_emblc
+from ..domain.dmr.bptc import encode_emblc
 
 if TYPE_CHECKING:
     from bitarray import bitarray

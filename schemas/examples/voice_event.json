@@ -1,0 +1,14 @@
+{
+  "type": "voice_event",
+  "ts": 1717555201.234,
+  "call_family": "GROUP",
+  "phase": "START",
+  "direction": "RX",
+  "system": "MASTER-A",
+  "stream_id": 2155905152,
+  "peer_id": 1001,
+  "src_id": 3120001,
+  "slot": 2,
+  "dst_id": 52090,
+  "duration_s": null
+}

@@ -89,11 +89,11 @@ Operationally: if users report “bridges drop too easily” after OPTIONS updat
 
 The **audio** is sent with **source ID 5000** and **destination TG 9** in the generated stream. File layout: [Voice, announcements, and TTS](voice-and-tts.md).
 
-## TG 9990 — echo / parrot (in-band)
+## TG 9990 — echo (in-band)
 
 **Purpose:** Bridge rows for **echo** often use **9990** with the **ECHO** system (see `BRIDGES` and options in your YAML).
 
-**Note:** A **standalone parrot** is also available as a separate process — [Parrot](parrot.md).
+**Note:** A **standalone echo** is also available as a separate process — [Echo](echo.md).
 
 ## Private call to ID 4000
 

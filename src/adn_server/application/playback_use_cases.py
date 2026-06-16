@@ -1,4 +1,4 @@
-# ADN DMR Peer Server - playback (parrot) use case
+# ADN DMR Peer Server - playback (echo) use case
 # Copyright (C) 2026  Rodrigo Pérez, CE5RPY <ce5rpy@qmd.cl>
 #
 # Derived from ADN DMR Server / FreeDMR  / HBlink. Original license:
@@ -33,16 +33,16 @@ from typing import Any
 from twisted.internet import reactor
 from twisted.internet.base import DelayedCall
 
-from ..domain import HBPF_DATA_SYNC, HBPF_SLT_VHEAD, HBPF_SLT_VTERM, bytes_4, int_id
+from ..domain import HBPF_DATA_SYNC, HBPF_SLT_VHEAD, HBPF_SLT_VTERM, HBPF_VOICE, bytes_4, int_id
 
 logger = logging.getLogger(__name__)
 
 # Legacy playback.py: sleep(2) before playback, sleep(0.06) between packets.
 _PLAYBACK_DELAY_S = 2.0
 _PACKET_INTERVAL_S = 0.06
-# Match bridge stream_trimmer_loop RX idle (bridge_use_cases / legacy bridge_master).
+# Match bridge stream_trimmer_loop RX idle (routing_use_cases / legacy bridge_master).
 _RECORD_IDLE_S = 5.0
-# HBP ingress source timeout (bridge_master.py / bridge_use_cases dmrd_received ~2183).
+# HBP ingress source timeout (bridge_master.py / routing_use_cases dmrd_received ~2183).
 _SOURCE_MAX_S = 180.0
 
 
@@ -390,9 +390,21 @@ class PlaybackUseCases:
         self._playback_index = 0
         self._send_next_packet(proto)
 
+    def _packet_is_voice_burst(self, data: bytes) -> bool:
+        if len(data) < 16:
+            return False
+        bits = data[15]
+        frame_type = (bits & 0x30) >> 4
+        vseq = bits & 0xF
+        return frame_type == HBPF_VOICE or (frame_type != HBPF_DATA_SYNC and vseq in (1, 2, 3, 4))
+
     def _prepare_playback_packets(self, recorded: list[bytes]) -> list[bytes]:
-        """Rewrite stream ID and drop mid-call VHEADs (re-key); keep source seq (legacy playback.py)."""
+        """Rewrite stream ID, drop mid-call VHEADs; preserve seq; new stream segment on seq wrap."""
         out: list[bytes] = []
+        vhead_template: bytes | None = None
+        segment_sid = self._playback_stream_id
+        last_voice_seq: int | None = None
+
         for i, pkt in enumerate(recorded):
             if len(pkt) < 20:
                 continue
@@ -402,7 +414,29 @@ class PlaybackUseCases:
                     self._system,
                 )
                 continue
-            out.append(pkt[:16] + self._playback_stream_id + pkt[20:])
+            if self._packet_is_vhead(pkt) and vhead_template is None:
+                vhead_template = pkt
+
+            if self._packet_is_voice_burst(pkt) and last_voice_seq is not None:
+                curr_seq = pkt[4]
+                if curr_seq < last_voice_seq and last_voice_seq >= 200:
+                    segment_sid = bytes_4(randint(0x00, 0xFFFFFFFF))
+                    logger.info(
+                        "(%s) Playback seq wrap (%s -> %s); new stream %s at recorded index %d",
+                        self._system,
+                        last_voice_seq,
+                        curr_seq,
+                        int_id(segment_sid),
+                        i,
+                    )
+                    if vhead_template is not None:
+                        vhead = bytearray(vhead_template[:16] + segment_sid + vhead_template[20:])
+                        out.append(bytes(vhead))
+
+            out.append(pkt[:16] + segment_sid + pkt[20:])
+            if self._packet_is_voice_burst(pkt):
+                last_voice_seq = pkt[4]
+
         return out
 
     def _send_next_packet(self, proto: Any) -> None:

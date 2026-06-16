@@ -53,5 +53,5 @@ Las **emisiones** en paralelo en **TG distintas** pueden ejecutarse a la vez; la
 ## Ver también
 
 - [Configuración](configuration.md) — rutas de ficheros de voz.
-- [Parrot](parrot.md) — servicio de reproducción separado.
+- [Echo](echo.md) — servicio de reproducción separado.
 - [Números especiales](special-numbers.md) — 5000, 999x, comportamiento relacionado con grabación.

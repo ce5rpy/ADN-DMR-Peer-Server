@@ -1,0 +1,32 @@
+# ADN DMR Echo (playback) – systemd unit (PEER → ECHO master on adn-server)
+#
+# Copy:
+#   sudo cp /opt/adn-server/examples/systemd/adn-echo.service /etc/systemd/system/
+# Edit User / paths if needed, then:
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now adn-echo
+#
+# Minimal adn-echo.yaml — MASTER_PORT / PASSPHRASE must match ECHO in adn-server.yaml.
+# Logrotate: SIGUSR2 reopens log files (not SIGHUP). postrotate example:
+#   kill -USR2 $(systemctl show adn-echo -p MainPID --value)
+# Or: systemctl reload adn-echo  (ExecReload below sends USR2)
+
+[Unit]
+Description=ADN DMR Echo (playback)
+After=network-online.target adn-server.service
+Wants=network-online.target
+
+[Service]
+User=adn
+Type=simple
+Restart=always
+RestartSec=3
+SyslogIdentifier=adn-echo
+WorkingDirectory=/opt/adn-server
+ExecStart=/opt/.pyenv/versions/3.11.8/bin/python3 /opt/adn-server/adn-server.py --echo -c /opt/adn-server/adn-echo.yaml
+ExecReload=/bin/kill -USR2 $MAINPID
+KillSignal=SIGTERM
+TimeoutStopSec=30
+
+[Install]
+WantedBy=multi-user.target

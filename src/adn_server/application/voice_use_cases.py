@@ -52,7 +52,7 @@ class VoiceUseCases:
         get_protocols: Callable[[], dict[str, Any]] | None = None,
         call_from_reactor: Callable[..., None] | None = None,
         audio_path: str | None = None,
-        get_bridges: Callable[[], dict[str, list[dict[str, Any]]]] | None = None,
+        routing_table_for_report: Callable[[], dict[str, list[dict[str, Any]]]] | None = None,
         call_later: Callable[..., Any] | None = None,
         start_looping_call: Callable[[Callable[[], None], float, bool], Any] | None = None,
         defer_to_thread: Callable[..., Any] | None = None,
@@ -62,7 +62,7 @@ class VoiceUseCases:
         self._get_protocols = get_protocols
         self._call_from_reactor = call_from_reactor
         self._audio_path = audio_path or ""
-        self._get_bridges = get_bridges
+        self._routing_table_for_report = routing_table_for_report
         self._call_later = call_later
         self._start_looping_call = start_looping_call
         self._defer_to_thread = defer_to_thread
@@ -96,7 +96,7 @@ class VoiceUseCases:
         busy_count = 0
         protocols = self._get_protocols() if self._get_protocols else {}
         systems_cfg = self._config.get("SYSTEMS", {})
-        bridges = self._get_bridges() if self._get_bridges else {}
+        bridges = self._routing_table_for_report() if self._routing_table_for_report else {}
         bridge_entries = bridges.get(tg_str, [])
         for sys_name in list(protocols.keys()):
             if sys_name in _ANNOUNCEMENT_EXCLUDED or any(
@@ -289,7 +289,7 @@ class VoiceUseCases:
             )
             self._broadcast_finished(tg)
             return
-        bridges = self._get_bridges() if self._get_bridges else {}
+        bridges = self._routing_table_for_report() if self._routing_table_for_report else {}
         now = time.time()
         for t in targets:
             try:
@@ -590,7 +590,7 @@ class VoiceUseCases:
             )
             self._broadcast_finished(tg)
             return
-        bridges = self._get_bridges() if self._get_bridges else {}
+        bridges = self._routing_table_for_report() if self._routing_table_for_report else {}
         now = time.time()
         for t in targets:
             try:

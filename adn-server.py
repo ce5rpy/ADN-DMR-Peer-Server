@@ -28,8 +28,10 @@ Run the ADN DMR Peer Server from the project root.
   python adn-server.py
   python adn-server.py -c adn-server.yaml
   python adn-server.py --logging DEBUG
+  python adn-server.py --echo -c adn-echo.yaml
+  python adn-server.py --doctor
 
-Config default: adn-server.yaml in this directory.
+Config default: adn-server.yaml (or adn-echo.yaml with --echo).
 """
 
 from __future__ import annotations
