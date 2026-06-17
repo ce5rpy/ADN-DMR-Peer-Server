@@ -241,6 +241,7 @@ def run_peer_server(
         db_settings["db_name"],
         db_settings["db_port"],
     ):
+        logger.critical("(GLOBAL) Startup aborted — MariaDB required for dynamic TG persistence")
         raise SystemExit(1)
     mysql_pool = create_mysql_pool(
         db_settings["db_server"],

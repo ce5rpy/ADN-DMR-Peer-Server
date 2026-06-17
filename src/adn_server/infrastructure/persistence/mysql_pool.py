@@ -23,13 +23,24 @@
 from __future__ import annotations
 
 import logging
+import sys
 from typing import Any
 
 from twisted.enterprise import adbapi
 
+from adn_server.infrastructure.persistence.database_config import validate_database_settings
+
 logger = logging.getLogger(__name__)
 
 _PEER_DYNAMIC_TGS_MIGRATION = "004_peer_dynamic_tgs"
+
+_MYSQL_HINTS: dict[int, str] = {
+    1045: "check DATABASE.DB_USERNAME and DB_PASSWORD in adn-server.yaml",
+    1049: "database does not exist — create it or fix DATABASE.DB_NAME",
+    1044: "user lacks permission on the database — fix MariaDB grants or DATABASE settings",
+    2003: "cannot reach MariaDB — check DB_SERVER/DB_PORT and that MariaDB is running",
+    2002: "connection refused — is MariaDB listening on DB_SERVER:DB_PORT?",
+}
 
 _CREATE_SCHEMA_MIGRATIONS = """CREATE TABLE IF NOT EXISTS schema_migrations (
     id VARCHAR(64) PRIMARY KEY,
@@ -49,6 +60,27 @@ _CREATE_PEER_DYNAMIC_TGS = """CREATE TABLE IF NOT EXISTS peer_dynamic_tgs (
     KEY idx_peer_system (int_id, system_name),
     KEY idx_expires (expires_at)
 ) DEFAULT CHARSET=utf8mb4"""
+
+
+def describe_mysql_error(err: Exception) -> str:
+    """Turn a MySQL/MariaDB exception into an actionable startup message."""
+    args = getattr(err, "args", ())
+    if len(args) >= 2 and isinstance(args[0], int):
+        code, msg = int(args[0]), str(args[1])
+        hint = _MYSQL_HINTS.get(code, "check the DATABASE block in adn-server.yaml")
+        return f"MySQL error {code}: {msg} ({hint})"
+    return str(err)
+
+
+def abort_database_startup(reason: str) -> bool:
+    """Log and print a fatal DATABASE message; return False for ensure_database_sync."""
+    headline = f"(DATABASE) ADN DMR Peer Server not started — {reason}"
+    logger.critical(headline)
+    logger.critical(
+        "(DATABASE) Dynamic TG persistence requires MariaDB; fix DATABASE in adn-server.yaml and restart"
+    )
+    print(headline, file=sys.stderr)
+    return False
 
 
 def create_mysql_pool(
@@ -100,14 +132,20 @@ def ensure_database_sync(
     port: int,
 ) -> bool:
     """Blocking startup: connect, ensure ``peer_dynamic_tgs`` exists (idempotent)."""
+    settings = {
+        "db_server": host,
+        "db_username": user,
+        "db_password": password,
+        "db_name": db_name,
+        "db_port": port,
+    }
+    config_err = validate_database_settings(settings)
+    if config_err:
+        return abort_database_startup(config_err)
     try:
         import MySQLdb
     except ImportError as err:
-        logger.critical(
-            "(DATABASE) mysqlclient required for dynamic TG persistence: %s",
-            err,
-        )
-        return False
+        return abort_database_startup(f"mysqlclient package required: {err}")
     try:
         conn = MySQLdb.connect(
             host=host,
@@ -122,11 +160,10 @@ def ensure_database_sync(
         conn.commit()
         cur.close()
         conn.close()
-        logger.info("(DATABASE) peer_dynamic_tgs table: OK")
+        logger.info(
+            "(DATABASE) MariaDB OK (%s@%s:%s/%s, peer_dynamic_tgs ready)",
+            user, host, port, db_name,
+        )
         return True
     except Exception as err:
-        logger.critical(
-            "(DATABASE) startup ensure failed: %s (check DATABASE in adn-server.yaml)",
-            err,
-        )
-        return False
+        return abort_database_startup(describe_mysql_error(err))

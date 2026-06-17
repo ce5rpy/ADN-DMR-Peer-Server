@@ -40,3 +40,12 @@ def database_settings(config: dict[str, Any]) -> dict[str, Any]:
         "db_name": str(block.get("DB_NAME", "")),
         "db_port": int(block.get("DB_PORT", 3306)),
     }
+
+
+def validate_database_settings(settings: dict[str, Any]) -> str | None:
+    """Return a user-facing error when required DATABASE fields are missing."""
+    if not str(settings.get("db_name", "")).strip():
+        return "DATABASE.DB_NAME is missing or empty in adn-server.yaml"
+    if not str(settings.get("db_username", "")).strip():
+        return "DATABASE.DB_USERNAME is missing or empty in adn-server.yaml"
+    return None

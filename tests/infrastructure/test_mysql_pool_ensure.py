@@ -24,7 +24,22 @@ from __future__ import annotations
 
 from unittest.mock import MagicMock
 
-from adn_server.infrastructure.persistence.mysql_pool import _ensure_peer_dynamic_tgs_on_cursor
+from adn_server.infrastructure.persistence.mysql_pool import (
+    _ensure_peer_dynamic_tgs_on_cursor,
+    describe_mysql_error,
+)
+from adn_server.infrastructure.persistence.database_config import validate_database_settings
+
+
+def test_validate_database_settings_requires_db_name() -> None:
+    assert validate_database_settings({"db_username": "hbmon", "db_name": ""}) is not None
+
+
+def test_describe_mysql_error_unknown_database() -> None:
+    err = Exception(1049, "Unknown database 'missing'")
+    msg = describe_mysql_error(err)
+    assert "1049" in msg
+    assert "DATABASE.DB_NAME" in msg
 
 
 def test_ensure_peer_dynamic_tgs_applies_migration_once() -> None:
