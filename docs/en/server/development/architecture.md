@@ -32,6 +32,7 @@ Wire opcodes and YAML keys may still say “bridge” for legacy monitor compati
 | Voice / TTS | `application/voice_use_cases.py`, `infrastructure/voice/` |
 | Hotspot proxy (fan-in) | `infrastructure/proxy/` (`udp_fanin.py`, `runtime.py`), `application/proxy/` use cases |
 | Self-service (MySQL) | `infrastructure/proxy/self_service_bridge.py`, `infrastructure/proxy/persistence/` |
+| Dynamic TG persistence | `application/dynamic_tg_use_cases.py`, `infrastructure/persistence/dynamic_tg_repository.py`, `application/routing/dynamic_tg_restore.py` |
 
 ## Configuration as shared state
 

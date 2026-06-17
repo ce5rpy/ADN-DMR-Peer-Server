@@ -18,7 +18,9 @@ Este capítulo documenta la pila **adn-monitor** con el mismo nivel de detalle q
 | **`adn-server.yaml`** | **`adn-server.py`** (**`PROXY`** / **`SELF_SERVICE`** integrados) | `-c` / ruta por defecto junto al binario |
 | **`monitor/adn-monitor.yaml`** | **`monitor.py`** | **`ADN_CONFIG_PATH`** |
 
-**`SELF_SERVICE`** (MySQL / PBKDF2) debe **coincidir** entre **`adn-server.yaml`** y **`adn-monitor.yaml`**. **`ADN_CONNECTION`**, panel, WebSocket y alias van en **`adn-monitor.yaml`**; **`PROXY`** integrado va en **`adn-server.yaml`** — ver [Proxy hotspot integrado](../server/user-guide/hotspot-proxy.md).
+**`SELF_SERVICE`** (MySQL / PBKDF2) debe **coincidir** entre **`adn-server.yaml`** y **`adn-monitor.yaml`**. En el servidor, las credenciales MariaDB van en **`DATABASE`** (pool compartido con **`peer_dynamic_tgs`**). **`ADN_CONNECTION`**, panel, WebSocket y alias van en **`adn-monitor.yaml`**; **`PROXY`** integrado va en **`adn-server.yaml`** — ver [Proxy hotspot integrado](../server/user-guide/hotspot-proxy.md).
+
+**Emparejamiento recomendado:** **adn-server 2.0.0-rc.3** + **adn-monitor 2.0.0-rc.4** (persistencia TG dinámicos, sincronización TG 4000 en monitor).
 
 ## Enlace con el peer server
 

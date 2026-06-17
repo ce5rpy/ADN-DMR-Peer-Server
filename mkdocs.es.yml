@@ -56,6 +56,7 @@ nav:
           - Llamadas privadas: server/user-guide/private-calls.md
           - Voz, anuncios y TTS: server/user-guide/voice-and-tts.md
           - Monitor e informes: server/user-guide/monitoring.md
+          - Proxy de informes (paneles legacy): server/user-guide/report-proxy.md
           - Proxy hotspot (integrado): server/user-guide/hotspot-proxy.md
           - Echo (reproducción): server/user-guide/echo.md
           - Créditos y licencia: server/user-guide/attribution.md

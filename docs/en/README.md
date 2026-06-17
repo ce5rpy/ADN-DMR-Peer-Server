@@ -24,6 +24,7 @@ The **ADN DMR Peer Server** is a [GPL-3.0](https://www.gnu.org/licenses/gpl-3.0.
 | TG 4000, 999x, echo | [Special numbers](server/user-guide/special-numbers.md) |
 | Private calls | [Private calls](server/user-guide/private-calls.md) |
 | Voice / TTS | [Voice, announcements, and TTS](server/user-guide/voice-and-tts.md) |
+| Legacy dashboard + server 2.x | [Report proxy](server/user-guide/report-proxy.md) |
 | OpenBridge / DMRE | [OpenBridge](server/protocols/openbridge.md), [DMRE v5](server/protocols/dmre-v5.md) |
 | HBP | [HBP](server/protocols/hbp.md) |
 | Code layout | [Architecture](server/development/architecture.md), [Behaviour and timers](server/development/behaviour-and-timers.md) |
@@ -34,6 +35,7 @@ The **ADN DMR Peer Server** is a [GPL-3.0](https://www.gnu.org/licenses/gpl-3.0.
 ```bash
 pip install -r requirements.txt
 cp adn-server.example.yaml adn-server.yaml
+# Edit DATABASE (MariaDB) and secrets before production start
 python adn-server.py -c adn-server.yaml
 ```
 
@@ -50,7 +52,7 @@ Dashboard, WebSocket live view, FastAPI API, **MySQL** self-service — see [Mon
 | `adn-server.yaml` — integrated `PROXY` / `SELF_SERVICE` | [Hotspot proxy (integrated)](server/user-guide/hotspot-proxy.md) |
 | `adn-monitor.yaml`, layout | [Monitor configuration](monitor/configuration.md) |
 | Integrated hotspot proxy | [Hotspot proxy](server/user-guide/hotspot-proxy.md) |
-| Standalone hotspot proxy (UDP port range) | [Hotspot proxy — standalone](monitor/hotspot-proxy.md#standalone-proxy-legacy-adn-monitor-repo) |
+| Standalone hotspot proxy (removed) | [Hotspot proxy — moved](monitor/hotspot-proxy.md) |
 | Self-service | [Self-service](monitor/self-service.md) |
 | How it connects to the server | [Monitoring and reports](server/user-guide/monitoring.md) |
 

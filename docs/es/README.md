@@ -23,6 +23,7 @@ El **ADN DMR Peer Server** es un puente de conferencia [GPL-3.0](https://www.gnu
 | TG 4000, 999x, eco | [Números especiales](server/user-guide/special-numbers.md) |
 | Llamadas privadas | [Llamadas privadas](server/user-guide/private-calls.md) |
 | Voz / TTS | [Voz, anuncios y TTS](server/user-guide/voice-and-tts.md) |
+| Panel legacy + servidor 2.x | [Proxy de informes](server/user-guide/report-proxy.md) |
 | OpenBridge / DMRE | [OpenBridge](server/protocols/openbridge.md), [DMRE v5](server/protocols/dmre-v5.md) |
 | HBP | [HBP](server/protocols/hbp.md) |
 | Código | [Arquitectura](server/development/architecture.md), [Comportamiento y temporizadores](server/development/behaviour-and-timers.md) |
@@ -33,6 +34,7 @@ El **ADN DMR Peer Server** es un puente de conferencia [GPL-3.0](https://www.gnu
 ```bash
 pip install -r requirements.txt
 cp adn-server.example.yaml adn-server.yaml
+# Edita DATABASE (MariaDB) y secretos antes de producción
 python adn-server.py -c adn-server.yaml
 ```
 
