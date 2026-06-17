@@ -383,6 +383,10 @@ class DynamicTgStore(ABC):
         ...
 
     @abstractmethod
+    def delete_peer(self, int_id: int, system_name: str) -> None:
+        ...
+
+    @abstractmethod
     def load_peer(self, int_id: int, system_name: str) -> Any:
         """Returns Deferred firing with ``list[DynamicTgEntry]``."""
 

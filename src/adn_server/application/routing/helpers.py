@@ -103,6 +103,11 @@ def tg4000_reset_on_vhead(int_dst_id: int, frame_type: int, dtype_vseq: int) -> 
     )
 
 
+def is_ua_session_tgid(tgid: int) -> bool:
+    """True when a keyed TG may be stored as a user-activated dynamic session."""
+    return int(tgid) > 0 and int(tgid) != 4000
+
+
 def obp_target_bcsq_quenches_stream(
     systems_cfg: dict[str, Any], target_name: str, dst_id_b: bytes, stream_id: bytes
 ) -> bool:
@@ -309,7 +314,7 @@ def register_peer_ua_multi_tg(
     if peer_single_mode(peer, sys_cfg):
         return
     tgid_i = int(tgid)
-    if tgid_i <= 0 or tgid_i == 4000:
+    if not is_ua_session_tgid(tgid_i):
         return
     if peer_receives_group_tgid(peer, slot, tgid_i):
         return
@@ -355,6 +360,8 @@ def register_peer_ua_session(
     now: float | None = None,
 ) -> None:
     """Track UA TG for this hotspot (SINGLE=1 exclusive; SINGLE=0 multi-dynamic set)."""
+    if not is_ua_session_tgid(tgid):
+        return
     if not peer_single_mode(peer, sys_cfg):
         register_peer_ua_multi_tg(peer, peer_id, slot, tgid, sys_cfg)
         return
@@ -391,7 +398,7 @@ def seed_peer_ua_session_from_status(
     if bytes_4(int_id(peer_id)) != bytes_4(int_id(rx_peer)):
         return
     rx_tgid = int_id(status_slot.get("RX_TGID", b"\x00\x00\x00"))
-    if rx_tgid <= 0:
+    if not is_ua_session_tgid(rx_tgid):
         return
     connected_at = float(peer.get("CONNECTED", 0) or 0)
     rx_time = float(status_slot.get("RX_TIME", 0) or 0)
@@ -443,7 +450,7 @@ def export_peer_ua_sessions(
             continue
         exp = float(entry.get("expires", 0) or 0)
         tgid = int(entry.get("tgid", 0) or 0)
-        if tgid > 0 and exp > pkt_time:
+        if is_ua_session_tgid(tgid) and exp > pkt_time:
             out[str(slot)] = {"tgid": tgid, "expires_at": exp}
     return out
 
@@ -461,6 +468,8 @@ def restore_peer_ua_entries_to_memory(
     restored: list[int] = []
     for entry in entries:
         tgid = int(entry.tgid)
+        if not is_ua_session_tgid(tgid):
+            continue
         slot = int(entry.slot)
         if entry.single_mode:
             expires = entry.expires_at

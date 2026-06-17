@@ -50,6 +50,7 @@ from ...application.routing.helpers import (
     peer_should_receive_group_voice,
     peer_single_exclusive_tgid,
     register_peer_ua_session,
+    resolve_voice_peer_id,
     seed_peer_ua_session_from_status,
     tg4000_reset_on_vhead,
 )
@@ -399,13 +400,50 @@ class HBPProtocol(DatagramProtocol):
             session_codec=self._mesh_session_codec(),
         )
 
-    def _apply_tg4000_reset(self, peer_id: bytes, slot: int, call_type: str) -> None:
+    def _emit_tg4000_routing_event(
+        self,
+        peer_id: bytes,
+        rf_src: bytes,
+        stream_id: bytes,
+        slot: int,
+    ) -> None:
+        """BRDG_EVENT for monitor SINGLE=0 clear (skipped when dmrd_received returns early).
+
+        INGRESS (not START): monitor clears UA sessions on dest 4000 without lighting TRX chips.
+        """
+        report = self._report
+        if report is None or not self._CONFIG.get("REPORTS", {}).get("REPORT", True):
+            return
+        if not hasattr(report, "send_routing_event"):
+            return
+        systems_cfg = self._CONFIG.get("SYSTEMS", {})
+        report_peer = resolve_voice_peer_id(peer_id, rf_src, self._system, systems_cfg)
+        report.send_routing_event(
+            "GROUP VOICE,INGRESS,RX,{},{},{},{},{},4000".format(
+                self._system,
+                int_id(stream_id),
+                int_id(report_peer),
+                int_id(rf_src),
+                slot,
+            )
+        )
+
+    def _apply_tg4000_reset(
+        self,
+        peer_id: bytes,
+        slot: int,
+        call_type: str,
+        *,
+        rf_src: bytes,
+        stream_id: bytes,
+    ) -> None:
         """Clear per-peer UA dynamics and stale STATUS; deactivate bridges on 4000."""
         peer = self._peers.get(peer_id, {})
-        clear_peer_ua_sessions(peer, self._config, peer_id, slot=slot)
-        clear_peer_rx_status_slots(self.STATUS, peer_id, slot=slot)
+        clear_peer_ua_sessions(peer, self._config, peer_id)
+        clear_peer_rx_status_slots(self.STATUS, peer_id)
         if self._dynamic_tg_uc is not None:
-            self._dynamic_tg_uc.delete_peer_slot(peer_id, self._system, slot)
+            self._dynamic_tg_uc.delete_peer(peer_id, self._system)
+        self._emit_tg4000_routing_event(peer_id, rf_src, stream_id, slot)
         if self._on_in_band_signalling:
             self._on_in_band_signalling(self._system, slot, bytes_3(4000), time.time())
         _kind = "Private call to ID" if call_type == "unit" else "Group call to TG"
@@ -432,12 +470,17 @@ class HBPProtocol(DatagramProtocol):
         call_type: str,
         frame_type: int,
         dtype_vseq: int,
+        *,
+        rf_src: bytes,
+        stream_id: bytes,
     ) -> bool:
         """Legacy early return for TG/ID 4000; reset once per PTT on voice header only."""
         if int_dst_id != 4000:
             return False
         if tg4000_reset_on_vhead(int_dst_id, frame_type, dtype_vseq):
-            self._apply_tg4000_reset(peer_id, slot, call_type)
+            self._apply_tg4000_reset(
+                peer_id, slot, call_type, rf_src=rf_src, stream_id=stream_id,
+            )
         return True
 
     def _peer_should_receive_dmrd(self, peer_id: bytes, packet: bytes) -> bool:
@@ -975,6 +1018,7 @@ class HBPProtocol(DatagramProtocol):
                 # TG 4000: reset after REPEAT so peers see the packet (legacy order)
                 if self._handle_tg4000_packet(
                     _peer_id, _slot, _int_dst_id, _call_type, _frame_type, _dtype_vseq,
+                    rf_src=_rf_src, stream_id=_stream_id,
                 ):
                     return
                 if _call_type == "group" and _frame_type == HBPF_DATA_SYNC and _dtype_vseq == HBPF_SLT_VHEAD:
@@ -1375,6 +1419,7 @@ class HBPProtocol(DatagramProtocol):
                 # TG 4000: reset after ACL/SUB_MAP (legacy order — routerHBP.dmrd_received)
                 if self._handle_tg4000_packet(
                     _peer_id, _slot, _int_dst_id, _call_type, _frame_type, _dtype_vseq,
+                    rf_src=_rf_src, stream_id=_stream_id,
                 ):
                     return
                 if _call_type == "group" and _frame_type == HBPF_DATA_SYNC and _dtype_vseq == HBPF_SLT_VHEAD:

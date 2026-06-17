@@ -34,6 +34,7 @@ from adn_server.application.routing.helpers import (
     peer_should_receive_group_voice,
     peer_single_blocks_group_voice,
     peer_single_blocks_uplink,
+    peer_single_exclusive_tgid,
     register_peer_ua_multi_tg,
     register_peer_ua_session,
     seed_peer_ua_session_from_status,
@@ -370,6 +371,21 @@ def test_single_zero_tg4000_clears_multi_dynamic() -> None:
     assert not peer_should_receive_group_voice(
         peer, 2, 7304, peer_id=peer_id, connected_count=2, sys_cfg=sys_cfg, now=now + 10
     )
+
+
+def test_register_peer_ua_session_ignores_4000() -> None:
+    """TG 4000 resets dynamics; it must never be stored as a UA session."""
+    peer_id = _peer_id()
+    sys_cfg = _sys_cfg()
+    now = 1_000_000.0
+    peer_multi = {"OPTIONS": b"TS2=730,7305;SINGLE=0;"}
+    register_peer_ua_session(peer_multi, peer_id, 2, 4000, sys_cfg, now=now)
+    pk = peer_id
+    assert sys_cfg.get("_PEER_UA_MULTI_TGS", {}).get(pk, {}).get(2, set()) == set()
+
+    peer_single = {"OPTIONS": b"TS2=730,7305;SINGLE=1;TIMER=5;"}
+    register_peer_ua_session(peer_single, peer_id, 2, 4000, sys_cfg, now=now)
+    assert peer_single_exclusive_tgid(peer_single, 2, sys_cfg, peer_id=peer_id, now=now) is None
 
 
 def test_new_tx_replaces_single_session_tg() -> None:

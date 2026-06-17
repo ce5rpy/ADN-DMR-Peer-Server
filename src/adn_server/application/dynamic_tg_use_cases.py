@@ -30,6 +30,7 @@ from typing import Any
 from adn_server.application.ports import DynamicTgStore
 from adn_server.application.routing.helpers import (
     _peer_ua_session_entry,
+    is_ua_session_tgid,
     peer_receives_group_tgid,
     peer_single_mode,
     purge_expired_peer_ua_sessions,
@@ -63,7 +64,7 @@ class DynamicTgUseCases:
         system_name: str,
     ) -> None:
         """Enqueue DB write (async); memory already updated by register_peer_ua_session."""
-        if int(tgid) <= 0 or int(tgid) == 4000 or peer_receives_group_tgid(peer, slot, int(tgid)):
+        if not is_ua_session_tgid(int(tgid)) or peer_receives_group_tgid(peer, slot, int(tgid)):
             return
         now = time.time()
         peer_int = int_id(peer_id)
@@ -97,6 +98,9 @@ class DynamicTgUseCases:
 
     def delete_peer_slot(self, peer_id: bytes, system_name: str, slot: int) -> None:
         self._store.delete_peer_slot(int_id(peer_id), system_name, int(slot))
+
+    def delete_peer(self, peer_id: bytes, system_name: str) -> None:
+        self._store.delete_peer(int_id(peer_id), system_name)
 
     def restore_peer(self, peer_id: bytes, system_name: str, sys_cfg: dict[str, Any]) -> Any:
         """Load from persistence on reconnect (RPTC); returns async handle from port."""

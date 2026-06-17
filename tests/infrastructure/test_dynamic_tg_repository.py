@@ -74,6 +74,14 @@ def test_delete_peer_slot(repo: MysqlDynamicTgRepository) -> None:
     assert args == (730039101, "MASTER-A", 2)
 
 
+def test_delete_peer(repo: MysqlDynamicTgRepository) -> None:
+    repo.delete_peer(730039101, "MASTER-A")
+    sql, args = repo._pool.runOperation.call_args[0]  # noqa: SLF001
+    assert "DELETE FROM peer_dynamic_tgs" in sql
+    assert "slot" not in sql
+    assert args == (730039101, "MASTER-A")
+
+
 def test_purge_expired(repo: MysqlDynamicTgRepository) -> None:
     repo.purge_expired(1_000_000.0)
     sql, args = repo._pool.runOperation.call_args[0]  # noqa: SLF001

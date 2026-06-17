@@ -41,6 +41,9 @@ class _CaptureStore:
     def delete_peer_slot(self, int_id: int, system_name: str, slot: int) -> None:
         pass
 
+    def delete_peer(self, int_id: int, system_name: str) -> None:
+        pass
+
     def load_peer(self, int_id: int, system_name: str):
         return []
 

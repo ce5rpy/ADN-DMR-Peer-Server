@@ -91,6 +91,14 @@ class MysqlDynamicTgRepository(DynamicTgStore):
             lambda f: logger.error("(DYNAMIC_TG) delete_peer_slot: %s", f.getTraceback())
         )
 
+    def delete_peer(self, int_id: int, system_name: str) -> None:
+        self._pool.runOperation(
+            "DELETE FROM peer_dynamic_tgs WHERE int_id=%s AND system_name=%s",
+            (int_id, system_name),
+        ).addErrback(
+            lambda f: logger.error("(DYNAMIC_TG) delete_peer: %s", f.getTraceback())
+        )
+
     @inlineCallbacks
     def load_peer(self, int_id: int, system_name: str) -> Any:
         rows = yield self._pool.runQuery(

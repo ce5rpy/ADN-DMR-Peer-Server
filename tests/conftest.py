@@ -25,11 +25,23 @@ from __future__ import annotations
 from typing import Any
 
 
+def minimal_database_config() -> dict[str, Any]:
+    """Minimal DATABASE block for tests (full peer server configs)."""
+    return {
+        "DB_SERVER": "localhost",
+        "DB_USERNAME": "hbmon",
+        "DB_PASSWORD": "test",
+        "DB_NAME": "hbmon",
+        "DB_PORT": 3306,
+    }
+
+
 def minimal_valid_config(**overrides: Any) -> dict[str, Any]:
     """Minimal config dict that passes validate_config (integrated proxy required)."""
     config: dict[str, Any] = {
         "GLOBAL": {"SERVER_ID": 1},
         "REPORTS": {"REPORT": False},
+        "DATABASE": minimal_database_config(),
         "SYSTEMS": {
             "HOTSPOT": {
                 "MODE": "MASTER",

@@ -262,6 +262,23 @@ def _validate_proxy(proxy_cfg: dict[str, Any] | None, systems: dict[str, Any], e
         )
 
 
+def _config_requires_database(config: dict[str, Any]) -> bool:
+    """True for ``run_peer_server`` configs (proxy/master); not echo-only PEER fleets."""
+    proxy = config.get("PROXY")
+    if isinstance(proxy, dict) and proxy:
+        return True
+    systems = config.get("SYSTEMS")
+    if not isinstance(systems, dict):
+        return False
+    for sys_cfg in systems.values():
+        if not isinstance(sys_cfg, dict):
+            continue
+        mode = str(sys_cfg.get("MODE", "")).upper()
+        if mode in ("MASTER", "OPENBRIDGE"):
+            return True
+    return False
+
+
 def _validate_database(db_cfg: Any, errors: list[str]) -> None:
     if db_cfg is None:
         errors.append("DATABASE: required block missing in adn-server.yaml")
@@ -335,7 +352,8 @@ def validate_config(config: dict[str, Any], *, config_path: str | None = None) -
 
     proxy_cfg = config.get("PROXY")
     _validate_proxy(proxy_cfg if isinstance(proxy_cfg, dict) else None, systems if isinstance(systems, dict) else {}, errors)
-    _validate_database(config.get("DATABASE"), errors)
+    if _config_requires_database(config):
+        _validate_database(config.get("DATABASE"), errors)
 
     if errors:
         header = f"Configuration error in {config_path}:" if config_path else "Configuration error:"
