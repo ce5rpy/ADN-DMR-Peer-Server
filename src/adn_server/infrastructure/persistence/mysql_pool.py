@@ -23,10 +23,32 @@
 from __future__ import annotations
 
 import logging
+from typing import Any
 
 from twisted.enterprise import adbapi
 
 logger = logging.getLogger(__name__)
+
+_PEER_DYNAMIC_TGS_MIGRATION = "004_peer_dynamic_tgs"
+
+_CREATE_SCHEMA_MIGRATIONS = """CREATE TABLE IF NOT EXISTS schema_migrations (
+    id VARCHAR(64) PRIMARY KEY,
+    applied_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+) DEFAULT CHARSET=utf8mb4"""
+
+_CREATE_PEER_DYNAMIC_TGS = """CREATE TABLE IF NOT EXISTS peer_dynamic_tgs (
+    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    int_id INT NOT NULL,
+    system_name VARCHAR(50) NOT NULL,
+    slot TINYINT NOT NULL,
+    tgid INT NOT NULL,
+    single_mode TINYINT(1) NOT NULL,
+    expires_at INT NULL,
+    updated_at INT NOT NULL,
+    UNIQUE KEY uq_peer_dynamic (int_id, system_name, slot, tgid),
+    KEY idx_peer_system (int_id, system_name),
+    KEY idx_expires (expires_at)
+) DEFAULT CHARSET=utf8mb4"""
 
 
 def create_mysql_pool(
@@ -48,14 +70,36 @@ def create_mysql_pool(
     )
 
 
-def verify_database_sync(
+def _migration_applied(cursor: Any, migration_id: str) -> bool:
+    cursor.execute("SELECT 1 FROM schema_migrations WHERE id = %s", (migration_id,))
+    return cursor.fetchone() is not None
+
+
+def _mark_migration(cursor: Any, migration_id: str) -> None:
+    cursor.execute(
+        "INSERT IGNORE INTO schema_migrations (id) VALUES (%s)",
+        (migration_id,),
+    )
+
+
+def _ensure_peer_dynamic_tgs_on_cursor(cursor: Any) -> None:
+    """Server-owned table; same migration id/DLL as adn-monitor ``004_peer_dynamic_tgs``."""
+    cursor.execute(_CREATE_SCHEMA_MIGRATIONS)
+    if _migration_applied(cursor, _PEER_DYNAMIC_TGS_MIGRATION):
+        return
+    cursor.execute(_CREATE_PEER_DYNAMIC_TGS)
+    _mark_migration(cursor, _PEER_DYNAMIC_TGS_MIGRATION)
+    logger.info("(DATABASE) applied migration %s (peer_dynamic_tgs)", _PEER_DYNAMIC_TGS_MIGRATION)
+
+
+def ensure_database_sync(
     host: str,
     user: str,
     password: str,
     db_name: str,
     port: int,
 ) -> bool:
-    """Blocking startup check: MariaDB reachable and ``peer_dynamic_tgs`` exists."""
+    """Blocking startup: connect, ensure ``peer_dynamic_tgs`` exists (idempotent)."""
     try:
         import MySQLdb
     except ImportError as err:
@@ -74,15 +118,15 @@ def verify_database_sync(
             charset="utf8mb4",
         )
         cur = conn.cursor()
-        cur.execute("SELECT 1 FROM peer_dynamic_tgs LIMIT 1")
+        _ensure_peer_dynamic_tgs_on_cursor(cur)
+        conn.commit()
         cur.close()
         conn.close()
         logger.info("(DATABASE) peer_dynamic_tgs table: OK")
         return True
     except Exception as err:
         logger.critical(
-            "(DATABASE) startup check failed: %s "
-            "(configure DATABASE in adn-server.yaml and run adn-monitor db_bootstrap --update)",
+            "(DATABASE) startup ensure failed: %s (check DATABASE in adn-server.yaml)",
             err,
         )
         return False

@@ -73,7 +73,7 @@ from adn_server.infrastructure.logging_config import reopen_file_handlers
 from adn_server.infrastructure.persistence import PickleSubMapStore
 from adn_server.infrastructure.persistence.database_config import database_settings
 from adn_server.infrastructure.persistence.dynamic_tg_repository import MysqlDynamicTgRepository
-from adn_server.infrastructure.persistence.mysql_pool import create_mysql_pool, verify_database_sync
+from adn_server.infrastructure.persistence.mysql_pool import create_mysql_pool, ensure_database_sync
 from adn_server.infrastructure.persistence.alias_loader import DefaultAliasLoader
 from adn_server.infrastructure.persistence.keys_store import JsonKeysStore
 from adn_server.infrastructure.proxy import apply_proxy_config_reload, start_proxy_service
@@ -234,7 +234,7 @@ def run_peer_server(
     config = ConfigProxy(runtime_holder)
 
     db_settings = database_settings(config)
-    if not verify_database_sync(
+    if not ensure_database_sync(
         db_settings["db_server"],
         db_settings["db_username"],
         db_settings["db_password"],

@@ -70,7 +70,7 @@ def test_no_proxy_skips_proxy_startup(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(peer_mod, "RecordingHandler", lambda *_: None)
     monkeypatch.setattr(peer_mod, "IdentUseCases", lambda *_: _FakeIdent())
     monkeypatch.setattr(peer_mod, "HBPProtocolFactory", lambda *a, **k: object())
-    monkeypatch.setattr(peer_mod, "verify_database_sync", lambda *_a, **_k: True)
+    monkeypatch.setattr(peer_mod, "ensure_database_sync", lambda *_a, **_k: True)
     monkeypatch.setattr(peer_mod, "create_mysql_pool", lambda *_a, **_k: object())
     monkeypatch.setattr(peer_mod, "MysqlDynamicTgRepository", lambda *_a, **_k: object())
 
