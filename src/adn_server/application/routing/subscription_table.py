@@ -49,6 +49,7 @@ import time
 from typing import Any
 
 from ...domain import bytes_3, bytes_4, int_id
+from ...domain.dynamic_tg import DynamicTgEntry
 
 logger = logging.getLogger(__name__)
 
@@ -61,7 +62,7 @@ class SubscriptionTableMixin:
         peer_id: bytes,
         system_name: str,
         sys_cfg: dict[str, Any],
-        entries: list["DynamicTgEntry"],
+        entries: list[DynamicTgEntry],
         *,
         now: float,
     ) -> None:
