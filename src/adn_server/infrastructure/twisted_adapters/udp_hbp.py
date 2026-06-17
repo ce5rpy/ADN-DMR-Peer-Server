@@ -50,6 +50,7 @@ from ...application.routing.helpers import (
     peer_should_receive_group_voice,
     peer_single_exclusive_tgid,
     register_peer_ua_session,
+    resolve_voice_peer_id,
     seed_peer_ua_session_from_status,
     tg4000_reset_on_vhead,
 )
@@ -59,7 +60,7 @@ from ...application.routing.peer_downlink_index import (
     invalidate_peer_options_cache,
 )
 from ...application.proxy.deployment import is_proxy_inject_only
-from ...domain import bytes_4, int_id
+from ...domain import bytes_3, bytes_4, int_id
 from ...domain.talker_alias import (
     DMRA_PACKET_LEN,
     decode_ta_from_blocks,
@@ -190,6 +191,7 @@ class HBPProtocol(DatagramProtocol):
         routing_table_for_report: Callable[[], dict[str, Any]] | None = None,
         get_subscription_store: Callable[[], Any] | None = None,
         mesh_registry: MeshCodecRegistry | None = None,
+        dynamic_tg_uc: Any = None,
     ) -> None:
         self._CONFIG = config
         self._system = system_name
@@ -211,6 +213,7 @@ class HBPProtocol(DatagramProtocol):
         self._on_talker_alias_stream_end = on_talker_alias_stream_end
         self._on_dmra_fragment_stored = on_dmra_fragment_stored
         self._mesh_registry = mesh_registry if mesh_registry is not None else _DEFAULT_MESH_REGISTRY
+        self._dynamic_tg_uc = dynamic_tg_uc
         self._config = config.get("SYSTEMS", {}).get(system_name, {})
         if self._config.get("MODE") == "OPENBRIDGE":
             self._laststrid = deque([], 20)
@@ -397,12 +400,55 @@ class HBPProtocol(DatagramProtocol):
             session_codec=self._mesh_session_codec(),
         )
 
-    def _apply_tg4000_reset(self, peer_id: bytes, slot: int, call_type: str) -> None:
-        """Clear per-peer UA dynamics; legacy bridge reset only outside inject-only."""
+    def _emit_tg4000_routing_event(
+        self,
+        peer_id: bytes,
+        rf_src: bytes,
+        stream_id: bytes,
+        slot: int,
+    ) -> None:
+        """BRDG_EVENT for monitor SINGLE=0 clear (skipped when dmrd_received returns early).
+
+        INGRESS (not START): monitor clears UA sessions on dest 4000 without lighting TRX chips.
+        """
+        report = self._report
+        if report is None or not self._CONFIG.get("REPORTS", {}).get("REPORT", True):
+            return
+        if not hasattr(report, "send_routing_event"):
+            return
+        systems_cfg = self._CONFIG.get("SYSTEMS", {})
+        report_peer = resolve_voice_peer_id(peer_id, rf_src, self._system, systems_cfg)
+        report.send_routing_event(
+            "GROUP VOICE,INGRESS,RX,{},{},{},{},{},4000".format(
+                self._system,
+                int_id(stream_id),
+                int_id(report_peer),
+                int_id(rf_src),
+                slot,
+            )
+        )
+
+    def _apply_tg4000_reset(
+        self,
+        peer_id: bytes,
+        slot: int,
+        call_type: str,
+        *,
+        rf_src: bytes,
+        stream_id: bytes,
+    ) -> None:
+        """Clear per-peer UA dynamics and stale STATUS; deactivate bridges on 4000."""
         peer = self._peers.get(peer_id, {})
-        clear_peer_ua_sessions(peer, self._config, peer_id, slot=slot)
+        clear_peer_ua_sessions(peer, self._config, peer_id)
+        clear_peer_rx_status_slots(self.STATUS, peer_id)
+        if self._dynamic_tg_uc is not None:
+            self._dynamic_tg_uc.delete_peer(peer_id, self._system)
+        self._emit_tg4000_routing_event(peer_id, rf_src, stream_id, slot)
+        if self._on_in_band_signalling:
+            self._on_in_band_signalling(self._system, slot, bytes_3(4000), time.time())
         _kind = "Private call to ID" if call_type == "unit" else "Group call to TG"
         if self._inject_multi_peer_options_filter():
+            self._mark_downlink_index_dirty()
             self._push_config_to_monitor()
             logger.info(
                 "(%s) %s 4000 received on TS %s — clearing dynamic TGs for peer %s",
@@ -424,12 +470,17 @@ class HBPProtocol(DatagramProtocol):
         call_type: str,
         frame_type: int,
         dtype_vseq: int,
+        *,
+        rf_src: bytes,
+        stream_id: bytes,
     ) -> bool:
         """Legacy early return for TG/ID 4000; reset once per PTT on voice header only."""
         if int_dst_id != 4000:
             return False
         if tg4000_reset_on_vhead(int_dst_id, frame_type, dtype_vseq):
-            self._apply_tg4000_reset(peer_id, slot, call_type)
+            self._apply_tg4000_reset(
+                peer_id, slot, call_type, rf_src=rf_src, stream_id=stream_id,
+            )
         return True
 
     def _peer_should_receive_dmrd(self, peer_id: bytes, packet: bytes) -> bool:
@@ -799,13 +850,12 @@ class HBPProtocol(DatagramProtocol):
             self._push_config_to_monitor()
 
     def _on_peer_disconnected(self, peer_id: bytes) -> None:
-        """Drop SINGLE/UA session and stale slot STATUS when a hotspot leaves or re-logs in."""
+        """Drop stale slot STATUS when a hotspot leaves; keep persisted UA state in sys_cfg."""
         peer = self._peers.get(peer_id)
-        sys_cfg = self._config
         if peer is not None:
-            clear_peer_ua_sessions(peer, sys_cfg, peer_id)
-        else:
-            clear_peer_ua_sessions({}, sys_cfg, peer_id)
+            sessions = peer.get("_UA_SESSION")
+            if isinstance(sessions, dict):
+                sessions.clear()
         clear_peer_rx_status_slots(self.STATUS, peer_id)
 
     def _remove_peer(self, peer_id: bytes) -> None:
@@ -915,6 +965,15 @@ class HBPProtocol(DatagramProtocol):
                             self._config,
                             now=pkt_time,
                         )
+                        if self._dynamic_tg_uc is not None:
+                            self._dynamic_tg_uc.persist_after_register(
+                                self._peers[_peer_id],
+                                _peer_id,
+                                _slot,
+                                _int_dst_id,
+                                self._config,
+                                system_name=self._system,
+                            )
                         self._mark_downlink_index_dirty()
                         if _prev_single_tg != _int_dst_id:
                             self._push_config_to_monitor()
@@ -959,6 +1018,7 @@ class HBPProtocol(DatagramProtocol):
                 # TG 4000: reset after REPEAT so peers see the packet (legacy order)
                 if self._handle_tg4000_packet(
                     _peer_id, _slot, _int_dst_id, _call_type, _frame_type, _dtype_vseq,
+                    rf_src=_rf_src, stream_id=_stream_id,
                 ):
                     return
                 if _call_type == "group" and _frame_type == HBPF_DATA_SYNC and _dtype_vseq == HBPF_SLT_VHEAD:
@@ -1176,6 +1236,13 @@ class HBPProtocol(DatagramProtocol):
                         self._mark_downlink_index_dirty()
                         self._config_push_throttle.note_peer_connected()
                         self._push_config_to_monitor()
+                        if self._dynamic_tg_uc is not None:
+                            _sys_cfg = self._CONFIG.get("SYSTEMS", {}).get(self._system, {})
+                            self._dynamic_tg_uc.restore_peer(
+                                _peer_id, self._system, _sys_cfg,
+                            ).addCallback(
+                                lambda tgids: self._mark_downlink_index_dirty() if tgids else tgids
+                            )
                 else:
                     self.transport.write(b"".join([MSTNAK, _peer_id]), _sockaddr)
                     logger.info("(%s) Peer info from Radio ID that has not logged in: %s", self._system, int_id(_peer_id))
@@ -1189,16 +1256,6 @@ class HBPProtocol(DatagramProtocol):
                 self._mark_downlink_index_dirty()
                 self.send_peer(_peer_id, b"".join([RPTACK, _peer_id]))
                 logger.info("(%s) Peer %s has sent options %s", self._system, _this_peer["CALLSIGN"], _this_peer["OPTIONS"])
-                if is_proxy_inject_only(self._CONFIG, self._system):
-                    for _slot in (1, 2):
-                        if _slot in self.STATUS:
-                            seed_peer_ua_session_from_status(
-                                _this_peer,
-                                _peer_id,
-                                _slot,
-                                self.STATUS[_slot],
-                                self._config,
-                            )
                 # Inject-only multi-hotspot: OPTIONS live on each peer; do not let last RPTO
                 # overwrite the shared SYSTEM row (legacy had one peer per virtual master).
                 if not is_proxy_inject_only(self._CONFIG, self._system):
@@ -1210,6 +1267,16 @@ class HBPProtocol(DatagramProtocol):
                         self._on_options_received(self._system, _this_peer["OPTIONS"])
                     except Exception:
                         pass
+                if is_proxy_inject_only(self._CONFIG, self._system):
+                    for _slot in (1, 2):
+                        if _slot in self.STATUS:
+                            seed_peer_ua_session_from_status(
+                                _this_peer,
+                                _peer_id,
+                                _slot,
+                                self.STATUS[_slot],
+                                self._config,
+                            )
                 self._push_config_to_monitor()
             else:
                 self.transport.write(b"".join([MSTNAK, _peer_id]), _sockaddr)
@@ -1352,6 +1419,7 @@ class HBPProtocol(DatagramProtocol):
                 # TG 4000: reset after ACL/SUB_MAP (legacy order — routerHBP.dmrd_received)
                 if self._handle_tg4000_packet(
                     _peer_id, _slot, _int_dst_id, _call_type, _frame_type, _dtype_vseq,
+                    rf_src=_rf_src, stream_id=_stream_id,
                 ):
                     return
                 if _call_type == "group" and _frame_type == HBPF_DATA_SYNC and _dtype_vseq == HBPF_SLT_VHEAD:
@@ -1978,6 +2046,7 @@ def HBPProtocolFactory(
     routing_table_for_report: Callable[[], dict[str, Any]] | None = None,
     get_subscription_store: Callable[[], Any] | None = None,
     mesh_registry: MeshCodecRegistry | None = None,
+    dynamic_tg_uc: Any = None,
 ) -> HBPProtocol:
     """Create HBP protocol instance (legacy: one HBSYSTEM per system)."""
     return HBPProtocol(
@@ -2001,4 +2070,5 @@ def HBPProtocolFactory(
         routing_table_for_report=routing_table_for_report,
         get_subscription_store=get_subscription_store,
         mesh_registry=mesh_registry,
+        dynamic_tg_uc=dynamic_tg_uc,
     )

@@ -30,6 +30,7 @@ from collections.abc import Sequence
 from typing import TYPE_CHECKING, Any, Protocol
 
 if TYPE_CHECKING:
+    from adn_server.domain.dynamic_tg import DynamicTgEntry
     from adn_server.domain.subscription import AudioChannel, Subscription, SubscriptionId, SubscriptionPhase, SystemId
 
 
@@ -364,6 +365,34 @@ class ProxySelfServiceStore(ABC):
     @abstractmethod
     def clean_tbl(self) -> Any:
         """Returns Deferred."""
+
+
+class DynamicTgStore(ABC):
+    """Persist per-peer user-activated dynamic TGs (``peer_dynamic_tgs`` table)."""
+
+    @abstractmethod
+    def upsert(self, entry: "DynamicTgEntry") -> None:
+        ...
+
+    @abstractmethod
+    def replace_single_slot(self, entry: "DynamicTgEntry") -> None:
+        ...
+
+    @abstractmethod
+    def delete_peer_slot(self, int_id: int, system_name: str, slot: int) -> None:
+        ...
+
+    @abstractmethod
+    def delete_peer(self, int_id: int, system_name: str) -> None:
+        ...
+
+    @abstractmethod
+    def load_peer(self, int_id: int, system_name: str) -> Any:
+        """Returns Deferred firing with ``list[DynamicTgEntry]``."""
+
+    @abstractmethod
+    def purge_expired(self, now: float) -> None:
+        ...
 
 
 class ProxyIpBlacklist(ABC):

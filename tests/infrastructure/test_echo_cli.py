@@ -70,12 +70,22 @@ def test_no_proxy_skips_proxy_startup(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(peer_mod, "RecordingHandler", lambda *_: None)
     monkeypatch.setattr(peer_mod, "IdentUseCases", lambda *_: _FakeIdent())
     monkeypatch.setattr(peer_mod, "HBPProtocolFactory", lambda *a, **k: object())
+    monkeypatch.setattr(peer_mod, "ensure_database_sync", lambda *_a, **_k: True)
+    monkeypatch.setattr(peer_mod, "create_mysql_pool", lambda *_a, **_k: object())
+    monkeypatch.setattr(peer_mod, "MysqlDynamicTgRepository", lambda *_a, **_k: object())
 
     config = {
         "GLOBAL": {"SERVER_ID": 1},
         "LOGGER": {},
         "ALIASES": {"PATH": "."},
         "REPORTS": {"REPORT": False},
+        "DATABASE": {
+            "DB_SERVER": "localhost",
+            "DB_USERNAME": "hbmon",
+            "DB_PASSWORD": "x",
+            "DB_NAME": "hbmon",
+            "DB_PORT": 3306,
+        },
         "PROXY": {"LISTEN_PORT": 62031, "TARGET_SYSTEM": "SYSTEM"},
         "SYSTEMS": {
             "SYSTEM": {"MODE": "MASTER", "ENABLED": True, "IP": "127.0.0.1", "PORT": 62030, "MAX_PEERS": 4},

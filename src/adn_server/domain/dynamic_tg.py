@@ -1,4 +1,4 @@
-# ADN DMR Peer Server - infrastructure proxy self service config
+# ADN DMR Peer Server - domain dynamic tg
 #
 # Copyright (C) 2026  Rodrigo Pérez, CE5RPY <ce5rpy@qmd.cl>
 #
@@ -18,25 +18,21 @@
 #   Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301  USA
 ###############################################################################
 
-"""SELF_SERVICE feature flags; MariaDB connection comes from ``DATABASE``."""
+"""Per-peer user-activated dynamic TG persistence."""
 
 from __future__ import annotations
 
-from typing import Any
-
-from adn_server.infrastructure.persistence.database_config import database_settings
+from dataclasses import dataclass
 
 
-def self_service_settings(config: dict[str, Any]) -> dict[str, Any]:
-    """Resolved self-service settings; disabled when block missing or USE_SELFSERVICE false."""
-    block = config.get("SELF_SERVICE") or {}
-    if not isinstance(block, dict):
-        block = {}
-    enabled = bool(block.get("USE_SELFSERVICE", block.get("ENABLED", False)))
-    db = database_settings(config)
-    return {
-        "enabled": enabled,
-        **db,
-        "pbkdf2_salt": str(block.get("PBKDF2_SALT", "ADN")),
-        "pbkdf2_iterations": int(block.get("PBKDF2_ITERATIONS", 2000)),
-    }
+@dataclass(frozen=True, slots=True)
+class DynamicTgEntry:
+    """One persisted dynamic TG row for a hotspot peer."""
+
+    int_id: int
+    system_name: str
+    slot: int
+    tgid: int
+    single_mode: bool
+    expires_at: float | None
+    updated_at: float
