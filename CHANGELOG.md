@@ -2,6 +2,21 @@
 
 All notable changes to **adn-server** are documented here.
 
+## [2.0.0-rc.3] - 2026-06-17
+
+### Added
+
+- **Dynamic TG persistence** — per-peer user-activated TGs stored in MariaDB (`peer_dynamic_tgs`); restored on hotspot reconnect (RPTC); shared `DATABASE` block with proxy self-service.
+- **Server-owned migration** — ensures `peer_dynamic_tgs` table on startup (idempotent, same schema as adn-monitor `004`).
+
+### Fixed
+
+- **TG 4000** — clears all peer dynamic slots (memory + DB); emits `INGRESS` BRDG_EVENT so monitor SINGLE=0 chips clear without stuck TX; TG 4000 is never stored as a UA session.
+
+### Compatibility
+
+- **Monitor:** adn-monitor **2.0.0-rc.4**.
+
 ## [2.0.0-rc.2] - 2026-06-16
 
 ### Fixed

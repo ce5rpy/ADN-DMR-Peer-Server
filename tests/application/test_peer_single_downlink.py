@@ -34,6 +34,7 @@ from adn_server.application.routing.helpers import (
     peer_should_receive_group_voice,
     peer_single_blocks_group_voice,
     peer_single_blocks_uplink,
+    peer_single_exclusive_tgid,
     register_peer_ua_multi_tg,
     register_peer_ua_session,
     seed_peer_ua_session_from_status,
@@ -144,6 +145,23 @@ def test_tg4000_clears_single_session() -> None:
 
     assert peer_should_receive_group_voice(
         peer, 2, 730, peer_id=peer_id, connected_count=8, sys_cfg=sys_cfg, now=now + 10
+    )
+
+
+def test_tg4000_clear_rx_status_blocks_rpto_reseed() -> None:
+    """After 4000, stale STATUS must not re-seed UA session on RPTO."""
+    peer = {"OPTIONS": b"TS2=730,7305;SINGLE=1;TIMER=5;", "CONNECTED": 999_000.0}
+    peer_id = _peer_id()
+    sys_cfg = _sys_cfg()
+    status = {2: {"RX_PEER": peer_id, "RX_TGID": bytes_3(7305), "RX_TIME": 999_500.0}}
+    now = 1_000_000.0
+    register_peer_ua_session(peer, peer_id, 2, 7305, sys_cfg, now=now)
+    clear_peer_ua_sessions(peer, sys_cfg, peer_id, slot=2)
+    clear_peer_rx_status_slots(status, peer_id, slot=2)
+    seed_peer_ua_session_from_status(peer, peer_id, 2, status[2], sys_cfg, now=now + 10)
+
+    assert peer_should_receive_group_voice(
+        peer, 2, 730, peer_id=peer_id, connected_count=8, sys_cfg=sys_cfg, now=now + 20
     )
 
 
@@ -353,6 +371,21 @@ def test_single_zero_tg4000_clears_multi_dynamic() -> None:
     assert not peer_should_receive_group_voice(
         peer, 2, 7304, peer_id=peer_id, connected_count=2, sys_cfg=sys_cfg, now=now + 10
     )
+
+
+def test_register_peer_ua_session_ignores_4000() -> None:
+    """TG 4000 resets dynamics; it must never be stored as a UA session."""
+    peer_id = _peer_id()
+    sys_cfg = _sys_cfg()
+    now = 1_000_000.0
+    peer_multi = {"OPTIONS": b"TS2=730,7305;SINGLE=0;"}
+    register_peer_ua_session(peer_multi, peer_id, 2, 4000, sys_cfg, now=now)
+    pk = peer_id
+    assert sys_cfg.get("_PEER_UA_MULTI_TGS", {}).get(pk, {}).get(2, set()) == set()
+
+    peer_single = {"OPTIONS": b"TS2=730,7305;SINGLE=1;TIMER=5;"}
+    register_peer_ua_session(peer_single, peer_id, 2, 4000, sys_cfg, now=now)
+    assert peer_single_exclusive_tgid(peer_single, 2, sys_cfg, peer_id=peer_id, now=now) is None
 
 
 def test_new_tx_replaces_single_session_tg() -> None:

@@ -103,6 +103,11 @@ def tg4000_reset_on_vhead(int_dst_id: int, frame_type: int, dtype_vseq: int) -> 
     )
 
 
+def is_ua_session_tgid(tgid: int) -> bool:
+    """True when a keyed TG may be stored as a user-activated dynamic session."""
+    return int(tgid) > 0 and int(tgid) != 4000
+
+
 def obp_target_bcsq_quenches_stream(
     systems_cfg: dict[str, Any], target_name: str, dst_id_b: bytes, stream_id: bytes
 ) -> bool:
@@ -309,7 +314,7 @@ def register_peer_ua_multi_tg(
     if peer_single_mode(peer, sys_cfg):
         return
     tgid_i = int(tgid)
-    if tgid_i <= 0 or tgid_i == 4000:
+    if not is_ua_session_tgid(tgid_i):
         return
     if peer_receives_group_tgid(peer, slot, tgid_i):
         return
@@ -355,6 +360,8 @@ def register_peer_ua_session(
     now: float | None = None,
 ) -> None:
     """Track UA TG for this hotspot (SINGLE=1 exclusive; SINGLE=0 multi-dynamic set)."""
+    if not is_ua_session_tgid(tgid):
+        return
     if not peer_single_mode(peer, sys_cfg):
         register_peer_ua_multi_tg(peer, peer_id, slot, tgid, sys_cfg)
         return
@@ -391,7 +398,7 @@ def seed_peer_ua_session_from_status(
     if bytes_4(int_id(peer_id)) != bytes_4(int_id(rx_peer)):
         return
     rx_tgid = int_id(status_slot.get("RX_TGID", b"\x00\x00\x00"))
-    if rx_tgid <= 0:
+    if not is_ua_session_tgid(rx_tgid):
         return
     connected_at = float(peer.get("CONNECTED", 0) or 0)
     rx_time = float(status_slot.get("RX_TIME", 0) or 0)
@@ -403,11 +410,14 @@ def seed_peer_ua_session_from_status(
 def clear_peer_rx_status_slots(
     status: dict[Any, Any],
     peer_id: bytes,
+    *,
+    slot: int | None = None,
 ) -> None:
     """Reset RX fields on slots last owned by this peer (avoids stale OPTIONS seed)."""
     pk = bytes_4(int_id(peer_id))
-    for slot in (1, 2):
-        slot_st = status.get(slot)
+    slots = (int(slot),) if slot is not None else (1, 2)
+    for slot_id in slots:
+        slot_st = status.get(slot_id)
         if not isinstance(slot_st, dict):
             continue
         if bytes_4(int_id(slot_st.get("RX_PEER", b"\x00"))) != pk:
@@ -440,9 +450,63 @@ def export_peer_ua_sessions(
             continue
         exp = float(entry.get("expires", 0) or 0)
         tgid = int(entry.get("tgid", 0) or 0)
-        if tgid > 0 and exp > pkt_time:
+        if is_ua_session_tgid(tgid) and exp > pkt_time:
             out[str(slot)] = {"tgid": tgid, "expires_at": exp}
     return out
+
+
+def restore_peer_ua_entries_to_memory(
+    sys_cfg: dict[str, Any],
+    peer_id: bytes,
+    entries: list[Any],
+    *,
+    now: float | None = None,
+) -> list[int]:
+    """Apply persisted dynamic TG rows to ``_PEER_UA_SESSIONS`` / ``_PEER_UA_MULTI_TGS``."""
+    pkt_time = time.time() if now is None else now
+    pk = bytes_4(int_id(peer_id))
+    restored: list[int] = []
+    for entry in entries:
+        tgid = int(entry.tgid)
+        if not is_ua_session_tgid(tgid):
+            continue
+        slot = int(entry.slot)
+        if entry.single_mode:
+            expires = entry.expires_at
+            if expires is not None and float(expires) <= pkt_time:
+                continue
+            per_peer = sys_cfg.setdefault("_PEER_UA_SESSIONS", {}).setdefault(pk, {})
+            per_peer[slot] = {
+                "tgid": tgid,
+                "expires": float(expires) if expires is not None else 0.0,
+            }
+            restored.append(tgid)
+        else:
+            multi = sys_cfg.setdefault("_PEER_UA_MULTI_TGS", {}).setdefault(pk, {})
+            multi.setdefault(slot, set()).add(tgid)
+            restored.append(tgid)
+    return restored
+
+
+def purge_expired_peer_ua_sessions(sys_cfg: dict[str, Any], *, now: float | None = None) -> None:
+    """Drop expired SINGLE=1 sessions from in-memory store."""
+    pkt_time = time.time() if now is None else now
+    store = sys_cfg.get("_PEER_UA_SESSIONS")
+    if not isinstance(store, dict):
+        return
+    for pk in list(store.keys()):
+        per_peer = store.get(pk)
+        if not isinstance(per_peer, dict):
+            continue
+        for slot in list(per_peer.keys()):
+            entry = per_peer.get(slot)
+            if not isinstance(entry, dict):
+                continue
+            exp = float(entry.get("expires", 0) or 0)
+            if exp > 0 and pkt_time >= exp:
+                per_peer.pop(slot, None)
+        if not per_peer:
+            store.pop(pk, None)
 
 
 def clear_peer_ua_sessions(
