@@ -55,7 +55,7 @@ def _master_protocol(*, report: MagicMock | None = None) -> HBPProtocol:
     return proto
 
 
-def test_disconnect_clears_internal_sessions_without_bridge_event() -> None:
+def test_disconnect_keeps_sys_cfg_sessions() -> None:
     report = MagicMock()
     proto = _master_protocol(report=report)
     peer_id = bytes_4(730039101)
@@ -68,7 +68,7 @@ def test_disconnect_clears_internal_sessions_without_bridge_event() -> None:
     proto._on_peer_disconnected(peer_id)
 
     report.send_routing_event.assert_not_called()
-    assert export_peer_ua_sessions(sys_cfg, peer_id, now=1_000_100.0) == {}
+    assert export_peer_ua_sessions(sys_cfg, peer_id, now=1_000_100.0)["2"]["tgid"] == 7305
 
 
 def test_export_peer_ua_sessions_omits_expired() -> None:

@@ -138,28 +138,30 @@ def _build_self_service(
     client_sender: FanInClientSender,
     *,
     logger: logging.Logger,
+    mysql_pool: Any | None = None,
 ) -> ProxySelfServiceBridge | None:
     ss = self_service_settings(config)
     if not ss["enabled"]:
         return None
     try:
-        from adn_server.infrastructure.proxy.persistence import (
-            ProxySelfServiceRepository,
-            create_pool,
-        )
+        from adn_server.infrastructure.proxy.persistence import ProxySelfServiceRepository
+        if mysql_pool is None:
+            from adn_server.infrastructure.persistence.database_config import database_settings
+            from adn_server.infrastructure.proxy.persistence import create_pool
+            db = database_settings(config)
+            mysql_pool = create_pool(
+                db["db_server"],
+                db["db_username"],
+                db["db_password"],
+                db["db_name"],
+                db["db_port"],
+            )
     except ImportError as err:
         raise RuntimeError(
             "(SELF_SERVICE) USE_SELFSERVICE requires mysqlclient "
             "(pip install mysqlclient)"
         ) from err
-    pool = create_pool(
-        ss["db_server"],
-        ss["db_username"],
-        ss["db_password"],
-        ss["db_name"],
-        ss["db_port"],
-    )
-    store = ProxySelfServiceRepository(pool)
+    store = ProxySelfServiceRepository(mysql_pool)
     bridge = ProxySelfServiceBridge(
         store,
         use_cases,
@@ -177,6 +179,7 @@ def start_proxy_service(
     protocols: dict[str, Any],
     *,
     logger: logging.Logger,
+    mysql_pool: Any | None = None,
 ) -> ProxyServiceState:
     """Start LISTEN_PORT fan-in and inject into ``PROXY.TARGET_SYSTEM`` MASTER."""
     runtime = _proxy_runtime_snapshot(config)
@@ -292,6 +295,7 @@ def start_proxy_service(
             master_sink,
             state.client_sender,
             logger=logger,
+            mysql_pool=mysql_pool,
         )
         if self_service_bridge is not None:
             fanin._self_service = self_service_bridge  # noqa: SLF001

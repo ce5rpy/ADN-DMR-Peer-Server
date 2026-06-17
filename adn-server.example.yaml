@@ -78,14 +78,17 @@ PROXY:
   BLACK_LIST: []
   IP_BLACK_LIST: {}
 
-# Self-service: same MySQL + PBKDF2 as monitor/adn-monitor.yaml (Clients table).
-SELF_SERVICE:
-  USE_SELFSERVICE: true
+# MariaDB (required): dynamic TG persistence + optional self-service (Clients table).
+DATABASE:
   DB_SERVER: localhost
   DB_USERNAME: hbmon
   DB_PASSWORD: "<set-in-adn-server.yaml>"
   DB_NAME: hbmon
   DB_PORT: 3306
+
+# Self-service: uses DATABASE for MariaDB; PBKDF2 must match adn-monitor.yaml.
+SELF_SERVICE:
+  USE_SELFSERVICE: true
   PBKDF2_SALT: "ADN"
   PBKDF2_ITERATIONS: 2000
 

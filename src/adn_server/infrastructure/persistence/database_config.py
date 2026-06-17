@@ -1,4 +1,4 @@
-# ADN DMR Peer Server - infrastructure proxy self service config
+# ADN DMR Peer Server - infrastructure persistence database config
 #
 # Copyright (C) 2026  Rodrigo Pérez, CE5RPY <ce5rpy@qmd.cl>
 #
@@ -18,25 +18,25 @@
 #   Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301  USA
 ###############################################################################
 
-"""SELF_SERVICE feature flags; MariaDB connection comes from ``DATABASE``."""
+"""DATABASE block from config (MariaDB for dynamic TG persistence)."""
 
 from __future__ import annotations
 
 from typing import Any
 
-from adn_server.infrastructure.persistence.database_config import database_settings
+
+def _block(config: dict[str, Any], key: str) -> dict[str, Any]:
+    raw = config.get(key) or {}
+    return raw if isinstance(raw, dict) else {}
 
 
-def self_service_settings(config: dict[str, Any]) -> dict[str, Any]:
-    """Resolved self-service settings; disabled when block missing or USE_SELFSERVICE false."""
-    block = config.get("SELF_SERVICE") or {}
-    if not isinstance(block, dict):
-        block = {}
-    enabled = bool(block.get("USE_SELFSERVICE", block.get("ENABLED", False)))
-    db = database_settings(config)
+def database_settings(config: dict[str, Any]) -> dict[str, Any]:
+    """Resolved MariaDB settings from ``DATABASE``."""
+    block = _block(config, "DATABASE")
     return {
-        "enabled": enabled,
-        **db,
-        "pbkdf2_salt": str(block.get("PBKDF2_SALT", "ADN")),
-        "pbkdf2_iterations": int(block.get("PBKDF2_ITERATIONS", 2000)),
+        "db_server": str(block.get("DB_SERVER", "localhost")),
+        "db_username": str(block.get("DB_USERNAME", "")),
+        "db_password": str(block.get("DB_PASSWORD", "")),
+        "db_name": str(block.get("DB_NAME", "")),
+        "db_port": int(block.get("DB_PORT", 3306)),
     }

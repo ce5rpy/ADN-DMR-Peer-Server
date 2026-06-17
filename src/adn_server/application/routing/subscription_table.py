@@ -56,6 +56,29 @@ logger = logging.getLogger(__name__)
 class SubscriptionTableMixin:
     """ensure_dynamic_relay, stat/static TG, OPTIONS refresh (RPTO / startup / dmrd)."""
 
+    def sync_restored_dynamic_tgs(
+        self,
+        peer_id: bytes,
+        system_name: str,
+        sys_cfg: dict[str, Any],
+        entries: list["DynamicTgEntry"],
+        *,
+        now: float,
+    ) -> None:
+        """After DB restore: bridge timers and missing relay tables (routing concern)."""
+        from .dynamic_tg_restore import sync_restored_dynamic_bridges
+
+        sync_restored_dynamic_bridges(
+            entries,
+            system_name=system_name,
+            peer_id=peer_id,
+            sys_cfg=sys_cfg,
+            sub_store=self._subscription_store,
+            ensure_dynamic_relay=self.ensure_dynamic_relay,
+            ua_timer_minutes_for_peer=self._ua_timer_minutes_for_peer,
+            now=now,
+        )
+
     def ensure_dynamic_relay(
         self,
         _tgid: bytes | int,

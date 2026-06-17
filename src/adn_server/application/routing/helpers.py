@@ -445,6 +445,58 @@ def export_peer_ua_sessions(
     return out
 
 
+def restore_peer_ua_entries_to_memory(
+    sys_cfg: dict[str, Any],
+    peer_id: bytes,
+    entries: list[Any],
+    *,
+    now: float | None = None,
+) -> list[int]:
+    """Apply persisted dynamic TG rows to ``_PEER_UA_SESSIONS`` / ``_PEER_UA_MULTI_TGS``."""
+    pkt_time = time.time() if now is None else now
+    pk = bytes_4(int_id(peer_id))
+    restored: list[int] = []
+    for entry in entries:
+        tgid = int(entry.tgid)
+        slot = int(entry.slot)
+        if entry.single_mode:
+            expires = entry.expires_at
+            if expires is not None and float(expires) <= pkt_time:
+                continue
+            per_peer = sys_cfg.setdefault("_PEER_UA_SESSIONS", {}).setdefault(pk, {})
+            per_peer[slot] = {
+                "tgid": tgid,
+                "expires": float(expires) if expires is not None else 0.0,
+            }
+            restored.append(tgid)
+        else:
+            multi = sys_cfg.setdefault("_PEER_UA_MULTI_TGS", {}).setdefault(pk, {})
+            multi.setdefault(slot, set()).add(tgid)
+            restored.append(tgid)
+    return restored
+
+
+def purge_expired_peer_ua_sessions(sys_cfg: dict[str, Any], *, now: float | None = None) -> None:
+    """Drop expired SINGLE=1 sessions from in-memory store."""
+    pkt_time = time.time() if now is None else now
+    store = sys_cfg.get("_PEER_UA_SESSIONS")
+    if not isinstance(store, dict):
+        return
+    for pk in list(store.keys()):
+        per_peer = store.get(pk)
+        if not isinstance(per_peer, dict):
+            continue
+        for slot in list(per_peer.keys()):
+            entry = per_peer.get(slot)
+            if not isinstance(entry, dict):
+                continue
+            exp = float(entry.get("expires", 0) or 0)
+            if exp > 0 and pkt_time >= exp:
+                per_peer.pop(slot, None)
+        if not per_peer:
+            store.pop(pk, None)
+
+
 def clear_peer_ua_sessions(
     peer: dict[str, Any],
     sys_cfg: dict[str, Any],

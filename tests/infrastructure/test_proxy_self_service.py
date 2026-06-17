@@ -114,18 +114,20 @@ def _run_deferred(d: Deferred) -> None:
     assert results, "deferred did not fire synchronously"
 
 
-def test_self_service_settings_reads_monitor_keys() -> None:
+def test_self_service_settings_reads_database_and_self_service_keys() -> None:
     cfg = {
-        "SELF_SERVICE": {
-            "USE_SELFSERVICE": True,
+        "DATABASE": {
             "DB_SERVER": "localhost",
             "DB_USERNAME": "hbmon",
             "DB_PASSWORD": "secret",
             "DB_NAME": "hbmon",
             "DB_PORT": 3306,
+        },
+        "SELF_SERVICE": {
+            "USE_SELFSERVICE": True,
             "PBKDF2_SALT": "ADN",
             "PBKDF2_ITERATIONS": 2000,
-        }
+        },
     }
     ss = self_service_settings(cfg)
     assert ss["enabled"] is True
@@ -231,9 +233,14 @@ GLOBAL: {}
 PROXY:
   LISTEN_PORT: 62031
   TARGET_SYSTEM: SYSTEM
+DATABASE:
+  DB_SERVER: localhost
+  DB_USERNAME: hbmon
+  DB_PASSWORD: secret
+  DB_NAME: hbmon
+  DB_PORT: 3306
 SELF_SERVICE:
   USE_SELFSERVICE: true
-  DB_SERVER: localhost
 SYSTEMS:
   SYSTEM:
     MODE: MASTER

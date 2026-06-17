@@ -190,6 +190,7 @@ class HBPProtocol(DatagramProtocol):
         routing_table_for_report: Callable[[], dict[str, Any]] | None = None,
         get_subscription_store: Callable[[], Any] | None = None,
         mesh_registry: MeshCodecRegistry | None = None,
+        dynamic_tg_uc: Any = None,
     ) -> None:
         self._CONFIG = config
         self._system = system_name
@@ -211,6 +212,7 @@ class HBPProtocol(DatagramProtocol):
         self._on_talker_alias_stream_end = on_talker_alias_stream_end
         self._on_dmra_fragment_stored = on_dmra_fragment_stored
         self._mesh_registry = mesh_registry if mesh_registry is not None else _DEFAULT_MESH_REGISTRY
+        self._dynamic_tg_uc = dynamic_tg_uc
         self._config = config.get("SYSTEMS", {}).get(system_name, {})
         if self._config.get("MODE") == "OPENBRIDGE":
             self._laststrid = deque([], 20)
@@ -401,6 +403,8 @@ class HBPProtocol(DatagramProtocol):
         """Clear per-peer UA dynamics; legacy bridge reset only outside inject-only."""
         peer = self._peers.get(peer_id, {})
         clear_peer_ua_sessions(peer, self._config, peer_id, slot=slot)
+        if self._dynamic_tg_uc is not None:
+            self._dynamic_tg_uc.delete_peer_slot(peer_id, self._system, slot)
         _kind = "Private call to ID" if call_type == "unit" else "Group call to TG"
         if self._inject_multi_peer_options_filter():
             self._push_config_to_monitor()
@@ -799,13 +803,12 @@ class HBPProtocol(DatagramProtocol):
             self._push_config_to_monitor()
 
     def _on_peer_disconnected(self, peer_id: bytes) -> None:
-        """Drop SINGLE/UA session and stale slot STATUS when a hotspot leaves or re-logs in."""
+        """Drop stale slot STATUS when a hotspot leaves; keep persisted UA state in sys_cfg."""
         peer = self._peers.get(peer_id)
-        sys_cfg = self._config
         if peer is not None:
-            clear_peer_ua_sessions(peer, sys_cfg, peer_id)
-        else:
-            clear_peer_ua_sessions({}, sys_cfg, peer_id)
+            sessions = peer.get("_UA_SESSION")
+            if isinstance(sessions, dict):
+                sessions.clear()
         clear_peer_rx_status_slots(self.STATUS, peer_id)
 
     def _remove_peer(self, peer_id: bytes) -> None:
@@ -915,6 +918,15 @@ class HBPProtocol(DatagramProtocol):
                             self._config,
                             now=pkt_time,
                         )
+                        if self._dynamic_tg_uc is not None:
+                            self._dynamic_tg_uc.persist_after_register(
+                                self._peers[_peer_id],
+                                _peer_id,
+                                _slot,
+                                _int_dst_id,
+                                self._config,
+                                system_name=self._system,
+                            )
                         self._mark_downlink_index_dirty()
                         if _prev_single_tg != _int_dst_id:
                             self._push_config_to_monitor()
@@ -1176,6 +1188,13 @@ class HBPProtocol(DatagramProtocol):
                         self._mark_downlink_index_dirty()
                         self._config_push_throttle.note_peer_connected()
                         self._push_config_to_monitor()
+                        if self._dynamic_tg_uc is not None:
+                            _sys_cfg = self._CONFIG.get("SYSTEMS", {}).get(self._system, {})
+                            self._dynamic_tg_uc.restore_peer(
+                                _peer_id, self._system, _sys_cfg,
+                            ).addCallback(
+                                lambda tgids: self._mark_downlink_index_dirty() if tgids else tgids
+                            )
                 else:
                     self.transport.write(b"".join([MSTNAK, _peer_id]), _sockaddr)
                     logger.info("(%s) Peer info from Radio ID that has not logged in: %s", self._system, int_id(_peer_id))
@@ -1189,16 +1208,6 @@ class HBPProtocol(DatagramProtocol):
                 self._mark_downlink_index_dirty()
                 self.send_peer(_peer_id, b"".join([RPTACK, _peer_id]))
                 logger.info("(%s) Peer %s has sent options %s", self._system, _this_peer["CALLSIGN"], _this_peer["OPTIONS"])
-                if is_proxy_inject_only(self._CONFIG, self._system):
-                    for _slot in (1, 2):
-                        if _slot in self.STATUS:
-                            seed_peer_ua_session_from_status(
-                                _this_peer,
-                                _peer_id,
-                                _slot,
-                                self.STATUS[_slot],
-                                self._config,
-                            )
                 # Inject-only multi-hotspot: OPTIONS live on each peer; do not let last RPTO
                 # overwrite the shared SYSTEM row (legacy had one peer per virtual master).
                 if not is_proxy_inject_only(self._CONFIG, self._system):
@@ -1210,6 +1219,16 @@ class HBPProtocol(DatagramProtocol):
                         self._on_options_received(self._system, _this_peer["OPTIONS"])
                     except Exception:
                         pass
+                if is_proxy_inject_only(self._CONFIG, self._system):
+                    for _slot in (1, 2):
+                        if _slot in self.STATUS:
+                            seed_peer_ua_session_from_status(
+                                _this_peer,
+                                _peer_id,
+                                _slot,
+                                self.STATUS[_slot],
+                                self._config,
+                            )
                 self._push_config_to_monitor()
             else:
                 self.transport.write(b"".join([MSTNAK, _peer_id]), _sockaddr)
@@ -1978,6 +1997,7 @@ def HBPProtocolFactory(
     routing_table_for_report: Callable[[], dict[str, Any]] | None = None,
     get_subscription_store: Callable[[], Any] | None = None,
     mesh_registry: MeshCodecRegistry | None = None,
+    dynamic_tg_uc: Any = None,
 ) -> HBPProtocol:
     """Create HBP protocol instance (legacy: one HBSYSTEM per system)."""
     return HBPProtocol(
@@ -2001,4 +2021,5 @@ def HBPProtocolFactory(
         routing_table_for_report=routing_table_for_report,
         get_subscription_store=get_subscription_store,
         mesh_registry=mesh_registry,
+        dynamic_tg_uc=dynamic_tg_uc,
     )

@@ -30,6 +30,7 @@ from typing import Any
 
 from twisted.internet import reactor, task, threads
 
+from adn_server.application.dynamic_tg_use_cases import DynamicTgUseCases
 from adn_server.application import (
     RoutingUseCases,
     IdentUseCases,
@@ -70,6 +71,9 @@ from adn_server.infrastructure.config_normalizer import (
 from adn_server.infrastructure.config_reload import BindSpec, reload_server_config
 from adn_server.infrastructure.logging_config import reopen_file_handlers
 from adn_server.infrastructure.persistence import PickleSubMapStore
+from adn_server.infrastructure.persistence.database_config import database_settings
+from adn_server.infrastructure.persistence.dynamic_tg_repository import MysqlDynamicTgRepository
+from adn_server.infrastructure.persistence.mysql_pool import create_mysql_pool, verify_database_sync
 from adn_server.infrastructure.persistence.alias_loader import DefaultAliasLoader
 from adn_server.infrastructure.persistence.keys_store import JsonKeysStore
 from adn_server.infrastructure.proxy import apply_proxy_config_reload, start_proxy_service
@@ -229,6 +233,24 @@ def run_peer_server(
     runtime_holder = RuntimeContextHolder(RuntimeContext(config=config, config_path=config_path))
     config = ConfigProxy(runtime_holder)
 
+    db_settings = database_settings(config)
+    if not verify_database_sync(
+        db_settings["db_server"],
+        db_settings["db_username"],
+        db_settings["db_password"],
+        db_settings["db_name"],
+        db_settings["db_port"],
+    ):
+        raise SystemExit(1)
+    mysql_pool = create_mysql_pool(
+        db_settings["db_server"],
+        db_settings["db_username"],
+        db_settings["db_password"],
+        db_settings["db_name"],
+        db_settings["db_port"],
+    )
+    dynamic_tg_store = MysqlDynamicTgRepository(mysql_pool)
+
     # Subscription store is runtime routing authority; acl_router is ACL-only (D-08).
     acl_router = InMemoryAclRouter()
     systems_cfg = config.get("SYSTEMS", {})
@@ -345,6 +367,10 @@ def run_peer_server(
         ta_emblc_encoder=default_ta_emblc_encoder,
     )
     routing_use_cases.apply_startup_subscriptions()
+    dynamic_tg_uc = DynamicTgUseCases(
+        dynamic_tg_store,
+        on_restored=routing_use_cases.sync_restored_dynamic_tgs,
+    )
     routing_table_for_report = routing_use_cases.routing_table_for_report
     voice_use_cases._routing_table_for_report = routing_table_for_report
     report_factory.set_routing_table(routing_table_for_report())
@@ -519,6 +545,7 @@ def run_peer_server(
             on_dmra_fragment_stored=routing_use_cases.on_dmra_fragment_stored,
             routing_table_for_report=routing_table_for_report,
             get_subscription_store=lambda: subscription_store,
+            dynamic_tg_uc=dynamic_tg_uc,
         )
 
     def _listen_system(_name: str, bind: BindSpec, protocol: Any) -> Any:
@@ -633,6 +660,12 @@ def run_peer_server(
     task.LoopingCall(routing_use_cases.log_connected_systems_and_tgs).start(60).addErrback(_looping_errback, logger)
     task.LoopingCall(lambda: logger.debug("(ROUTER) KeepAlive reporting loop started")).start(60).addErrback(_looping_errback, logger)
 
+    def dynamic_tg_purge_loop() -> None:
+        dynamic_tg_uc.purge_expired(config)
+
+    task.LoopingCall(dynamic_tg_purge_loop).start(60).addErrback(_looping_errback, logger)
+    logger.info("(DYNAMIC_TG) Expired SINGLE=1 purge loop started (every 60 seconds)")
+
     # UDP listeners per system (same order as legacy: SYSTEM STARTING then instance created per system)
     logger.info("(GLOBAL) ADN DMR Peer Server -- SYSTEM STARTING...")
     for system_name, sys_cfg in systems_cfg.items():
@@ -654,7 +687,9 @@ def run_peer_server(
 
     if proxy_enabled:
         try:
-            proxy_state = start_proxy_service(config, protocols, logger=logger)
+            proxy_state = start_proxy_service(
+                config, protocols, logger=logger, mysql_pool=mysql_pool,
+            )
         except Exception as exc:
             logger.error("(PROXY) failed to start integrated proxy: %s", exc)
             raise
