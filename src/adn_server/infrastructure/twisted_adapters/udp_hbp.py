@@ -59,7 +59,7 @@ from ...application.routing.peer_downlink_index import (
     invalidate_peer_options_cache,
 )
 from ...application.proxy.deployment import is_proxy_inject_only
-from ...domain import bytes_4, int_id
+from ...domain import bytes_3, bytes_4, int_id
 from ...domain.talker_alias import (
     DMRA_PACKET_LEN,
     decode_ta_from_blocks,
@@ -400,13 +400,17 @@ class HBPProtocol(DatagramProtocol):
         )
 
     def _apply_tg4000_reset(self, peer_id: bytes, slot: int, call_type: str) -> None:
-        """Clear per-peer UA dynamics; legacy bridge reset only outside inject-only."""
+        """Clear per-peer UA dynamics and stale STATUS; deactivate bridges on 4000."""
         peer = self._peers.get(peer_id, {})
         clear_peer_ua_sessions(peer, self._config, peer_id, slot=slot)
+        clear_peer_rx_status_slots(self.STATUS, peer_id, slot=slot)
         if self._dynamic_tg_uc is not None:
             self._dynamic_tg_uc.delete_peer_slot(peer_id, self._system, slot)
+        if self._on_in_band_signalling:
+            self._on_in_band_signalling(self._system, slot, bytes_3(4000), time.time())
         _kind = "Private call to ID" if call_type == "unit" else "Group call to TG"
         if self._inject_multi_peer_options_filter():
+            self._mark_downlink_index_dirty()
             self._push_config_to_monitor()
             logger.info(
                 "(%s) %s 4000 received on TS %s — clearing dynamic TGs for peer %s",

@@ -403,11 +403,14 @@ def seed_peer_ua_session_from_status(
 def clear_peer_rx_status_slots(
     status: dict[Any, Any],
     peer_id: bytes,
+    *,
+    slot: int | None = None,
 ) -> None:
     """Reset RX fields on slots last owned by this peer (avoids stale OPTIONS seed)."""
     pk = bytes_4(int_id(peer_id))
-    for slot in (1, 2):
-        slot_st = status.get(slot)
+    slots = (int(slot),) if slot is not None else (1, 2)
+    for slot_id in slots:
+        slot_st = status.get(slot_id)
         if not isinstance(slot_st, dict):
             continue
         if bytes_4(int_id(slot_st.get("RX_PEER", b"\x00"))) != pk:

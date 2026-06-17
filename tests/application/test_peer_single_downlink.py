@@ -147,6 +147,23 @@ def test_tg4000_clears_single_session() -> None:
     )
 
 
+def test_tg4000_clear_rx_status_blocks_rpto_reseed() -> None:
+    """After 4000, stale STATUS must not re-seed UA session on RPTO."""
+    peer = {"OPTIONS": b"TS2=730,7305;SINGLE=1;TIMER=5;", "CONNECTED": 999_000.0}
+    peer_id = _peer_id()
+    sys_cfg = _sys_cfg()
+    status = {2: {"RX_PEER": peer_id, "RX_TGID": bytes_3(7305), "RX_TIME": 999_500.0}}
+    now = 1_000_000.0
+    register_peer_ua_session(peer, peer_id, 2, 7305, sys_cfg, now=now)
+    clear_peer_ua_sessions(peer, sys_cfg, peer_id, slot=2)
+    clear_peer_rx_status_slots(status, peer_id, slot=2)
+    seed_peer_ua_session_from_status(peer, peer_id, 2, status[2], sys_cfg, now=now + 10)
+
+    assert peer_should_receive_group_voice(
+        peer, 2, 730, peer_id=peer_id, connected_count=8, sys_cfg=sys_cfg, now=now + 20
+    )
+
+
 def test_seed_session_from_status_after_options() -> None:
     """TX on 7305 before RPTO SINGLE=1 — OPTIONS must seed the lock."""
     peer = {"OPTIONS": b"TS2=730,7305;SINGLE=1;TIMER=5;", "CONNECTED": 999_000.0}
