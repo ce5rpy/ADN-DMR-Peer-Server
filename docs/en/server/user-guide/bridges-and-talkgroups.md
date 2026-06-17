@@ -17,6 +17,30 @@ The router scans `BRIDGES` for an **ACTIVE** row matching the **current source s
 - **User-activated** bridges are created when a user keys a TG without a pre-built row (subject to `DEFAULT_UA_TIMER` and options).
 - **Static** TGs and **STAT** bridges are created from **OPTIONS** / `make_static_tg` / `GEN_STAT_BRIDGES` flows.
 
+## Dynamic TG persistence (MariaDB) {#dynamic-tg-persistence-mariadb}
+
+Since **2.0.0-rc.3**, user-activated dynamic TGs for each hotspot can be **persisted in MariaDB** (`peer_dynamic_tgs`) so they survive **hotspot disconnect/reconnect** without re-keying the TG.
+
+| Event | Server behaviour |
+|-------|------------------|
+| **Group voice header** (new dynamic TG on a slot) | Registers UA session in memory and **async upsert** to `peer_dynamic_tgs`. |
+| **RPTC** (hotspot login OK) | **Restores** rows for that peer/system into memory and re-syncs bridge rows (`ensure_dynamic_relay`). |
+| **TG 4000** | Clears **all** dynamic slots for that peer (memory + DB). See [Special numbers — TG 4000](special-numbers.md#tg--id-4000--deactivate-dynamic-bridges). |
+| **Hotspot disconnect** | Clears per-peer **mirror** state only; persisted rows and global `_PEER_UA_*` maps are kept until expiry or TG 4000. |
+| **Periodic purge** | Every **60 s**, expired **SINGLE=1** rows are removed from DB and memory. |
+
+**SINGLE=0** peers accumulate several dynamic TGs per slot in memory (`_PEER_UA_MULTI_TGS`). **SINGLE=1** stores one exclusive TG per slot with a timer.
+
+**TG 4000** is never stored as a dynamic session (reset command only).
+
+Requires **`DATABASE`** in `adn-server.yaml` — see [Configuration](configuration.md#database-mariadb).
+
+## Cross-slot static TG downlink (inject-only)
+
+On **inject-only** MASTER systems (integrated **`PROXY`**), group voice downlink respects **static TGs listed in either TS1 or TS2 OPTIONS**, even when the **wire timeslot** differs. This matches legacy REPEAT behaviour for hotspots that list a TG on one slot but transmit on another.
+
+The server does **not** rewrite the incoming DMRD slot; it filters **which peers receive** the repeated packet via `peer_should_receive_group_voice` and the downlink index.
+
 ## Source-row guard and safe iteration
 
 Forwarding is allowed only when the current system has a matching **ACTIVE source row** for that TG/slot context. This prevents accidental forwarding from rows that are present but not currently eligible as source legs.

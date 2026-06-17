@@ -120,7 +120,9 @@ No hay Alembic: el monitor usa **`schema_migrations`** y comprobaciones en **`in
 - **Replace:** carga en `{tabla}_import` con **commit cada 10 000 filas** (la tabla live sigue legible); swap atómico `RENAME TABLE` (bloqueo metadata breve).
 - **Merge** (ficheros locales): `INSERT IGNORE` con **commit cada 2 000 filas**.
 
-Migraciones: `001_clients_callsign`, `002_clients_options_width`, `003_alias_pk_only`.
+Migraciones: `001_clients_callsign`, `002_clients_options_width`, `003_alias_pk_only`, **`004_peer_dynamic_tgs`** (tabla compartida con **adn-server 2.0.0-rc.3+**).
+
+**adn-server** también asegura **`peer_dynamic_tgs`** al arrancar (idempotente). Cualquiera de los dos caminos basta; ambos pueden usar la misma base **`hbmon`**.
 
 ---
 

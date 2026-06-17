@@ -18,7 +18,9 @@ This chapter documents the **adn-monitor** stack at the same level of detail as 
 | **`adn-server.yaml`** | **`adn-server.py`** (integrated **`PROXY`** / **`SELF_SERVICE`**) | `-c` / default path next to binary |
 | **`monitor/adn-monitor.yaml`** | **`monitor.py`** | **`ADN_CONFIG_PATH`** |
 
-**`SELF_SERVICE`** (MySQL / PBKDF2) must **match** between **`adn-server.yaml`** and **`adn-monitor.yaml`**. **`ADN_CONNECTION`**, dashboard, WebSocket, and aliases live in **`adn-monitor.yaml`**; integrated **`PROXY`** lives in **`adn-server.yaml`** — see [Hotspot proxy (integrated)](../server/user-guide/hotspot-proxy.md).
+**`SELF_SERVICE`** (MySQL / PBKDF2) must **match** between **`adn-server.yaml`** and **`adn-monitor.yaml`**. On the server, MariaDB credentials are in **`DATABASE`** (shared pool for self-service and **`peer_dynamic_tgs`**). **`ADN_CONNECTION`**, dashboard, WebSocket, and aliases live in **`adn-monitor.yaml`**; integrated **`PROXY`** lives in **`adn-server.yaml`** — see [Hotspot proxy (integrated)](../server/user-guide/hotspot-proxy.md).
+
+**Recommended pairing:** **adn-server 2.0.0-rc.3** + **adn-monitor 2.0.0-rc.4** (dynamic TG persistence, TG 4000 monitor sync).
 
 ## Link to the peer server
 

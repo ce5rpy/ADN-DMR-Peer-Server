@@ -32,6 +32,7 @@ Los opcodes wire y claves YAML pueden seguir diciendo “bridge” por compatibi
 | Voz / TTS | `application/voice_use_cases.py`, `infrastructure/voice/` |
 | Proxy hotspot (fan-in) | `infrastructure/proxy/` (`udp_fanin.py`, `runtime.py`), casos de uso en `application/proxy/` |
 | Self-service (MySQL) | `infrastructure/proxy/self_service_bridge.py`, `infrastructure/proxy/persistence/` |
+| Persistencia TG dinámicos | `application/dynamic_tg_use_cases.py`, `infrastructure/persistence/dynamic_tg_repository.py`, `application/routing/dynamic_tg_restore.py` |
 
 ## Configuración como estado compartido
 

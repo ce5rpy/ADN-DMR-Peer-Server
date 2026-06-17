@@ -17,8 +17,8 @@ Enrutado, temporizadores, control de bucle OpenBridge y manejo de protocolo est�
 
 | Subsistema | Rol |
 |------------|-----|
-| **Bridge router** | Tabla `BRIDGES`: qué sistemas reenvían qué TG en qué slot; bridges dinámicos; bridges estáticos/stat. |
-| **Protocolo HBP** | Autenticación, ingreso/salida DMRD, repetición a peers, filtros TG. |
+| **Bridge router** | Tabla `BRIDGES`: qué sistemas reenvían qué TG en qué slot; bridges dinámicos; bridges estáticos/stat; **restauración MariaDB de TG dinámicos** al reconectar. |
+| **Protocolo HBP** | Autenticación, ingreso/salida DMRD, repetición a peers, filtros TG, seguimiento de **sesión UA por peer**. |
 | **OpenBridge** | Ingreso DMRE, límite de saltos, control de bucle (`min(1ST)`), BCSQ/BCKA si están habilitados. |
 | **Voz** | Ficheros AMBE, anuncios programados, tubería TTS, reproducción bajo demanda (TG 9991–9999). |
 | **Informes** | Canal TCP netstring hacia **adn-monitor** (y paneles compatibles): config, estado de bridges, eventos de llamada (informe v2 JSON). |
@@ -28,10 +28,11 @@ Enrutado, temporizadores, control de bucle OpenBridge y manejo de protocolo est�
 
 - **Echo / playback** — `adn-server.py --echo` con `adn-echo.yaml` mínimo; ver [Echo](echo.md).
 - **Proxy hotspot integrado** — `PROXY` en **`adn-server.yaml`**; ver [Proxy hotspot](hotspot-proxy.md).
+- **Proxy de informes (paneles legacy)** — **[ADN-report-proxy](https://github.com/ce5rpy/ADN-report-proxy)** opcional para que **adn-server 2.x** alimente monitores antiguos estilo HBMonitor / FDMR (wire v1); ver [Proxy de informes](report-proxy.md). No se usa con **adn-monitor 2.x**.
 
 ## Siguientes pasos
 
-- [Configuración](configuration.md) — ficheros, `GLOBAL`, **MASTER** / **PEER** / **OPENBRIDGE**, ACL, informes, **`PROXY`**, **`SELF_SERVICE`**, alias, fusión de voz.
+- [Configuración](configuration.md) — ficheros, `GLOBAL`, **MASTER** / **PEER** / **OPENBRIDGE**, ACL, **`DATABASE`**, informes, **`PROXY`**, **`SELF_SERVICE`**, alias, fusión de voz.
 - [Bridges y talkgroups](bridges-and-talkgroups.md) — cómo funciona `BRIDGES`.
 - [Números especiales](special-numbers.md) — TG 4000, servicios de información, eco.
 - [Proxy hotspot](hotspot-proxy.md) — **`PROXY`** / **`SELF_SERVICE`** integrados en `adn-server.yaml`.

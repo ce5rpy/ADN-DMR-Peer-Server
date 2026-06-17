@@ -72,8 +72,9 @@ Same semantics as **`adn-monitor.yaml`** — shared **`Clients`** table, **`modi
 | Key | Role |
 |-----|------|
 | **USE_SELFSERVICE** | Enable MySQL-backed options sync (`true` / `false`). |
-| **DB_SERVER**, **DB_USERNAME**, **DB_PASSWORD**, **DB_NAME**, **DB_PORT** | MySQL connection. |
 | **PBKDF2_SALT**, **PBKDF2_ITERATIONS** | Must **match** monitor/backend for password hashing. |
+
+MariaDB connection settings live in the top-level **`DATABASE`** block (shared with dynamic TG persistence) — see [Configuration](configuration.md#database-mariadb).
 
 On startup the server logs **`(SELF_SERVICE) Database connection test: OK`** and **`(SELF_SERVICE) Enabled`** when the pool connects. Self-service runs **asynchronously**; voice forwarding is not blocked on DB latency.
 

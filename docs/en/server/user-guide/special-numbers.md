@@ -56,19 +56,24 @@ In-band bridge activation/deactivation is applied on **voice terminator (VTERM)*
 - For reflector bridges (`#...`), in-band handling is evaluated only when the destination is **TG 9**.
 - This is why reflector prompts and dial wiring are tied to TG 9 while private calls do not trigger that bridge-timer logic.
 
-## TG / ID 4000 — deactivate dynamic bridges
+## TG / ID 4000 — deactivate dynamic bridges {#tg--id-4000--deactivate-dynamic-bridges}
 
-**Purpose:** Clear **user-activated (dynamic) bridges** for the system that receives the call.
+**Purpose:** Clear **user-activated (dynamic)** state for the hotspot that keys **4000**. **TG 4000 is not** a talkgroup to monitor or persist — it is a **reset command**.
 
-**Behaviour:**
+**Behaviour (group voice header):**
 
-- Implemented for **group** traffic to destination **4000** (and related checks in the router).
-- Runs **before** normal TG ACL in the OpenBridge path so the command is not blocked by allow lists.
-- Invokes **`deactivate_all_dynamic_bridges`**: deactivates non-stat, non-reflector dynamic bridge rows.
+- Clears per-peer UA sessions in memory (**all slots** for that peer).
+- Deletes matching rows from **`peer_dynamic_tgs`** (MariaDB).
+- Clears stale **STATUS** RX fields so a later **RPTO** does not re-seed the old TG.
+- Runs **in-band bridge deactivation** on the slot (same as legacy).
+- Sends **`GROUP VOICE,INGRESS,RX,…,4000`** to the monitor (not **START**) so **SINGLE=0** multi-dynamic chips clear **without** lighting a live TX chip.
+- On **inject-only** MASTER, pushes updated **CONFIG_SND** to the monitor.
 
-Use this when operators need to **reset** dynamic routing without restarting the server.
+**Inject-only vs global:** With integrated **`PROXY`**, reset is **per peer** (only that hotspot’s dynamics). Without inject-only filtering, legacy **`deactivate_all_dynamic_bridges`** still runs for the whole system.
 
-### `SINGLE_MODE` impact on deactivation logic
+**TG 4000 must never appear** as a dynamic UA chip on the monitor or in `peer_dynamic_tgs`.
+
+### `SINGLE_MODE` impact on in-band deactivation
 
 When in-band rules evaluate deactivation on a MASTER slot:
 

@@ -56,17 +56,22 @@ La activación/desactivación in-band de bridges se aplica sobre **voice termina
 - En bridges reflector (`#...`), el manejo in-band solo se evalúa cuando el destino es **TG 9**.
 - Por eso los mensajes de reflector y el cableado de marcado usan TG 9, mientras que llamadas privadas no disparan esa lógica de temporizadores de bridge.
 
-## TG / ID 4000 — desactivar bridges dinámicos
+## TG / ID 4000 — desactivar bridges dinámicos {#tg--id-4000--desactivar-bridges-dinamicos}
 
-**Propósito:** borrar **bridges dinámicos activados por usuario** para el sistema que recibe la llamada.
+**Propósito:** Borrar el estado **activado por usuario (dinámico)** del hotspot que pulsa **4000**. **TG 4000 no es** un talkgroup que deba monitorizarse ni persistirse — es un **comando de reset**.
 
-**Comportamiento:**
+**Comportamiento (cabecera de voz de grupo):**
 
-- Implementado para tráfico de **grupo** con destino **4000** (y comprobaciones relacionadas en el router).
-- Se ejecuta **antes** que la ACL normal de TG en la ruta OpenBridge para que el comando no quede bloqueado por listas permitidas.
-- Invoca **`deactivate_all_dynamic_bridges`**: desactiva filas dinámicas que no sean stat ni reflector.
+- Limpia sesiones UA del peer en memoria (**todos los slots** de ese peer).
+- Borra filas correspondientes en **`peer_dynamic_tgs`** (MariaDB).
+- Limpia campos RX obsoletos en **STATUS** para que un **RPTO** posterior no re-sembré el TG antiguo.
+- Ejecuta **desactivación in-band** de bridges en el slot (como legacy).
+- Envía **`GROUP VOICE,INGRESS,RX,…,4000`** al monitor (no **START**) para que los chips **SINGLE=0** se limpien **sin** encender TX en vivo.
+- En MASTER **inject-only**, empuja **CONFIG_SND** actualizado al monitor.
 
-Úsalo cuando los operadores necesiten **reiniciar** el enrutado dinámico sin reiniciar el servidor.
+**Inject-only frente a global:** Con **`PROXY`** integrado, el reset es **por peer** (solo los dinámicos de ese hotspot). Sin filtro inject-only, sigue aplicándose legacy **`deactivate_all_dynamic_bridges`** a todo el system.
+
+**TG 4000 no debe aparecer** como chip UA dinámico en el monitor ni en `peer_dynamic_tgs`.
 
 ### Impacto de `SINGLE_MODE` en la lógica de desactivación
 
