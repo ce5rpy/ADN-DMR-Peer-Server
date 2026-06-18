@@ -2,6 +2,21 @@
 
 All notable changes to **adn-server** are documented here.
 
+## [2.0.0-rc.4] - 2026-06-18
+
+### Added
+
+- **Docs (MkDocs EN/ES):** bridges vs subscriptions, performance notes, report-proxy guide for legacy dashboards, Mermaid diagrams in architecture/monitoring pages.
+
+### Fixed
+
+- **Echo TG 9990** — excluded from SINGLE/UA session locks; inject-only monitor remap for echo TX legs; bridge TX report field 5 resolves hotspot radio id for ECHO/hotspot live chips.
+- **Dynamic TG restore** — `sync_restored_dynamic_tgs` passes `now=` as keyword (fixes TypeError on echo startup after DB restore).
+
+### Compatibility
+
+- **Monitor:** adn-monitor **2.0.0-rc.5**.
+
 ## [2.0.0-rc.3] - 2026-06-17
 
 ### Added
