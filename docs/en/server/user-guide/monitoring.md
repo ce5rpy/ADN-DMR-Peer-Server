@@ -12,11 +12,25 @@ When **`REPORTS`** is enabled in the server config, the **ADN DMR Peer Server** 
 
 **Version pairing:** **server 1.0.x + monitor 1.0.x** = report v1 (frozen tags). **server 2.x** emits **report v2 only** — requires **monitor 2.x** on the same line. No `dual` wire; monitor 1.0.x will not decode this server.
 
+### Legacy dashboards (report-proxy)
+
+If you keep an **old dashboard** whose backend monitor speaks **report v1** only (pickle/CSV, no HELLO v2), it **cannot** connect to **adn-server 2.x** on `REPORTS.REPORT_PORT`. Use the optional **[ADN-report-proxy](https://github.com/ce5rpy/ADN-report-proxy)** to translate **v2 → v1**: the proxy connects to the server; the legacy monitor connects to the proxy. **adn-monitor 2.x** does **not** need this proxy — connect it directly to the server.
+
+See [Report proxy (legacy dashboards)](report-proxy.md) for topology, `REPORT_CLIENTS`, ports, and start order.
+
 Older stacks (**legacy** `adn-dmr-server`-style) may **omit** HELLO. **adn-monitor** waits up to **`ADN_CONNECTION.HELLO_TIMEOUT_MS`** (see [Monitor configuration](../../monitor/configuration.md#adn_connection)); if no HELLO arrives, it assumes **legacy** reporting.
 
 The **monitor** decodes these messages, updates its **CTABLE** / **BTABLE**, and (when MySQL is configured) persists Last Heard / statistics.
 
 **Full stack:** [ADN Monitor overview](../../monitor/index.md) (FastAPI monitor, WebSocket, self-service).
+
+```mermaid
+flowchart LR
+  SRV[adn-server\nREPORTS.REPORT_PORT] -->|TCP netstring| ING[adn-monitor ingest]
+  ING --> STATE[CTABLE / BTABLE]
+  STATE --> WS[WebSocket /ws]
+  WS --> UI[React dashboard]
+```
 
 ### Report channel log lines (`adn-monitor` logger)
 
@@ -39,6 +53,19 @@ At **WARNING**: invalid HELLO JSON (`(REPORT) HELLO payload not valid JSON`), or
 - **`GROUP VOICE,END,…`** — call end; RX/TX variants depending on direction.
 
 The dashboard shows **operational** state from **START** (canonical); the **Monitor** log shows **INGRESS** plus **START** for troubleshooting mesh duplicates.
+
+### Dynamic UA chips (hotspot OPTIONS)
+
+The monitor tracks **user-activated** TGs per hotspot for dashboard indigo chips:
+
+| Peer OPTIONS | Monitor source |
+|--------------|----------------|
+| **SINGLE=1** | **`UA_SESSIONS`** in **CONFIG_SND** / `dashboard_state` (server source of truth). |
+| **SINGLE=0** | Voice events (`BRDG_EVENT` / `voice_event`) — multiple dynamics per slot until cleared. |
+
+**TG 4000** clears UA state via **`GROUP VOICE,INGRESS,RX`** with destination **4000** (server sends this because the voice path returns early and never emits a normal **START**). The monitor must **not** register **4000** as a dynamic TG.
+
+**Version pairing:** **adn-server 2.0.0-rc.3** + **adn-monitor 2.0.0-rc.4** for dynamic TG persistence and TG 4000 monitor sync.
 
 ## Log file rotation (logrotate)
 

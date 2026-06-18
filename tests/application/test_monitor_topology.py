@@ -143,6 +143,13 @@ def test_expand_inject_proxy_emits_all_virtual_masters() -> None:
             id="tx_echo_keeps_9990_for_hotspot_rx",
         ),
         pytest.param(
+            "GROUP VOICE,START,TX,SYSTEM,4100887026,730039101,730039101,2,9990",
+            [(730039101,)],
+            {730039101: 4},
+            {"parts": {3: "SYSTEM-4", 5: "9990"}},
+            id="tx_echo_peer_id_in_field5_dst_9990",
+        ),
+        pytest.param(
             "GROUP VOICE,START,RX,SYSTEM,4100887026,73003,7300392,2,9990",
             [(730039101,)],
             {730039101: 4},

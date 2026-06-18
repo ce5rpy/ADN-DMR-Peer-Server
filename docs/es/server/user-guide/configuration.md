@@ -29,9 +29,9 @@ kill -HUP $(pidof adn-server.py)    # o: systemctl reload adn-server
 
 Unidad de ejemplo: **`examples/systemd/adn-server.service`** (copiar a `/etc/systemd/system/`; incluye `ExecReload` para `systemctl reload`).
 
-**Se recarga:** `GLOBAL`, `REPORTS`, `ALIASES`, **`LOGGER.LOG_LEVEL`** (sin reiniciar el proceso), **`PROXY`** (timeouts, debug, listas de bloqueo — no bind ni destino), **`SELF_SERVICE`** (fusionado; activar/desactivar bucles BD requiere reinicio), parámetros por system, **systems nuevos/eliminados** (incluida expansión/colapso `GENERATOR` y OBP nuevos), y cambios de IP/puerto (solo reinicia el listener de ese system).
+**Se recarga:** `GLOBAL`, `REPORTS`, `ALIASES`, **`LOGGER.LOG_LEVEL`** (sin reiniciar el proceso), **`PROXY`** (timeouts, debug, listas de bloqueo — no bind ni destino), **`SELF_SERVICE`** (flags PBKDF2 fusionados; activar/desactivar bucles BD requiere reinicio), parámetros por system, **systems nuevos/eliminados** (incluida expansión/colapso `GENERATOR` y OBP nuevos), y cambios de IP/puerto (solo reinicia el listener de ese system).
 
-**No se recarga:** `adn-voice.yaml` (loop aparte cada 15 s), código Python, ficheros de alias (recarga periódica). La tabla **BRIDGES** no se reconstruye — reinicia si cambiaste reglas de bridge que exijan reset completo. **`PROXY.LISTEN_PORT`**, **`LISTEN_IP`** y **`TARGET_SYSTEM`** requieren **reinicio completo** para aplicarse.
+**No se recarga:** **`DATABASE`** (pool MariaDB y bootstrap `peer_dynamic_tgs`), `adn-voice.yaml` (loop aparte cada 15 s), código Python, ficheros de alias (recarga periódica). La tabla **BRIDGES** no se reconstruye — reinicia si cambiaste reglas de bridge que exijan reset completo. **`PROXY.LISTEN_PORT`**, **`LISTEN_IP`** y **`TARGET_SYSTEM`** requieren **reinicio completo** para aplicarse.
 
 **Secretos:** no versionar passphrases reales, URLs de seguridad ni `user_passwords.json` / `encryption_key.secret`. Usa placeholders en plantillas y mantén producción en local.
 
@@ -169,7 +169,7 @@ Para el modelo conceptual (ACTIVE, TS, TGID, timeouts): [Bridges y talkgroups](b
 
 ## `REPORTS`
 
-Canal TCP de informes para **adn-monitor** (o paneles compatibles).
+Canal TCP de informes para **adn-monitor** (o paneles compatibles). **adn-server 2.x** habla **solo informe v2**; los paneles legacy que esperan **v1** necesitan el opcional [report-proxy](report-proxy.md) (paquete aparte).
 
 | Clave | Significado |
 |-------|-------------|
@@ -178,7 +178,7 @@ Canal TCP de informes para **adn-monitor** (o paneles compatibles).
 | **REPORT_PORT** | Puerto local en el que el **servidor escucha** clientes de informes. |
 | **REPORT_CLIENTS** | Lista separada por comas o lista de IPs de clientes permitidos (ver ejemplo). |
 
-Detalle: [Monitor e informes](monitoring.md).
+Detalle: [Monitor e informes](monitoring.md). Monitores legacy v1: [Proxy de informes](report-proxy.md).
 
 ---
 
@@ -198,9 +198,38 @@ Se arranca siempre que exista un bloque **`PROXY`** (ver `adn-server.example.yam
 
 ---
 
+## `DATABASE` (MariaDB)
+
+**Obligatorio** en configs típicas de servidor de conferencia: cualquier despliegue con **`PROXY`**, o al menos un system **`MASTER`** / **`OPENBRIDGE`**. **No** es obligatorio en flotas **solo echo** (`adn-server.py --echo`).
+
+| Clave | Significado |
+|-------|-------------|
+| **DB_SERVER** | Host MariaDB/MySQL. |
+| **DB_USERNAME** / **DB_PASSWORD** | Credenciales. |
+| **DB_NAME** | Nombre de la base (a menudo la misma que **adn-monitor**, p. ej. `hbmon`). |
+| **DB_PORT** | Puerto TCP (por defecto **3306**). |
+
+**Un solo pool** compartido para:
+
+- **Persistencia de TG dinámicos** — tabla **`peer_dynamic_tgs`** (TG activados por usuario por hotspot entre reconexiones). El servidor **crea la tabla al arranque** si falta (migración **`004_peer_dynamic_tgs`**, mismo esquema que adn-monitor).
+- **Self-service integrado** — tabla **`Clients`** con **`SELF_SERVICE.USE_SELFSERVICE: true`**.
+
+El arranque aborta con log claro si MariaDB no responde o **`DATABASE`** está incompleto. Instala **`mysqlclient`** (`pip install -e ".[selfservice]"` lo incluye).
+
+**Recarga en caliente:** cambiar **`DATABASE`** exige **reinicio completo** del proceso.
+
+Detalle: [Bridges y talkgroups — persistencia TG dinámicos](bridges-and-talkgroups.md#persistencia-tg-dinamicos-mariadb).
+
+---
+
 ## `SELF_SERVICE` (MySQL / opciones del panel)
 
-Opcional; requiere `pip install -e ".[selfservice]"` con **`USE_SELFSERVICE: true`**. Usa la misma tabla **`Clients`** y parámetros PBKDF2 que **adn-monitor**. Las claves coinciden con la documentación del monitor — ver [Self-service](../../monitor/self-service.md) y [Proxy hotspot](hotspot-proxy.md#claves-self_service).
+Opcional; requiere `pip install -e ".[selfservice]"` con **`USE_SELFSERVICE: true`**. Usa el bloque **`DATABASE`** anterior (sin claves DB separadas en **`SELF_SERVICE`**). Los parámetros PBKDF2 deben **coincidir** con **adn-monitor**. Ver [Self-service](../../monitor/self-service.md) y [Proxy hotspot](hotspot-proxy.md#claves-self_service).
+
+| Clave | Significado |
+|-------|-------------|
+| **USE_SELFSERVICE** | Activa sincronización de opciones desde el panel (`true` / `false`). |
+| **PBKDF2_SALT** / **PBKDF2_ITERATIONS** | Deben coincidir con **`adn-monitor.yaml`** / herramienta de contraseñas. |
 
 ---
 

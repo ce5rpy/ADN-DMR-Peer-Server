@@ -104,8 +104,14 @@ def tg4000_reset_on_vhead(int_dst_id: int, frame_type: int, dtype_vseq: int) -> 
 
 
 def is_ua_session_tgid(tgid: int) -> bool:
-    """True when a keyed TG may be stored as a user-activated dynamic session."""
-    return int(tgid) > 0 and int(tgid) != 4000
+    """True when a keyed TG may be stored as a user-activated dynamic session.
+
+    Excludes TG 4000 (reset command) and service/echo 9990–9999 (no SINGLE lock).
+    """
+    t = int(tgid)
+    if t <= 0 or t == 4000:
+        return False
+    return not is_special_tg(str(t))
 
 
 def obp_target_bcsq_quenches_stream(

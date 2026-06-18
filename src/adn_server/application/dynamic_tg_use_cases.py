@@ -113,7 +113,7 @@ class DynamicTgUseCases:
             ]
             tgids = restore_peer_ua_entries_to_memory(sys_cfg, peer_id, active, now=now)
             if self._on_restored is not None:
-                self._on_restored(peer_id, system_name, sys_cfg, active, now)
+                self._on_restored(peer_id, system_name, sys_cfg, active, now=now)
             if tgids:
                 logger.info(
                     "(DYNAMIC_TG) Restored %s TG(s) for peer %s on %s: %s",

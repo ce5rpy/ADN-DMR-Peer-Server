@@ -12,10 +12,36 @@ La tabla de bridges asocia **claves de talkgroup** (cadenas, p. ej. `"26811"`, `
 
 El router recorre `BRIDGES` buscando una fila **ACTIVE** que coincida con el **sistema de origen actual**, **slot** y **TG de destino** antes de reenviar (`dmrd_received` → `to_target`).
 
+En **adn-server 2.x** las mismas reglas están en **`SubscriptionStore`** / **`SubscriptionRouter`**; `BRIDGES` es solo forma de export para el monitor. Ver [BRIDGES vs Subscriptions](../development/bridges-vs-subscriptions.md).
+
 ## Dinámico frente a estático
 
 - Los bridges **activados por usuario** se crean cuando alguien pulsa una TG sin fila previa (sujeto a `DEFAULT_UA_TIMER` y opciones).
 - Las TG **estáticas** y bridges **STAT** se crean desde flujos **OPTIONS** / `make_static_tg` / `GEN_STAT_BRIDGES`.
+
+## Persistencia TG dinámicos (MariaDB) {#persistencia-tg-dinamicos-mariadb}
+
+Desde **2.0.0-rc.3**, los TG dinámicos activados por usuario de cada hotspot pueden **persistirse en MariaDB** (`peer_dynamic_tgs`) para sobrevivir a **desconexión/reconexión** sin volver a pulsar el TG.
+
+| Evento | Comportamiento del servidor |
+|--------|----------------------------|
+| **Cabecera de voz de grupo** (nuevo TG dinámico en un slot) | Registra sesión UA en memoria y **upsert asíncrono** en `peer_dynamic_tgs`. |
+| **RPTC** (login OK del hotspot) | **Restaura** filas de ese peer/system en memoria y re-sincroniza bridges (`ensure_dynamic_relay`). |
+| **TG 4000** | Borra **todos** los slots dinámicos de ese peer (memoria + BD). Ver [Números especiales — TG 4000](special-numbers.md#tg--id-4000--desactivar-bridges-dinamicos). |
+| **Desconexión del hotspot** | Solo limpia el **espejo** por peer; las filas persistidas y mapas globales `_PEER_UA_*` se mantienen hasta expiración o TG 4000. |
+| **Purga periódica** | Cada **60 s**, filas **SINGLE=1** expiradas se eliminan de BD y memoria. |
+
+Peers **SINGLE=0** acumulan varios TG dinámicos por slot (`_PEER_UA_MULTI_TGS`). **SINGLE=1** guarda un TG exclusivo por slot con temporizador.
+
+**TG 4000** nunca se almacena como sesión dinámica (solo comando de reset).
+
+Requiere **`DATABASE`** en `adn-server.yaml` — ver [Configuración](configuration.md#database-mariadb).
+
+## Downlink cross-slot de TG estáticas (inject-only)
+
+En MASTER **inject-only** ( **`PROXY`** integrado), el downlink de voz de grupo respeta **TG estáticas listadas en OPTIONS de TS1 o TS2**, aunque el **slot en cable** sea otro. Equivale al comportamiento legacy REPEAT para hotspots que listan un TG en un slot y transmiten en otro.
+
+El servidor **no** reescribe el slot del DMRD entrante; filtra **a qué peers reenvía** el paquete repetido con `peer_should_receive_group_voice` y el índice de downlink.
 
 ## Guardia de fila de origen e iteración segura
 

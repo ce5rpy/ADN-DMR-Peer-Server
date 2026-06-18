@@ -102,6 +102,18 @@ Obsolete **`WEBSOCKET_SERVER`** YAML (Twisted on a separate port) is ignored; us
 
 ---
 
+## Database schema and migrations
+
+**adn-monitor** ships SQL migrations in `monitor/src/adn_monitor/infrastructure/persistence/schema.py`. Apply with **`db_bootstrap --update`** (or equivalent) when upgrading.
+
+| Migration | Table / change |
+|-----------|----------------|
+| **`004_peer_dynamic_tgs`** | **`peer_dynamic_tgs`** — per-peer dynamic TG rows written by **adn-server 2.0.0-rc.3+** (shared schema). |
+
+**adn-server** also ensures **`peer_dynamic_tgs`** exists on startup (idempotent). Either path is sufficient; both can run against the same **`hbmon`** database.
+
+---
+
 ## Environment
 
 - **`ADN_CONFIG_PATH`**: Absolute path to **`adn-monitor.yaml`** for **`monitor.py`**.

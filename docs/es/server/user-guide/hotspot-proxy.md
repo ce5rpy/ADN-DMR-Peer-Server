@@ -14,6 +14,13 @@ La configuración está en **`adn-server.yaml`**, bloques **`PROXY`** y opcional
 
 El proxy integrado usa **fan-in**: los hotspots solo necesitan **`PROXY.LISTEN_PORT`** (p. ej. **62031**). El **MASTER** destino es **solo inyección** — **no** abre su propio puerto UDP para ese system (sin rango de puertos por hotspot en el host del servidor).
 
+```mermaid
+flowchart LR
+  HS1[Hotspot A] -->|UDP HBP| LP[PROXY LISTEN_PORT]
+  HS2[Hotspot B] -->|UDP HBP| LP
+  LP -->|inyecta| MASTER[TARGET_SYSTEM MASTER]
+```
+
 ---
 
 ## Dependencia opcional (self-service)
@@ -72,8 +79,9 @@ Misma semántica que **`adn-monitor.yaml`** — tabla **`Clients`** compartida, 
 | Clave | Rol |
 |-------|-----|
 | **USE_SELFSERVICE** | Activa sincronización de opciones con MySQL (`true` / `false`). |
-| **DB_SERVER**, **DB_USERNAME**, **DB_PASSWORD**, **DB_NAME**, **DB_PORT** | Conexión MySQL. |
 | **PBKDF2_SALT**, **PBKDF2_ITERATIONS** | Deben **coincidir** con **`adn-monitor.yaml`** para el hash de contraseñas. |
+
+La conexión MariaDB está en el bloque **`DATABASE`** (compartido con persistencia de TG dinámicos) — ver [Configuración](configuration.md#database-mariadb).
 
 Al arrancar el servidor registra **`(SELF_SERVICE) Database connection test: OK`** y **`(SELF_SERVICE) Enabled`** si el pool conecta. El self-service es **asíncrono**; el reenvío de voz no se bloquea por latencia de BD.
 

@@ -12,11 +12,25 @@ Cuando **`REPORTS`** está habilitado en la config del servidor, el **ADN DMR Pe
 
 **Acoplamiento de versiones:** **servidor 1.0.x + monitor 1.0.x** = report v1 (tags). **servidor 2.x** emite **solo report v2** — requiere **monitor 2.x**. Sin wire `dual`; monitor 1.0.x no decodifica este servidor.
 
+### Paneles legacy (report-proxy)
+
+Si mantienes un **panel antiguo** cuyo backend monitor solo habla **informe v1** (pickle/CSV, sin HELLO v2), **no puede** conectarse a **adn-server 2.x** en `REPORTS.REPORT_PORT`. Usa el opcional **[ADN-report-proxy](https://github.com/ce5rpy/ADN-report-proxy)** para traducir **v2 → v1**: el proxy se conecta al servidor; el monitor legacy se conecta al proxy. **adn-monitor 2.x** **no** necesita este proxy — conéctalo directamente al servidor.
+
+Ver [Proxy de informes (paneles legacy)](report-proxy.md) para topología, `REPORT_CLIENTS`, puertos y orden de arranque.
+
 Las pilas antiguas (**legado** estilo `adn-dmr-server`) pueden **omitir** HELLO. **adn-monitor** espera hasta **`ADN_CONNECTION.HELLO_TIMEOUT_MS`** (ver [Configuración del monitor](../../monitor/configuration.md#adn_connection)); si no llega HELLO, asume informes **legacy**.
 
 El **monitor** decodifica estos mensajes, actualiza **CTABLE** / **BTABLE** y (con MySQL configurado) persiste Last Heard / estadísticas.
 
 **Pila completa:** [Descripción general del ADN Monitor](../../monitor/index.md) (monitor FastAPI, WebSocket, self-service).
+
+```mermaid
+flowchart LR
+  SRV[adn-server\nREPORTS.REPORT_PORT] -->|TCP netstring| ING[ingest adn-monitor]
+  ING --> STATE[CTABLE / BTABLE]
+  STATE --> WS[WebSocket /ws]
+  WS --> UI[panel React]
+```
 
 ### Líneas de log del canal de informes (logger `adn-monitor`)
 
@@ -39,6 +53,19 @@ En **WARNING**: JSON HELLO inválido (`(REPORT) HELLO payload not valid JSON`), 
 - **`GROUP VOICE,END,…`** — fin de llamada; variantes RX/TX según dirección.
 
 El panel muestra el estado **operativo** desde **START** (canónico); el **log del Monitor** muestra **INGRESS** más **START** para depurar duplicados en malla.
+
+### Chips UA dinámicos (OPTIONS del hotspot)
+
+El monitor rastrea TG **activados por usuario** por hotspot para los chips índigo del panel:
+
+| OPTIONS del peer | Fuente en el monitor |
+|----------------|----------------------|
+| **SINGLE=1** | **`UA_SESSIONS`** en **CONFIG_SND** / `dashboard_state` (el servidor es fuente de verdad). |
+| **SINGLE=0** | Eventos de voz (`BRDG_EVENT` / `voice_event`) — varios dinámicos por slot hasta limpiar. |
+
+**TG 4000** limpia el estado UA con **`GROUP VOICE,INGRESS,RX`** y destino **4000** (el servidor lo envía porque la ruta de voz corta antes y no emite un **START** normal). El monitor **no** debe registrar **4000** como TG dinámico.
+
+**Emparejamiento de versiones:** **adn-server 2.0.0-rc.3** + **adn-monitor 2.0.0-rc.4** para persistencia de TG dinámicos y sincronización TG 4000 en el monitor.
 
 ## Rotación de logs (logrotate)
 

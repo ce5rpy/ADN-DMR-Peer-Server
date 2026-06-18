@@ -417,6 +417,11 @@ class RoutingUseCases(
             bridge_match_slot=bridge_match_slot,
             dst_int=dst_int,
         )
+        _tx_report_peer = int_id(peer_id)
+        if not source_is_obp:
+            _tx_report_peer = int_id(
+                resolve_voice_peer_id(peer_id, rf_src, system_name, systems_cfg)
+            )
         forwarded = []
         _leg_iter: list[tuple[str, dict[str, Any]]] = [
             (
@@ -496,7 +501,7 @@ class RoutingUseCases(
                             )
                             self._send_routing_event(
                                 "GROUP VOICE,START,TX,{},{},{},{},{},{}".format(
-                                    entry["SYSTEM"], int_id(stream_id), int_id(peer_id), int_id(rf_src), entry.get("TS", 1), int_id(target_tgid)
+                                    entry["SYSTEM"], int_id(stream_id), _tx_report_peer, int_id(rf_src), entry.get("TS", 1), int_id(target_tgid)
                                 )
                             )
                         if "EMB_LC" not in _target_status[stream_id]:
@@ -533,7 +538,7 @@ class RoutingUseCases(
                             call_duration = pkt_time - _target_status[stream_id].get("START", pkt_time)
                             self._send_routing_event(
                                 "GROUP VOICE,END,TX,{},{},{},{},{},{},{:.2f}".format(
-                                    entry["SYSTEM"], int_id(stream_id), int_id(peer_id), int_id(rf_src), entry.get("TS", 1), int_id(target_tgid), call_duration
+                                    entry["SYSTEM"], int_id(stream_id), _tx_report_peer, int_id(rf_src), entry.get("TS", 1), int_id(target_tgid), call_duration
                                 )
                             )
                         elif dtype_vseq in (1, 2, 3, 4):
@@ -624,7 +629,7 @@ class RoutingUseCases(
                             "GROUP VOICE,START,TX,{},{},{},{},{},{}".format(
                                 entry["SYSTEM"],
                                 int_id(stream_id),
-                                int_id(peer_id),
+                                _tx_report_peer,
                                 int_id(rf_src),
                                 entry_ts,
                                 int_id(entry_tgid_b),
@@ -648,11 +653,18 @@ class RoutingUseCases(
                         dmrbits = _ts_st["TX_T_LC"][0:98] + dmrbits[98:166] + _ts_st["TX_T_LC"][98:197]
                         call_duration = pkt_time - _ts_st.get("TX_START", pkt_time)
                         _end_peer = _ts_st.get("TX_PEER", peer_id)
+                        _end_report_peer = int_id(_end_peer)
+                        if not source_is_obp:
+                            _end_report_peer = int_id(
+                                resolve_voice_peer_id(
+                                    _end_peer, rf_src, system_name, systems_cfg
+                                )
+                            )
                         self._send_routing_event(
                             "GROUP VOICE,END,TX,{},{},{},{},{},{},{:.2f}".format(
                                 entry["SYSTEM"],
                                 int_id(stream_id),
-                                int_id(_end_peer),
+                                _end_report_peer,
                                 int_id(rf_src),
                                 entry_ts,
                                 int_id(entry_tgid_b),
