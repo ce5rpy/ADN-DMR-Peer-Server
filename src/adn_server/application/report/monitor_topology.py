@@ -31,7 +31,7 @@ from __future__ import annotations
 import copy
 from typing import Any
 
-from adn_server.application.routing.helpers import peer_should_receive_group_voice
+from adn_server.application.routing.helpers import is_special_tg, peer_should_receive_group_voice
 from adn_server.application.proxy.deployment import is_proxy_inject_only, proxy_target_system
 from adn_server.domain.value_objects import bytes_4, int_id
 
@@ -246,7 +246,12 @@ def _peers_receiving_tgid(
 
 
 def _echo_tx_target_peer(parts: list[str], peers: dict[Any, Any]) -> bytes | None:
-    """Echo/static downlink: field 5 is 9990 and field 6 resolves one hotspot."""
+    """Echo/service downlink TX: field 5 may be 9990 or hotspot id; field 8 is 9990–9999."""
+    tgid_slot = _voice_event_tgid_slot(parts)
+    if tgid_slot is not None:
+        tgid, _ = tgid_slot
+        if is_special_tg(str(tgid)):
+            return _peer_key_from_voice_csv(parts, peers)
     if len(parts) <= 5:
         return None
     try:
@@ -320,13 +325,19 @@ def remap_inject_proxy_voice_events(
     trx = parts[2].strip() if len(parts) > 2 else ""
 
     if trx == "TX":
+        tgid_slot = _voice_event_tgid_slot(parts)
         echo_peer = _echo_tx_target_peer(parts, peers)
         if echo_peer is not None:
             slot = slot_map.get(echo_peer)
             if slot is not None:
+                tx_parts = list(parts)
+                if tgid_slot is not None:
+                    tgid, _ = tgid_slot
+                    if is_special_tg(str(tgid)):
+                        tx_parts[5] = str(tgid)
                 return [
                     _remap_voice_event_to_slot(
-                        parts, target=target, slot=slot, peer_key=echo_peer
+                        tx_parts, target=target, slot=slot, peer_key=echo_peer
                     )
                 ]
         try:

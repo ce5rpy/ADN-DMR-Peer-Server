@@ -388,6 +388,27 @@ def test_register_peer_ua_session_ignores_4000() -> None:
     assert peer_single_exclusive_tgid(peer_single, 2, sys_cfg, peer_id=peer_id, now=now) is None
 
 
+def test_register_peer_ua_session_ignores_echo_9990() -> None:
+    """Echo TG 9990 must not create SINGLE=1 exclusive listen lock."""
+    peer_id = _peer_id()
+    sys_cfg = _sys_cfg()
+    now = 1_000_000.0
+    peer = {"OPTIONS": b"TS2=730444;SINGLE=1;TIMER=5;"}
+    register_peer_ua_session(peer, peer_id, 2, 730444, sys_cfg, now=now)
+    register_peer_ua_session(peer, peer_id, 2, 9990, sys_cfg, now=now)
+    assert peer_single_exclusive_tgid(peer, 2, sys_cfg, peer_id=peer_id, now=now) == 730444
+
+
+def test_register_peer_ua_session_ignores_service_999x() -> None:
+    """On-demand / service 9991–9999 are not UA sessions (same class as echo 9990)."""
+    peer_id = _peer_id()
+    sys_cfg = _sys_cfg()
+    now = 1_000_000.0
+    peer = {"OPTIONS": b"TS2=730444;SINGLE=1;TIMER=5;"}
+    register_peer_ua_session(peer, peer_id, 2, 9999, sys_cfg, now=now)
+    assert peer_single_exclusive_tgid(peer, 2, sys_cfg, peer_id=peer_id, now=now) is None
+
+
 def test_new_tx_replaces_single_session_tg() -> None:
     peer = {"OPTIONS": b"TS2=730,7305;SINGLE=1;TIMER=5;"}
     sys_cfg = _sys_cfg()
