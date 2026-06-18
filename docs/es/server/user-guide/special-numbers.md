@@ -93,6 +93,8 @@ El **audio** se envía con **ID de fuente 5000** y **TG de destino 9** en el flu
 
 **Propósito:** las filas de bridge para **eco** suelen usar **9990** con el sistema **ECHO** (ver `BRIDGES` y opciones en tu YAML).
 
+**`SINGLE=1`:** pulsar **9990** **no** crea sesión de escucha exclusiva (igual que **4000**). El downlink del eco vuelve siempre al hotspot llamante aunque otra TG tenga el bloqueo SINGLE. Ver [Proxy hotspot](hotspot-proxy.md#comportamiento-con-varios-hotspots).
+
 **Nota:** Un **echo independiente** también está disponible como proceso aparte — [Echo](echo.md).
 
 ## Llamada privada al ID 4000

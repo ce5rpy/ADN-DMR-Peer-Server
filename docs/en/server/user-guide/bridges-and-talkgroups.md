@@ -12,6 +12,8 @@ The bridge table maps **talkgroup keys** (strings, e.g. `"26811"`, `"#reflector"
 
 The router scans `BRIDGES` for an **ACTIVE** row matching the **current source system**, **slot**, and **destination TG** before forwarding (`dmrd_received` → `to_target`).
 
+In **adn-server 2.x** the same rules live in **`SubscriptionStore`** / **`SubscriptionRouter`**; `BRIDGES` is only an export shape for the monitor. See [BRIDGES vs Subscriptions](../development/bridges-vs-subscriptions.md).
+
 ## Dynamic vs static
 
 - **User-activated** bridges are created when a user keys a TG without a pre-built row (subject to `DEFAULT_UA_TIMER` and options).

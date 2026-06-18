@@ -10,6 +10,14 @@ Under `monitor/src/adn_monitor/`:
 
 Composition root: `infrastructure/fastapi/composition.py` (`build_monitor_api`).
 
+```mermaid
+flowchart TD
+  INF["Infrastructure<br/>YAML · FastAPI /ws · TCP/MQTT ingest<br/>MySQL repos · pickle/JSON decoders"]
+  APP["Application<br/>MonitorState · report/dashboard use cases<br/>auth · self-service · aliases"]
+  DOM["Domain<br/>value objects · errors · opcodes<br/>UserSession · Result"]
+  INF --> APP --> DOM
+```
+
 ## Unified process (`monitor.py`)
 
 Single uvicorn/FastAPI process:
@@ -41,15 +49,19 @@ The standalone **`adn-proxy`** process was removed from the **adn-monitor** repo
 
 ## Typical deployment topology
 
-```text
-[Hotspots] --UDP--> [adn-server PROXY] --UDP--> [peer MASTER]
-                           |
-                           v
-                    MySQL (Clients)
+```mermaid
+flowchart TD
+  HS[Hotspots] -->|UDP HBP| PROXY[adn-server PROXY]
+  PROXY --> MASTER[MASTER inject]
+  PROXY --> DB[(MySQL Clients)]
 
-[Peer server :REPORT_PORT] <--- TCP or MQTT --- [monitor.py ingest]
+  MASTER --> REPORT[REPORTS listener]
+  REPORT <-->|TCP or MQTT| ING[monitor.py ingest]
+  ING --> APP[FastAPI /api /ws]
+  APP --> DB
 
-[Browser] --HTTPS--> [Nginx: static frontend + proxy /api,/ws --> MONITOR_APP.LISTEN_PORT]
+  BR[Browser] -->|HTTPS| FE[Nginx or SERVE_STATIC]
+  FE --> APP
 ```
 
 ---

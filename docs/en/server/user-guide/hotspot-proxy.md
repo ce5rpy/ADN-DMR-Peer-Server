@@ -14,6 +14,13 @@ Configuration lives in **`adn-server.yaml`** under **`PROXY`** and optional **`S
 
 The integrated proxy uses **fan-in**: hotspots only need **`PROXY.LISTEN_PORT`** (e.g. **62031**). The target **MASTER** is **inject-only** — it does **not** bind its own UDP port for that system (no per-hotspot port range on the server host).
 
+```mermaid
+flowchart LR
+  HS1[Hotspot A] -->|UDP HBP| LP[PROXY LISTEN_PORT]
+  HS2[Hotspot B] -->|UDP HBP| LP
+  LP -->|inject| MASTER[TARGET_SYSTEM MASTER]
+```
+
 ---
 
 ## Optional dependency (self-service)

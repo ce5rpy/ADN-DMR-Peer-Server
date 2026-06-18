@@ -41,6 +41,23 @@ Session lifetime is extended on activity (**SelfServiceController** uses a long 
 
 ## End-to-end flow (why options reach the hotspot)
 
+```mermaid
+sequenceDiagram
+  participant UI as React /self-service
+  participant API as monitor FastAPI
+  participant DB as MySQL Clients
+  participant SRV as adn-server PROXY
+  participant HS as Hotspot
+
+  UI->>API: POST /api/self-service/device/options
+  API->>DB: UPDATE options, modified = 1
+  Note over SRV: send_opts loop ~every 10 s
+  SRV->>DB: read rows with modified = 1
+  SRV->>SRV: RPTO on MASTER leg
+  SRV->>HS: OPTIONS via HBP path
+  SRV->>DB: clear modified
+```
+
 1. User saves options in the web UI → **monitor API** writes **`Clients.options`** and **`modified = 1`**.
 2. The **hotspot proxy** runs **`send_opts`** on a loop (~every **10 s**). For rows with **`modified = 1`**, it reads options from the DB, sends **RPTO** (options) **to the peer server** at **`(MASTER, assigned_dest_port)`**, then clears **`modified`** in the DB.
 3. The **ADN DMR Peer Server** receives **RPTO** on the MASTER leg and updates its **OPTIONS** / bridge state (same path as a normal hotspot registration refresh).

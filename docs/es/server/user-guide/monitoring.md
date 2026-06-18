@@ -18,6 +18,14 @@ El **monitor** decodifica estos mensajes, actualiza **CTABLE** / **BTABLE** y (c
 
 **Pila completa:** [Descripción general del ADN Monitor](../../monitor/index.md) (monitor FastAPI, WebSocket, self-service).
 
+```mermaid
+flowchart LR
+  SRV[adn-server\nREPORTS.REPORT_PORT] -->|TCP netstring| ING[ingest adn-monitor]
+  ING --> STATE[CTABLE / BTABLE]
+  STATE --> WS[WebSocket /ws]
+  WS --> UI[panel React]
+```
+
 ### Líneas de log del canal de informes (logger `adn-monitor`)
 
 Python usa el nombre de logger **`adn-monitor`** (ver **`LOGGER.LOG_FILE`** en `adn-monitor.yaml`). **INFO** típicos del cliente TCP de informes:
