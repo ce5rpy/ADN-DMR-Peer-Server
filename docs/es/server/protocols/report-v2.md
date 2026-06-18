@@ -28,6 +28,22 @@ Sustituir instantáneas al monitor que hoy usan **pickle** (`CONFIG_SND`, `BRIDG
 
 Los opcodes `0x10`–`0x13` están reservados en esta fase; pueden ajustarse antes de P1-002.
 
+```mermaid
+flowchart TB
+  subgraph v1 [Informe v1 — adn-server 1.0.x + monitor 1.0.x]
+    H1[HELLO protocol 1] --> C1[CONFIG_SND pickle]
+    C1 --> B1[BRIDGE_SND pickle]
+    B1 --> V1[BRDG_EVENT CSV]
+  end
+
+  subgraph v2 [Informe v2 — adn-server 2.x + monitor 2.x]
+    H2[HELLO report_protocol 2] --> T2[TOPOLOGY_SND JSON]
+    T2 --> R2[ROUTING_TABLE_SND JSON]
+    R2 --> V2[VOICE_EVENT_SND JSON]
+    R2 -.-> D2[DELTA_SND opcional]
+  end
+```
+
 ## Handshake (`hello`)
 
 Al conectar, el servidor envía **`HELLO` (`0xFF`)** primero. Clientes v2 miran `report_protocol`:

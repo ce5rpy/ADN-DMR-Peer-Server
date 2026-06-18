@@ -37,4 +37,5 @@ Routing, timers, OpenBridge loop control, and protocol handling are implemented 
 - [Special numbers](special-numbers.md) — TG 4000, information services, echo.
 - [Hotspot proxy](hotspot-proxy.md) — integrated **`PROXY`** / **`SELF_SERVICE`** in `adn-server.yaml`.
 - [ADN Monitor](../../monitor/index.md) — dashboard, `adn-monitor.yaml`, self-service UI (separate repo, deployed with the server).
+- [Performance (2.x)](../development/performance.md) — CPU/RAM improvements in this release and what causes them.
 - [Credits & license](attribution.md) — ADN → FreeDMR → hblink3, license.

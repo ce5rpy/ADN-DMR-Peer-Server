@@ -10,6 +10,14 @@ Bajo `monitor/src/adn_monitor/`:
 
 El **composition root** está en `infrastructure/fastapi/composition.py` (`build_monitor_api`).
 
+```mermaid
+flowchart TD
+  INF["Infraestructura<br/>YAML · FastAPI /ws · ingest TCP/MQTT<br/>MySQL · decodificadores pickle/JSON"]
+  APP["Aplicación<br/>MonitorState · informes/dashboard<br/>auth · self-service · alias"]
+  DOM["Dominio<br/>objetos de valor · errores · opcodes<br/>UserSession · Result"]
+  INF --> APP --> DOM
+```
+
 ## Proceso unificado (`monitor.py`)
 
 Un solo proceso uvicorn/FastAPI:
@@ -39,15 +47,19 @@ El proceso **`adn-proxy`** independiente se eliminó del repositorio **adn-monit
 
 ## Topología típica
 
-```text
-[Hotspots] --UDP--> [adn-server PROXY] --UDP--> [peer MASTER]
-                           |
-                           v
-                    MySQL (Clients)
+```mermaid
+flowchart TD
+  HS[Hotspots] -->|UDP HBP| PROXY[adn-server PROXY]
+  PROXY --> MASTER[MASTER inyectado]
+  PROXY --> DB[(MySQL Clients)]
 
-[Peer :REPORT_PORT] <--- TCP o MQTT --- [monitor.py ingest]
+  MASTER --> REPORT[REPORTS listener]
+  REPORT <-->|TCP o MQTT| ING[monitor.py ingest]
+  ING --> APP[FastAPI /api /ws]
+  APP --> DB
 
-[Navegador] --HTTPS--> [Nginx: frontend/dist + proxy /api,/ws --> :8080]
+  BR[Navegador] -->|HTTPS| FE[Nginx o SERVE_STATIC]
+  FE --> APP
 ```
 
 ---

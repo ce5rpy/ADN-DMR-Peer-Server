@@ -12,6 +12,8 @@ La tabla de bridges asocia **claves de talkgroup** (cadenas, p. ej. `"26811"`, `
 
 El router recorre `BRIDGES` buscando una fila **ACTIVE** que coincida con el **sistema de origen actual**, **slot** y **TG de destino** antes de reenviar (`dmrd_received` → `to_target`).
 
+En **adn-server 2.x** las mismas reglas están en **`SubscriptionStore`** / **`SubscriptionRouter`**; `BRIDGES` es solo forma de export para el monitor. Ver [BRIDGES vs Subscriptions](../development/bridges-vs-subscriptions.md).
+
 ## Dinámico frente a estático
 
 - Los bridges **activados por usuario** se crean cuando alguien pulsa una TG sin fila previa (sujeto a `DEFAULT_UA_TIMER` y opciones).

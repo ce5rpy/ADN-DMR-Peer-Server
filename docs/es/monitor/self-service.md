@@ -41,6 +41,23 @@ La sesión se prolonga con actividad (**SelfServiceController** usa un timeout l
 
 ## Flujo extremo a extremo (cómo llegan las opciones al hotspot)
 
+```mermaid
+sequenceDiagram
+  participant UI as React /self-service
+  participant API as monitor FastAPI
+  participant DB as MySQL Clients
+  participant SRV as adn-server PROXY
+  participant HS as Hotspot
+
+  UI->>API: POST /api/self-service/device/options
+  API->>DB: UPDATE options, modified = 1
+  Note over SRV: bucle send_opts ~cada 10 s
+  SRV->>DB: lee filas con modified = 1
+  SRV->>SRV: RPTO en pata MASTER
+  SRV->>HS: OPTIONS vía HBP
+  SRV->>DB: limpia modified
+```
+
 1. El usuario guarda opciones en la web → la **API del monitor** escribe **`Clients.options`** y **`modified = 1`**.
 2. El **proxy hotspot** ejecuta **`send_opts`** en bucle (~cada **10 s**). Para filas con **`modified = 1`**, lee opciones de la BD, envía **RPTO** **al peer server** en **`(MASTER, puerto_destino_asignado)`**, luego limpia **`modified`** en la BD.
 3. El **ADN DMR Peer Server** recibe **RPTO** en la pata MASTER y actualiza su estado **OPTIONS** / bridge (mismo camino que un refresco normal de registro del hotspot).

@@ -28,6 +28,22 @@ Replace monitor snapshots that today use **pickle** (`CONFIG_SND`, `BRIDGE_SND`)
 
 Proposed opcodes `0x10`–`0x13` are reserved in the schema phase; exact values may change before P1-002 ships.
 
+```mermaid
+flowchart TB
+  subgraph v1 [Report v1 — adn-server 1.0.x + monitor 1.0.x]
+    H1[HELLO protocol 1] --> C1[CONFIG_SND pickle]
+    C1 --> B1[BRIDGE_SND pickle]
+    B1 --> V1[BRDG_EVENT CSV]
+  end
+
+  subgraph v2 [Report v2 — adn-server 2.x + monitor 2.x]
+    H2[HELLO report_protocol 2] --> T2[TOPOLOGY_SND JSON]
+    T2 --> R2[ROUTING_TABLE_SND JSON]
+    R2 --> V2[VOICE_EVENT_SND JSON]
+    R2 -.-> D2[DELTA_SND optional]
+  end
+```
+
 ## Handshake (`hello`)
 
 On connect the server sends **`HELLO` (`0xFF`)** first (same as today). v2 clients inspect `report_protocol`:

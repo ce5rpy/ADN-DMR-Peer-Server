@@ -8,6 +8,14 @@
 
 **Regla de dependencias:** infraestructura → aplicación → dominio (solo hacia dentro).
 
+```mermaid
+flowchart TD
+  INF["Infraestructura<br/>Twisted UDP/TCP · YAML · voz<br/>report_server · persistencia · seguridad"]
+  APP["Aplicación<br/>RoutingUseCases · VoiceUseCases<br/>ports · SubscriptionStore · router"]
+  DOM["Dominio<br/>entidades · value objects · errors · Result"]
+  INF --> APP --> DOM
+```
+
 ## Punto de entrada
 
 `main.py` cablea configuración, temporizadores **LoopingCall**, fábricas para **HBPProtocol**, servidor de informes e inyecta casos de uso.
@@ -15,6 +23,10 @@
 ## Autoridad de enrutado en runtime
 
 El enrutado de voz lo gobierna **`SubscriptionStore`** (suscripciones de dominio). `RoutingUseCases` orquesta `dmrd_received` y delega la resolución de reenvío a **`SubscriptionRouter`**.
+
+Comparación conceptual con **`BRIDGES`** legacy: [BRIDGES vs Subscriptions](bridges-vs-subscriptions.md).
+
+Cambios de rendimiento en 2.x (índices, informes, proxy integrado): [Rendimiento (2.x)](performance.md).
 
 - **`InMemoryAclRouter`** (port `AclRouter`) — solo comprobaciones ACL (`acl_check`).
 - **`routing_table_for_report()`** — shim de exportación para monitor/informes (forma legacy BRIDGE_SND); no se usa para reenvíos en runtime.

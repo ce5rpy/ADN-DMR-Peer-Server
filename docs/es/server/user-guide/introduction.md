@@ -37,4 +37,5 @@ Enrutado, temporizadores, control de bucle OpenBridge y manejo de protocolo est�
 - [Números especiales](special-numbers.md) — TG 4000, servicios de información, eco.
 - [Proxy hotspot](hotspot-proxy.md) — **`PROXY`** / **`SELF_SERVICE`** integrados en `adn-server.yaml`.
 - [ADN Monitor](../../monitor/index.md) — panel, `adn-monitor.yaml`, UI self-service (repo aparte, desplegado con el servidor).
+- [Rendimiento (2.x)](../development/performance.md) — mejoras de CPU/RAM en esta versión y qué las provoca.
 - [Créditos y licencia](attribution.md) — ADN → FreeDMR → hblink3, licencia.
