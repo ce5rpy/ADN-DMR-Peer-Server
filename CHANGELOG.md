@@ -2,6 +2,8 @@
 
 All notable changes to **adn-server** are documented here.
 
+<!-- version list -->
+
 ## [2.0.0-rc.4] - 2026-06-18
 
 ### Added

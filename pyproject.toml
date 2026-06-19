@@ -1,5 +1,6 @@
 # ADN DMR Peer Server
 # GPL v3. Derived from ADN DMR Server / HBlink.
+# Version: bumped automatically by python-semantic-release (.github/workflows/release.yml).
 
 [build-system]
 requires = ["setuptools>=61", "wheel"]
@@ -7,7 +8,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "adn-server"
-version = "2.0.0-rc.4"
+version = "2.0.0"
 description = "ADN DMR Peer Server"
 readme = "README.md"
 license = { text = "GPL-3.0-or-later" }
@@ -26,6 +27,9 @@ selfservice = ["mysqlclient>=2.0"]
 dev = ["pytest>=7.0", "jsonschema>=4.0", "paho-mqtt>=2.0"]
 docs = ["mkdocs>=1.6", "mkdocs-material>=9.5", "pymdown-extensions>=10.3", "mkdocs-mermaid2-plugin>=1.1"]
 
+[project.scripts]
+adn-server = "adn_server.main:main"
+
 [tool.setuptools.packages.find]
 where = ["src"]
 
@@ -43,5 +47,34 @@ markers = [
 # Entrypoints adjust sys.path before importing the package (intentional E402).
 "src/adn_server/main.py" = ["E402"]
 
-[project.scripts]
-adn-server = "adn_server.main:main"
+[tool.semantic_release]
+build_command = ""
+tag_format = "v{version}"
+commit_message = "chore(release): {version}"
+version_toml = ["pyproject.toml:project.version"]
+version_variables = ["README.md:**Version"]
+
+[tool.semantic_release.branches.develop]
+match = "develop"
+prerelease = false
+
+[tool.semantic_release.branches.master]
+match = "master"
+prerelease = false
+
+[tool.semantic_release.commit_parser_options]
+allowed_tags = ["build", "chore", "ci", "docs", "feat", "fix", "perf", "style", "refactor", "test"]
+minor_tags = ["feat"]
+patch_tags = ["fix", "perf"]
+
+[tool.semantic_release.changelog.default_templates]
+mode = "update"
+changelog_file = "CHANGELOG.md"
+
+[tool.semantic_release.remote]
+name = "origin"
+type = "github"
+ignore_token_for_push = false
+
+[tool.semantic_release.remote.token]
+env = "GH_TOKEN"
