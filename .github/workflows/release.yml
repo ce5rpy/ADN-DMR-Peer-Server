@@ -1,0 +1,76 @@
+# Release workflow
+#
+#   develop: python-semantic-release on push → semver tag + GitHub Release → sync master
+
+name: release
+
+on:
+  push:
+    branches:
+      - develop
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.repository }}-${{ github.ref_name }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: develop
+          fetch-depth: 0
+
+      - name: Reset to workflow SHA
+        run: git reset --hard ${{ github.sha }}
+
+      - name: Semantic Release
+        id: semantic
+        uses: python-semantic-release/python-semantic-release@v10.5.3
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          git_committer_name: github-actions[bot]
+          git_committer_email: 41898282+github-actions[bot]@users.noreply.github.com
+          vcs_release: "false"
+
+      - name: Create GitHub Release
+        if: steps.semantic.outputs.released == 'true' && steps.semantic.outputs.tag != ''
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ steps.semantic.outputs.tag }}
+          VERSION: ${{ steps.semantic.outputs.version }}
+          RELEASE_NOTES: ${{ steps.semantic.outputs.release_notes }}
+        run: |
+          set -euo pipefail
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo "Release already exists for $TAG"
+            gh release view "$TAG" --json url -q .url
+            exit 0
+          fi
+          NOTES_FILE="$(mktemp)"
+          if [[ -n "$RELEASE_NOTES" ]]; then
+            printf '%s\n' "$RELEASE_NOTES" > "$NOTES_FILE"
+          else
+            printf 'Release %s\n' "$VERSION" > "$NOTES_FILE"
+          fi
+          gh release create "$TAG" --title "$VERSION" --notes-file "$NOTES_FILE"
+          rm -f "$NOTES_FILE"
+
+      - name: Verify GitHub Release
+        if: steps.semantic.outputs.released == 'true' && steps.semantic.outputs.tag != ''
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ steps.semantic.outputs.tag }}
+        run: gh release view "$TAG"
+
+      - name: Sync master from develop
+        if: steps.semantic.outputs.released == 'true'
+        run: |
+          git fetch origin develop
+          git push origin origin/develop:refs/heads/master
