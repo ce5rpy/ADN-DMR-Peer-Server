@@ -4,6 +4,14 @@ All notable changes to **adn-server** are documented here.
 
 <!-- version list -->
 
+## v1.1.0 (2026-06-19)
+
+### Chores
+
+- Add release workflow and semver versioning
+  ([`013b766`](https://github.com/ce5rpy/ADN-DMR-Peer-Server/commit/013b766a30dca0128daf35c116385cf234410b99))
+
+
 ## [2.0.0-rc.4] - 2026-06-18
 
 ### Added
