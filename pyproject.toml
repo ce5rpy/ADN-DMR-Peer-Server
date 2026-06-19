@@ -54,10 +54,6 @@ commit_message = "chore(release): {version}"
 version_toml = ["pyproject.toml:project.version"]
 version_variables = ["README.md:**Version"]
 
-[tool.semantic_release.branches.develop]
-match = "develop"
-prerelease = false
-
 [tool.semantic_release.branches.master]
 match = "master"
 prerelease = false
