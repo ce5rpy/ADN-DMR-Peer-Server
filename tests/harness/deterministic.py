@@ -447,6 +447,7 @@ class DeterministicScenario:
         target_system: str,
         packets: list[bytes],
         exclude_peer: bytes | None = None,
+        **kwargs: Any,
     ) -> int:
         self.dmra_capture.append(
             CapturedDmra(target_system, list(packets), exclude_peer=exclude_peer)

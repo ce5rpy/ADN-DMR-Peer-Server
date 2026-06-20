@@ -51,23 +51,37 @@ def test_on_dmra_fragment_stored_relays_passthrough_once() -> None:
     config["SYSTEMS"]["MASTER-A"]["REPEAT"] = True
     blocks = mmdvm_wire_blocks("CE5RPY")
     sent: list[str] = []
+    stream_id = bytes_4(0xB1B2B3B4)
 
-    def _send_dmra(target_system: str, packets: list[bytes], exclude_peer: bytes | None = None) -> int:
+    def _send_dmra(
+        target_system: str,
+        packets: list[bytes],
+        exclude_peer: bytes | None = None,
+        **kwargs: object,
+    ) -> int:
         sent.append(target_system)
         return 1
+
+    class _Proto:
+        STATUS = {
+            2: {
+                "TX_STREAM_ID": stream_id,
+                "TX_TGID": bytes_3(52090),
+            }
+        }
 
     bridge = RoutingUseCases(
         InMemoryAclRouter(),
         config,
         InMemorySubscriptionStore(),
         send_dmra_to_system=_send_dmra,
+        get_protocols=lambda: {"MASTER-A": _Proto()},
         get_dmra_blocks=lambda _sys, _sid: blocks,
         encode_emblc=encode_emblc,
         ta_emblc_encoder=default_ta_emblc_encoder,
     )
     peer = bytes_4(1001)
     rf_src = bytes_3(3120001)
-    stream_id = bytes_4(0xB1B2B3B4)
 
     bridge.on_dmra_fragment_stored("MASTER-A", peer, rf_src, stream_id)
     first_count = len(sent)
