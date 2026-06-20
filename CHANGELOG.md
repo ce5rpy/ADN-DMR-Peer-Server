@@ -4,6 +4,21 @@ All notable changes to **adn-server** are documented here.
 
 <!-- version list -->
 
+## v2.0.1 (2026-06-20)
+
+### Bug Fixes
+
+- Filter standalone DMRA downlink by TG subscription
+  ([#10](https://github.com/ce5rpy/ADN-DMR-Peer-Server/pull/10),
+  [`0dcdf54`](https://github.com/ce5rpy/ADN-DMR-Peer-Server/commit/0dcdf54a07328f7203b02809cd7e26255987258e))
+
+### Chores
+
+- Run releases on master only, not develop
+  ([#10](https://github.com/ce5rpy/ADN-DMR-Peer-Server/pull/10),
+  [`0dcdf54`](https://github.com/ce5rpy/ADN-DMR-Peer-Server/commit/0dcdf54a07328f7203b02809cd7e26255987258e))
+
+
 ## v2.0.0 (2026-06-19)
 
 ### Chores
