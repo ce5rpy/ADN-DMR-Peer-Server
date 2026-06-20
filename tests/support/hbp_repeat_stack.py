@@ -126,10 +126,19 @@ def build_hbp_repeat_stack(
     protocols: dict[str, Any] = {system_name: hbp}
     dmra_capture: list[tuple[list[bytes], bytes | None]] = []
 
-    def _send_dmra(target_system: str, packets: list[bytes], exclude_peer: bytes | None = None) -> int:
+    def _send_dmra(
+        target_system: str,
+        packets: list[bytes],
+        exclude_peer: bytes | None = None,
+        *,
+        slot: int | None = None,
+        tgid: int | None = None,
+    ) -> int:
         proto = protocols[target_system]
         dmra_capture.append((list(packets), exclude_peer))
-        return proto.send_dmra_to_peers(packets, exclude_peer=exclude_peer)
+        return proto.send_dmra_to_peers(
+            packets, exclude_peer=exclude_peer, slot=slot, tgid=tgid,
+        )
 
     def _get_dmra_blocks(_system: str, stream_id: bytes) -> dict[int, bytes] | None:
         return hbp.get_dmra_blocks(stream_id)

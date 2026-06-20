@@ -650,23 +650,70 @@ class HBPProtocol(DatagramProtocol):
                 self._ta_voice_acc.pop(stream_id, None)
                 self._ta_decoded_logged.discard(stream_id)
 
-    def send_dmra_to_peers(self, packets: list[bytes], exclude_peer: bytes | None = None) -> int:
-        """Send DMRA packets to logged-in peers (MASTER downlink). Returns peer count."""
+    def send_dmra_to_peers(
+        self,
+        packets: list[bytes],
+        exclude_peer: bytes | None = None,
+        *,
+        slot: int | None = None,
+        tgid: int | None = None,
+    ) -> int:
+        """Send DMRA packets to logged-in peers (MASTER downlink). Returns peer count.
+
+        When ``slot`` and ``tgid`` are set, only peers that would receive group voice
+        on that route get standalone DMRA (same rules as ``_peer_should_receive_dmrd``).
+        """
         if self._config.get("MODE") != "MASTER":
             return 0
+        if slot is None or tgid is None:
+            logger.warning(
+                "(%s) *TALKER ALIAS* DMRA not sent: missing slot/tgid (stream filter)",
+                self._system,
+            )
+            return 0
         sent = 0
+        connected = self._cached_connected_peer_count()
+        store = self._get_subscription_store() if self._get_subscription_store else None
         for peer in self._peers:
             if exclude_peer and peer == exclude_peer:
+                continue
+            if not peer_should_receive_group_voice(
+                self._peers[peer],
+                slot,
+                tgid,
+                peer_id=peer,
+                system=self._system,
+                bridges=None,
+                subscription_store=store,
+                connected_count=connected,
+                sys_cfg=self._config,
+            ):
+                logger.debug(
+                    "(%s) *TALKER ALIAS* DMRA skip peer %s (not subscribed to TG %s slot %s)",
+                    self._system,
+                    int_id(peer),
+                    tgid,
+                    slot,
+                )
                 continue
             for pkt in packets:
                 self.send_peer(peer, pkt)
             sent += 1
         return sent
 
-    def send_dmra_system(self, packets: list[bytes], exclude_peer: bytes | None = None) -> int:
+    def send_dmra_system(
+        self,
+        packets: list[bytes],
+        exclude_peer: bytes | None = None,
+        *,
+        slot: int | None = None,
+        tgid: int | None = None,
+    ) -> int:
         """Send DMRA on this system link (MASTER → peers, PEER → upstream master)."""
         if self._config.get("MODE") == "MASTER":
-            return self.send_dmra_to_peers(packets, exclude_peer=exclude_peer)
+            return self.send_dmra_to_peers(
+                packets, exclude_peer=exclude_peer, slot=slot, tgid=tgid,
+            )
         if self._config.get("MODE") == "PEER":
             for pkt in packets:
                 self.send_master(pkt)

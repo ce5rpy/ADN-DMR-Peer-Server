@@ -1,13 +1,13 @@
 # Release workflow
 #
-#   develop: python-semantic-release on push → semver tag + GitHub Release → sync master
+#   master: python-semantic-release on push → semver tag + GitHub Release → sync develop
 
 name: release
 
 on:
   push:
     branches:
-      - develop
+      - master
   workflow_dispatch:
 
 permissions:
@@ -24,7 +24,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
         with:
-          ref: develop
+          ref: ${{ github.ref_name }}
           fetch-depth: 0
 
       - name: Reset to workflow SHA
@@ -69,8 +69,8 @@ jobs:
           TAG: ${{ steps.semantic.outputs.tag }}
         run: gh release view "$TAG"
 
-      - name: Sync master from develop
+      - name: Sync develop from master
         if: steps.semantic.outputs.released == 'true'
         run: |
-          git fetch origin develop
-          git push origin origin/develop:refs/heads/master
+          git fetch origin master
+          git push origin origin/master:refs/heads/develop

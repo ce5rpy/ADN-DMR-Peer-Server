@@ -259,6 +259,30 @@ class LcTaMixin:
             source_system, target_system, rf_src, stream_id, source_peer,
         )
 
+    def _resolve_dmra_downlink_route(
+        self,
+        target_system: str,
+        stream_id: bytes,
+    ) -> tuple[int, int] | None:
+        """Slot and TGID for standalone DMRA downlink on ``target_system``."""
+        if not self._get_protocols:
+            return None
+        proto = self._get_protocols().get(target_system)
+        status = getattr(proto, "STATUS", None) if proto else None
+        if not isinstance(status, dict):
+            return None
+        for slot in (1, 2):
+            st = status.get(slot)
+            if not isinstance(st, dict):
+                continue
+            if st.get("TX_STREAM_ID") == stream_id and st.get("TX_TGID"):
+                return slot, int_id(st["TX_TGID"])
+            if st.get("REP_STREAM_ID") == stream_id:
+                tg = st.get("REP_TGID") or st.get("RX_TGID") or st.get("TX_TGID")
+                if tg:
+                    return slot, int_id(tg)
+        return None
+
     def _send_talker_alias_to_target(
         self,
         source_system: str,
@@ -300,8 +324,23 @@ class LcTaMixin:
         if not packets:
             return
         exclude = source_peer if target_system == source_system else None
+        route = self._resolve_dmra_downlink_route(target_system, stream_id)
+        if route is None:
+            logger.warning(
+                "(%s) *TALKER ALIAS* stream %s DMRA not sent: no slot/TG route on target",
+                target_system,
+                int_id(stream_id),
+            )
+            return
+        slot, tgid = route
         try:
-            peer_count = self._send_dmra_to_system(target_system, packets, exclude_peer=exclude)
+            peer_count = self._send_dmra_to_system(
+                target_system,
+                packets,
+                exclude_peer=exclude,
+                slot=slot,
+                tgid=tgid,
+            )
         except Exception as e:
             logger.warning("(ROUTER) send_dmra_to_system %s failed: %s", target_system, e)
             return
@@ -313,8 +352,8 @@ class LcTaMixin:
         sid = int_id(stream_id)
         if peer_count:
             logger.debug(
-                "(%s) *TALKER ALIAS* stream %s sent %d DMRA block(s) to %d peer(s)",
-                target_system, sid, len(packets), peer_count,
+                "(%s) *TALKER ALIAS* stream %s sent %d DMRA block(s) to %d peer(s) TG %s slot %s",
+                target_system, sid, len(packets), peer_count, tgid, slot,
             )
         elif exclude:
             logger.debug(
@@ -360,6 +399,7 @@ class LcTaMixin:
                 if st.get("REP_STREAM_ID") != stream_id:
                     dst_lc = LC_OPT + dst_id + rf_src
                     st["REP_STREAM_ID"] = stream_id
+                    st["REP_TGID"] = dst_id
                     st["REP_EMB_LC"] = self._encode_emblc(dst_lc)
                     self._init_talker_alias_embed(
                         st, system_name, system_name, rf_src, stream_id,
