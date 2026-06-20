@@ -282,10 +282,21 @@ def run_peer_server(
         system_name: str,
         packets: list[bytes],
         exclude_peer: bytes | None = None,
+        *,
+        slot: int | None = None,
+        tgid: int | None = None,
     ) -> int:
         p = protocols.get(system_name)
         if p is not None and hasattr(p, "send_dmra_system"):
-            return int(p.send_dmra_system(packets, exclude_peer=exclude_peer) or 0)
+            return int(
+                p.send_dmra_system(
+                    packets,
+                    exclude_peer=exclude_peer,
+                    slot=slot,
+                    tgid=tgid,
+                )
+                or 0
+            )
         return 0
 
     def get_dmra_blocks(system_name: str, stream_id: bytes) -> dict[int, bytes] | None:
