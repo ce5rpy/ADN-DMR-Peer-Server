@@ -72,5 +72,8 @@ jobs:
       - name: Sync develop from master
         if: steps.semantic.outputs.released == 'true'
         run: |
-          git fetch origin master
-          git push origin origin/master:refs/heads/develop
+          set -euo pipefail
+          git fetch origin master develop
+          # Squash merges to master diverge from develop; reset develop to released master.
+          git push origin origin/master:refs/heads/develop \
+            --force-with-lease=refs/heads/develop:refs/remotes/origin/develop
