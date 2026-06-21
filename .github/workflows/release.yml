@@ -71,9 +71,19 @@ jobs:
 
       - name: Sync develop from master
         if: steps.semantic.outputs.released == 'true'
+        env:
+          VERSION: ${{ steps.semantic.outputs.version }}
         run: |
           set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git fetch origin master develop
-          # Squash merges to master diverge from develop; reset develop to released master.
-          git push origin origin/master:refs/heads/develop \
-            --force-with-lease=refs/heads/develop:refs/remotes/origin/develop
+          git checkout -B develop origin/develop
+          # Merge (no force-push): keeps old develop as ancestor so local checkouts can pull/ff.
+          if git merge origin/master --ff-only; then
+            echo "Fast-forward develop to master"
+          else
+            git merge origin/master --no-edit \
+              -m "chore: sync develop from master after release ${VERSION}"
+          fi
+          git push origin develop
