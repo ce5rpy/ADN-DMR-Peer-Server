@@ -30,14 +30,17 @@ from adn_server.application.routing.helpers import (
     tg4000_reset_on_vhead,
     clear_peer_rx_status_slots,
     peer_options_static_tg_slot,
+    peer_downlink_voice_slot,
     peer_receives_group_tgid,
     peer_should_receive_group_voice,
+    remap_dmrd_to_peer_static_slot,
     peer_single_blocks_group_voice,
     peer_single_blocks_uplink,
     peer_single_exclusive_tgid,
     register_peer_ua_multi_tg,
     register_peer_ua_session,
     repeat_downlink_report_slot,
+    peer_downlink_voice_slot,
     seed_peer_ua_session_from_status,
 )
 
@@ -79,12 +82,46 @@ def test_dynamic_tg_on_opposite_slot_receives_group_voice() -> None:
 
 def test_repeat_downlink_report_slot_cross_slot_static() -> None:
     peers = {
-        _peer_id(): {"OPTIONS": b"TS2=730444;"},
+        _peer_id(): {"OPTIONS": b"TS1=7144;"},
     }
     slot = repeat_downlink_report_slot(
-        1, 730444, peers, (_peer_id(),), _sys_cfg(),
+        2, 7144, peers, (_peer_id(),), _sys_cfg(),
     )
-    assert slot == 2
+    assert slot == 1
+
+
+def test_peer_downlink_voice_slot_cross_slot_static() -> None:
+    peer = {"OPTIONS": b"TS1=7144;TS2=714,71442;"}
+    assert peer_downlink_voice_slot(peer, 2, 7144) == 1
+    peer2 = {"OPTIONS": b"TS2=7144;"}
+    assert peer_downlink_voice_slot(peer2, 1, 7144) == 2
+
+
+def test_remap_dmrd_flips_slot_to_options_static_ts() -> None:
+    from tests.harness.deterministic import DeterministicScenario, PacketSpec
+
+    peer = {"OPTIONS": b"TS1=7144;TS2=714,71442;"}
+    burst = DeterministicScenario.voice_burst_spec(
+        PacketSpec(dst_id=7144, slot=2, peer_id=730044402, rf_src=7300444),
+        seq=1,
+        dtype_vseq=1,
+    ).data()
+    assert burst[15] & 0x80
+    remapped = remap_dmrd_to_peer_static_slot(burst, peer)
+    assert not (remapped[15] & 0x80)
+
+
+def test_remap_dmrd_keeps_slot_when_options_match_voice_ts() -> None:
+    from tests.harness.deterministic import DeterministicScenario, PacketSpec
+
+    peer = {"OPTIONS": b"TS2=7144;"}
+    burst = DeterministicScenario.voice_burst_spec(
+        PacketSpec(dst_id=7144, slot=2, peer_id=730044402, rf_src=7300444),
+        seq=1,
+        dtype_vseq=1,
+    ).data()
+    remapped = remap_dmrd_to_peer_static_slot(burst, peer)
+    assert remapped[15] == burst[15]
 
 
 def test_repeat_downlink_report_slot_dynamic_on_ts2() -> None:
