@@ -4,6 +4,25 @@ All notable changes to **adn-server** are documented here.
 
 <!-- version list -->
 
+## v2.0.2 (2026-06-21)
+
+### Bug Fixes
+
+- Keep YAML SINGLE_MODE on multi-peer masters for dynamic TGs
+  ([#12](https://github.com/ce5rpy/ADN-DMR-Peer-Server/pull/12),
+  [`47c7e33`](https://github.com/ce5rpy/ADN-DMR-Peer-Server/commit/47c7e33c7adc98abc6134547f0539f6cd9f54b59))
+
+- SINGLE=0 multi-dynamic TGs and YAML SINGLE_MODE defaults
+  ([#12](https://github.com/ce5rpy/ADN-DMR-Peer-Server/pull/12),
+  [`47c7e33`](https://github.com/ce5rpy/ADN-DMR-Peer-Server/commit/47c7e33c7adc98abc6134547f0539f6cd9f54b59))
+
+### Chores
+
+- Run releases on master only, not develop
+  ([#12](https://github.com/ce5rpy/ADN-DMR-Peer-Server/pull/12),
+  [`47c7e33`](https://github.com/ce5rpy/ADN-DMR-Peer-Server/commit/47c7e33c7adc98abc6134547f0539f6cd9f54b59))
+
+
 ## v2.0.1 (2026-06-20)
 
 ### Bug Fixes
