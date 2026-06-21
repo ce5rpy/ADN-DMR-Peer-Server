@@ -31,6 +31,29 @@ import logging
 import socket
 import time
 
+from adn_server.domain.config_coerce import coerce_bool
+
+
+def normalize_config_scalars(config: dict) -> None:
+    """Apply YAML defaults and coerce bool-like strings before validation/runtime."""
+    for sys_cfg in config.get("SYSTEMS", {}).values():
+        if not isinstance(sys_cfg, dict):
+            continue
+        if sys_cfg.get("MODE") != "MASTER":
+            continue
+        if "SINGLE_MODE" in sys_cfg:
+            sys_cfg["SINGLE_MODE"] = coerce_bool(sys_cfg["SINGLE_MODE"])
+        else:
+            sys_cfg.setdefault("SINGLE_MODE", False)
+        timer = sys_cfg.get("DEFAULT_UA_TIMER")
+        if timer is None or timer == "":
+            sys_cfg["DEFAULT_UA_TIMER"] = 60
+        else:
+            try:
+                sys_cfg["DEFAULT_UA_TIMER"] = int(timer)
+            except (TypeError, ValueError):
+                pass
+
 
 def expand_generator(config: dict, logger: logging.Logger) -> None:
     """Replace MASTER systems with GENERATOR > 1 by SYSTEM-0, SYSTEM-1, ... (legacy generator)."""
@@ -71,6 +94,7 @@ def expand_generator(config: dict, logger: logging.Logger) -> None:
 
 def ensure_system_runtime_config(config: dict) -> None:
     """Ensure MASTER has PEERS and PEER has STATS (legacy config.py runtime state)."""
+    normalize_config_scalars(config)
     for name, sys_cfg in config.get("SYSTEMS", {}).items():
         if sys_cfg.get("MODE") == "MASTER":
             sys_cfg.setdefault("PEERS", {})

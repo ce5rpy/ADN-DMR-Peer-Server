@@ -57,7 +57,9 @@ def apply_rule_timer_store(
         for sub in entries:
             system_name = sub.system.value
             sys_config = systems_cfg.get(system_name, {})
-            is_single_mode = sys_config.get("SINGLE_MODE", False)
+            from adn_server.domain.config_coerce import coerce_bool
+
+            is_single_mode = coerce_bool(sys_config.get("SINGLE_MODE", False))
             to_type = _legacy_to_type(sub)
             active = sub.is_active()
             timer = float(sub.state.timer_expires_at or 0.0)

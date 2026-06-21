@@ -111,6 +111,9 @@ class YamlConfigLoader:
             "SELF_SERVICE": data.get("SELF_SERVICE", {}),
         }
         apply_proxy_env_overrides(config)
+        from .config_normalizer import normalize_config_scalars
+
+        normalize_config_scalars(config)
         # Ensure REPORT_CLIENTS is list
         if "REPORT_CLIENTS" in config["REPORTS"] and isinstance(config["REPORTS"]["REPORT_CLIENTS"], str):
             config["REPORTS"]["REPORT_CLIENTS"] = [
