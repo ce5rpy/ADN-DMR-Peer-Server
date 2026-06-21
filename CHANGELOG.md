@@ -4,6 +4,29 @@ All notable changes to **adn-server** are documented here.
 
 <!-- version list -->
 
+## v2.0.5 (2026-06-21)
+
+### Bug Fixes
+
+- Cross-slot DMRD remap and monitor TE slot
+  ([#18](https://github.com/ce5rpy/ADN-DMR-Peer-Server/pull/18),
+  [`5945d66`](https://github.com/ce5rpy/ADN-DMR-Peer-Server/commit/5945d6641b4056a77b678093f5fead8491263eb4))
+
+- Remap REPEAT DMRD slot to peer OPTIONS for cross-slot downlink
+  ([#18](https://github.com/ce5rpy/ADN-DMR-Peer-Server/pull/18),
+  [`5945d66`](https://github.com/ce5rpy/ADN-DMR-Peer-Server/commit/5945d6641b4056a77b678093f5fead8491263eb4))
+
+- Restore cross-slot downlink and REPEAT monitor activity
+  ([#18](https://github.com/ce5rpy/ADN-DMR-Peer-Server/pull/18),
+  [`5945d66`](https://github.com/ce5rpy/ADN-DMR-Peer-Server/commit/5945d6641b4056a77b678093f5fead8491263eb4))
+
+### Chores
+
+- **ci**: Sync develop via merge instead of force-push
+  ([#18](https://github.com/ce5rpy/ADN-DMR-Peer-Server/pull/18),
+  [`5945d66`](https://github.com/ce5rpy/ADN-DMR-Peer-Server/commit/5945d6641b4056a77b678093f5fead8491263eb4))
+
+
 ## v2.0.4 (2026-06-21)
 
 ### Bug Fixes
