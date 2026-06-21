@@ -228,6 +228,27 @@ def test_local_hotspot_rx_fans_out_tx_only_to_peers_with_matching_tg() -> None:
     assert "SYSTEM-4" not in by_system
 
 
+def test_local_hotspot_rx_companion_tx_uses_receiver_options_slot() -> None:
+    """HS2 TX slot 2 / TG 7144 → HS1 with TS1=7144 gets BRDG field 7 = 1 (monitor TE)."""
+    hs1 = bytes_4(730001)
+    hs2 = bytes_4(730002)
+    peers = {
+        hs1: _peer(options=b"TS1=7144;TS2=714,71442;"),
+        hs2: _peer(options=b"TS2=7144;"),
+    }
+    config = _proxy_config(peers)
+    peer_slots = {hs1: 0, hs2: 1}
+    raw = "GROUP VOICE,START,RX,SYSTEM,3262598598,730002,730002,2,7144"
+    events = remap_inject_proxy_voice_events(
+        raw, config, config["SYSTEMS"], peer_slots
+    )
+    tx_events = [e for e in events if e.split(",")[2] == "TX"]
+    assert len(tx_events) == 1
+    parts = tx_events[0].split(",")
+    assert parts[3] == "SYSTEM-0"
+    assert int(parts[7]) == 1
+
+
 def test_obp_tx_single_hotspot_remaps_dynamic_tg_not_in_static() -> None:
     """One HS online: downlink/monitor must remap TX even when TG is UA-only (not in OPTIONS)."""
     peer = bytes_4(730039101)

@@ -638,6 +638,64 @@ def synthetic_group_dmrd_route_packet(slot: int, tgid: int) -> bytes:
     return b"DMRD" + b"\x00" * 4 + bytes_3(tgid) + b"\x00" * 4 + bytes([bits]) + b"\x00" * 38
 
 
+def peer_downlink_voice_slot(
+    peer: dict[str, Any],
+    wire_slot: int,
+    tgid: int,
+    sys_cfg: dict[str, Any] | None = None,
+    *,
+    peer_id: bytes | None = None,
+) -> int:
+    """Monitor/BRDG field 7: TS where this peer listens for ``tgid`` (OPTIONS or UA)."""
+    static = peer_options_static_tg_slot(peer, tgid)
+    if static is not None:
+        return static
+    if sys_cfg is not None and peer_id is not None:
+        tgid_i = int(tgid)
+        pk = bytes_4(int_id(peer_id))
+        for voice_slot in (1, 2):
+            locked = peer_single_exclusive_tgid(
+                peer, voice_slot, sys_cfg, peer_id=peer_id,
+            )
+            if locked is not None and int(locked) == tgid_i:
+                return voice_slot
+        store = sys_cfg.get("_PEER_UA_MULTI_TGS")
+        if isinstance(store, dict):
+            per_peer = store.get(pk)
+            if isinstance(per_peer, dict):
+                for voice_slot in (1, 2):
+                    slot_set = per_peer.get(voice_slot)
+                    if isinstance(slot_set, set) and tgid_i in slot_set:
+                        return voice_slot
+    return int(wire_slot)
+
+
+def remap_dmrd_to_peer_static_slot(
+    packet: bytes,
+    peer: dict[str, Any],
+    sys_cfg: dict[str, Any] | None = None,
+    *,
+    peer_id: bytes | None = None,
+) -> bytes:
+    """Flip DMRD slot bit so the hotspot RF TS matches OPTIONS/UA for this TG."""
+    parsed = parse_dmrd_route_fields(packet)
+    if parsed is None:
+        return packet
+    voice_slot, tgid, call_type = parsed
+    if call_type not in ("group", "vcsbk"):
+        return packet
+    if is_special_tg(str(tgid)):
+        return packet
+    cfg_slot = peer_downlink_voice_slot(
+        peer, voice_slot, tgid, sys_cfg, peer_id=peer_id,
+    )
+    if cfg_slot == voice_slot:
+        return packet
+    bits = packet[15]
+    new_bits = bits ^ (1 << 7)
+    return packet[:15] + bytes([new_bits]) + packet[16:]
+
+
 def repeat_downlink_report_slot(
     wire_slot: int,
     tgid: int,
@@ -656,27 +714,11 @@ def repeat_downlink_report_slot(
         peer = peers.get(peer_id)
         if not isinstance(peer, dict):
             continue
-        static_slot = peer_options_static_tg_slot(peer, tgid_i)
-        if static_slot is not None:
-            display_slots.add(static_slot)
-            continue
-        if not sys_cfg:
-            continue
-        pk = bytes_4(int_id(peer_id))
-        for voice_slot in (1, 2):
-            locked = peer_single_exclusive_tgid(
-                peer, voice_slot, sys_cfg, peer_id=peer_id,
+        display_slots.add(
+            peer_downlink_voice_slot(
+                peer, wire_slot, tgid_i, sys_cfg, peer_id=peer_id,
             )
-            if locked is not None and int(locked) == tgid_i:
-                display_slots.add(voice_slot)
-        store = sys_cfg.get("_PEER_UA_MULTI_TGS")
-        if isinstance(store, dict):
-            per_peer = store.get(pk)
-            if isinstance(per_peer, dict):
-                for voice_slot in (1, 2):
-                    slot_set = per_peer.get(voice_slot)
-                    if isinstance(slot_set, set) and tgid_i in slot_set:
-                        display_slots.add(voice_slot)
+        )
     if len(display_slots) == 1:
         return display_slots.pop()
     return int(wire_slot)

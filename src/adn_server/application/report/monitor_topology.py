@@ -31,7 +31,7 @@ from __future__ import annotations
 import copy
 from typing import Any
 
-from adn_server.application.routing.helpers import is_special_tg, peer_should_receive_group_voice
+from adn_server.application.routing.helpers import is_special_tg, peer_downlink_voice_slot, peer_should_receive_group_voice
 from adn_server.application.proxy.deployment import is_proxy_inject_only, proxy_target_system
 from adn_server.domain.value_objects import bytes_4, int_id
 
@@ -262,6 +262,26 @@ def _echo_tx_target_peer(parts: list[str], peers: dict[Any, Any]) -> bytes | Non
     return _peer_key_from_voice_csv(parts, peers)
 
 
+def _voice_event_with_peer_display_slot(
+    parts: list[str],
+    *,
+    peer: dict[str, Any],
+    peer_key: bytes,
+    wire_slot: int,
+    tgid: int,
+    sys_cfg: dict[str, Any] | None,
+) -> list[str]:
+    """Set BRDG CSV field 7 to the receiver's configured listen TS (monitor TE chip)."""
+    out = list(parts)
+    if len(out) > 7:
+        out[7] = str(
+            peer_downlink_voice_slot(
+                peer, wire_slot, tgid, sys_cfg, peer_id=peer_key,
+            )
+        )
+    return out
+
+
 def _remap_voice_event_to_slot(
     parts: list[str],
     *,
@@ -361,13 +381,21 @@ def remap_inject_proxy_voice_events(
         if not receivers:
             return [event]
         remapped: list[str] = []
-        for peer_key, _peer in receivers:
+        for peer_key, peer in receivers:
             mapped_slot = slot_map.get(peer_key)
             if mapped_slot is None:
                 continue
+            peer_parts = _voice_event_with_peer_display_slot(
+                parts,
+                peer=peer,
+                peer_key=_peer_key_from_int(peer_key),
+                wire_slot=voice_slot,
+                tgid=tgid,
+                sys_cfg=sys_cfg,
+            )
             remapped.append(
                 _remap_voice_event_to_slot(
-                    parts, target=target, slot=mapped_slot, peer_key=peer_key
+                    peer_parts, target=target, slot=mapped_slot, peer_key=peer_key
                 )
             )
         return remapped if remapped else [event]
@@ -390,7 +418,7 @@ def remap_inject_proxy_voice_events(
         tx_parts = list(parts)
         tx_parts[2] = "TX"
         tx_parts[5] = str(int_id(peer_key))
-        for other_key, _peer in _peers_receiving_tgid(
+        for other_key, peer in _peers_receiving_tgid(
             connected,
             slot=voice_slot,
             tgid=tgid,
@@ -402,9 +430,17 @@ def remap_inject_proxy_voice_events(
             other_slot = slot_map.get(other_key)
             if other_slot is None:
                 continue
+            peer_parts = _voice_event_with_peer_display_slot(
+                tx_parts,
+                peer=peer,
+                peer_key=_peer_key_from_int(other_key),
+                wire_slot=voice_slot,
+                tgid=tgid,
+                sys_cfg=sys_cfg,
+            )
             results.append(
                 _remap_voice_event_to_slot(
-                    tx_parts,
+                    peer_parts,
                     target=target,
                     slot=other_slot,
                     peer_key=other_key,
