@@ -4,6 +4,15 @@ All notable changes to **adn-server** are documented here.
 
 <!-- version list -->
 
+## v2.0.3 (2026-06-21)
+
+### Bug Fixes
+
+- **ci**: Force-with-lease when syncing develop after release
+  ([#13](https://github.com/ce5rpy/ADN-DMR-Peer-Server/pull/13),
+  [`5fad3b5`](https://github.com/ce5rpy/ADN-DMR-Peer-Server/commit/5fad3b515fe17ca94f33b49f540956ea0e2ae178))
+
+
 ## v2.0.2 (2026-06-21)
 
 ### Bug Fixes
