@@ -51,7 +51,9 @@ from ...application.routing.helpers import (
     peer_single_exclusive_tgid,
     register_peer_ua_session,
     resolve_voice_peer_id,
+    repeat_downlink_report_slot,
     seed_peer_ua_session_from_status,
+    synthetic_group_dmrd_route_packet,
     tg4000_reset_on_vhead,
 )
 from ...application.routing.peer_downlink_index import (
@@ -233,6 +235,7 @@ class HBPProtocol(DatagramProtocol):
             self._connected_peer_count = 0
             self._config_push_delayed = None
             self._config_push_throttle = ConfigPushThrottle()
+            self._repeat_downlink_report_start: dict[bytes, float] = {}
             self._refresh_connected_peer_count()
         else:
             self._peers = {}
@@ -427,6 +430,57 @@ class HBPProtocol(DatagramProtocol):
                 slot,
             )
         )
+
+    def _emit_repeat_downlink_group_voice_report(
+        self,
+        action: str,
+        tx_peer: bytes,
+        rf_src: bytes,
+        dst_id: bytes,
+        wire_slot: int,
+        stream_id: bytes,
+        downlink_peers: tuple[bytes, ...],
+        *,
+        pkt_time: float,
+        duration: float = 0.0,
+    ) -> None:
+        """START/END TX for REPEAT downlink peers (monitor CTABLE, same role as OBP bridge TX leg)."""
+        if not downlink_peers:
+            return
+        report = self._report
+        if report is None or not self._CONFIG.get("REPORTS", {}).get("REPORT", True):
+            return
+        if not hasattr(report, "send_routing_event"):
+            return
+        tgid = int_id(dst_id)
+        report_slot = repeat_downlink_report_slot(
+            wire_slot, tgid, self._peers, downlink_peers, self._config,
+        )
+        systems_cfg = self._CONFIG.get("SYSTEMS", {})
+        report_peer = resolve_voice_peer_id(tx_peer, rf_src, self._system, systems_cfg)
+        if action == "START":
+            report.send_routing_event(
+                "GROUP VOICE,START,TX,{},{},{},{},{},{}".format(
+                    self._system,
+                    int_id(stream_id),
+                    int_id(report_peer),
+                    int_id(rf_src),
+                    report_slot,
+                    tgid,
+                )
+            )
+        elif action == "END":
+            report.send_routing_event(
+                "GROUP VOICE,END,TX,{},{},{},{},{},{},{:.2f}".format(
+                    self._system,
+                    int_id(stream_id),
+                    int_id(report_peer),
+                    int_id(rf_src),
+                    report_slot,
+                    tgid,
+                    duration,
+                )
+            )
 
     def _apply_tg4000_reset(
         self,
@@ -672,29 +726,11 @@ class HBPProtocol(DatagramProtocol):
             )
             return 0
         sent = 0
-        connected = self._cached_connected_peer_count()
-        store = self._get_subscription_store() if self._get_subscription_store else None
-        for peer in self._peers:
+        route_pkt = synthetic_group_dmrd_route_packet(slot, tgid)
+        for peer in self._iter_downlink_peers(route_pkt):
             if exclude_peer and peer == exclude_peer:
                 continue
-            if not peer_should_receive_group_voice(
-                self._peers[peer],
-                slot,
-                tgid,
-                peer_id=peer,
-                system=self._system,
-                bridges=None,
-                subscription_store=store,
-                connected_count=connected,
-                sys_cfg=self._config,
-            ):
-                logger.debug(
-                    "(%s) *TALKER ALIAS* DMRA skip peer %s (not subscribed to TG %s slot %s)",
-                    self._system,
-                    int_id(peer),
-                    tgid,
-                    slot,
-                )
+            if not self._peer_should_receive_dmrd(peer, route_pkt):
                 continue
             for pkt in packets:
                 self.send_peer(peer, pkt)
@@ -1059,9 +1095,49 @@ class HBPProtocol(DatagramProtocol):
                         )
                         _repeat_tail = b"".join([_data[15:20], _dmrpkt_out, _data[53:]])
                     _repeat_pkt = b"".join([_data[:11], _peer_id, _repeat_tail])
-                    for _peer in self._iter_downlink_peers(_repeat_pkt):
-                        if _peer != _peer_id:
-                            self.send_peer(_peer, _repeat_pkt)
+                    _downlink_peers = tuple(
+                        _p for _p in self._iter_downlink_peers(_repeat_pkt) if _p != _peer_id
+                    )
+                    for _peer in _downlink_peers:
+                        self.send_peer(_peer, _repeat_pkt)
+                    if _downlink_peers and _slot in self.STATUS:
+                        _slot_st = self.STATUS[_slot]
+                        if (
+                            _frame_type == HBPF_DATA_SYNC
+                            and _dtype_vseq == HBPF_SLT_VHEAD
+                            and _stream_id != _slot_st.get("RX_STREAM_ID")
+                        ):
+                            self._repeat_downlink_report_start[_stream_id] = pkt_time
+                            self._emit_repeat_downlink_group_voice_report(
+                                "START",
+                                _peer_id,
+                                _rf_src,
+                                _dst_id,
+                                _slot,
+                                _stream_id,
+                                _downlink_peers,
+                                pkt_time=pkt_time,
+                            )
+                        elif (
+                            _frame_type == HBPF_DATA_SYNC
+                            and _dtype_vseq == HBPF_SLT_VTERM
+                            and _stream_id == _slot_st.get("RX_STREAM_ID")
+                            and _slot_st.get("RX_TYPE") != HBPF_SLT_VTERM
+                        ):
+                            _start = self._repeat_downlink_report_start.pop(
+                                _stream_id, _slot_st.get("RX_START", pkt_time),
+                            )
+                            self._emit_repeat_downlink_group_voice_report(
+                                "END",
+                                _peer_id,
+                                _rf_src,
+                                _dst_id,
+                                _slot,
+                                _stream_id,
+                                _downlink_peers,
+                                pkt_time=pkt_time,
+                                duration=pkt_time - float(_start),
+                            )
                 # TG 4000: reset after REPEAT so peers see the packet (legacy order)
                 if self._handle_tg4000_packet(
                     _peer_id, _slot, _int_dst_id, _call_type, _frame_type, _dtype_vseq,

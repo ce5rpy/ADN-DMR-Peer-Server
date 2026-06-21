@@ -37,6 +37,7 @@ from adn_server.application.routing.helpers import (
     peer_single_exclusive_tgid,
     register_peer_ua_multi_tg,
     register_peer_ua_session,
+    repeat_downlink_report_slot,
     seed_peer_ua_session_from_status,
 )
 
@@ -55,6 +56,44 @@ def test_static_tg_on_opposite_slot_receives_group_voice() -> None:
     assert peer_receives_group_tgid(peer, 2, 730170)
     assert peer_options_static_tg_slot(peer, 730170) == 1
     assert peer_should_receive_group_voice(peer, 2, 730170, connected_count=8)
+
+
+def test_static_tg_listed_on_both_slots_receives_group_voice() -> None:
+    peer = {"OPTIONS": b"TS1=730444;TS2=730444;"}
+    assert peer_receives_group_tgid(peer, 1, 730444)
+    assert peer_receives_group_tgid(peer, 2, 730444)
+    assert peer_options_static_tg_slot(peer, 730444) is None
+    assert peer_should_receive_group_voice(peer, 1, 730444, connected_count=8)
+
+
+def test_dynamic_tg_on_opposite_slot_receives_group_voice() -> None:
+    """SINGLE=0 keyed dynamic on TS2 is heard when voice arrives on TS1."""
+    peer = {"OPTIONS": b"TS2=730,7305;SINGLE=0;"}
+    sys_cfg = _sys_cfg()
+    peer_id = _peer_id()
+    register_peer_ua_multi_tg(peer, peer_id, 2, 730444, sys_cfg)
+    assert peer_should_receive_group_voice(
+        peer, 1, 730444, peer_id=peer_id, connected_count=3, sys_cfg=sys_cfg,
+    )
+
+
+def test_repeat_downlink_report_slot_cross_slot_static() -> None:
+    peers = {
+        _peer_id(): {"OPTIONS": b"TS2=730444;"},
+    }
+    slot = repeat_downlink_report_slot(
+        1, 730444, peers, (_peer_id(),), _sys_cfg(),
+    )
+    assert slot == 2
+
+
+def test_repeat_downlink_report_slot_dynamic_on_ts2() -> None:
+    peer = {"OPTIONS": b"TS2=730,7305;SINGLE=0;"}
+    peer_id = _peer_id()
+    sys_cfg = _sys_cfg()
+    register_peer_ua_multi_tg(peer, peer_id, 2, 730444, sys_cfg)
+    slot = repeat_downlink_report_slot(1, 730444, {peer_id: peer}, (peer_id,), sys_cfg)
+    assert slot == 2
 
 
 def test_single_blocks_other_static_tg_while_session_on_static() -> None:

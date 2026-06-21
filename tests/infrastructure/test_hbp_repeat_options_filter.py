@@ -72,6 +72,61 @@ def test_repeat_only_reaches_peers_with_matching_options() -> None:
     assert other_pkts == []
 
 
+def test_repeat_cross_slot_static_tg_downlink() -> None:
+    """Voice on TS1 reaches hotspot that lists the TG only on TS2 (PR #2 parity)."""
+    stack = build_hbp_repeat_stack(talker_alias=False, system_name="MASTER-A")
+    stack.config["PROXY"] = {"TARGET_SYSTEM": "MASTER-A"}
+    stack.config["REPORTS"] = {"REPORT": True}
+    stack.hbp._CONFIG = stack.config
+    stack.register_peer(_PEER_TX, _ADDR_TX, options=f"TS1={_TG};")
+    stack.register_peer(_PEER_RX_MATCH, _ADDR_MATCH, options=f"TS2={_TG};")
+    stack.register_peer(_PEER_RX_OTHER, _ADDR_OTHER, options="TS2=91;")
+
+    spec = PacketSpec(
+        peer_id=int.from_bytes(_PEER_TX, "big"),
+        rf_src=7300444,
+        dst_id=_TG,
+        slot=1,
+        stream_id=0x11223344,
+        payload=b"\x00" * 33,
+    )
+    stack.inject(DeterministicScenario.voice_burst_spec(spec, seq=1, dtype_vseq=1).data(), _ADDR_TX)
+
+    match_pkts = [p for p in stack.transport.for_addr(_ADDR_MATCH) if p[:4] == DMRD]
+    other_pkts = [p for p in stack.transport.for_addr(_ADDR_OTHER) if p[:4] == DMRD]
+    assert len(match_pkts) == 1
+    assert other_pkts == []
+
+
+def test_repeat_cross_slot_emits_downlink_start_tx_report() -> None:
+    """REPEAT downlink reports START,TX with OPTIONS slot (monitor CTABLE parity with OBP bridge)."""
+    stack = build_hbp_repeat_stack(talker_alias=False, system_name="MASTER-A")
+    stack.config["PROXY"] = {"TARGET_SYSTEM": "MASTER-A"}
+    stack.config["REPORTS"] = {"REPORT": True}
+    stack.hbp._CONFIG = stack.config
+    stack.register_peer(_PEER_TX, _ADDR_TX, options=f"TS1={_TG};")
+    stack.register_peer(_PEER_RX_MATCH, _ADDR_MATCH, options=f"TS2={_TG};")
+
+    spec = PacketSpec(
+        peer_id=int.from_bytes(_PEER_TX, "big"),
+        rf_src=7300444,
+        dst_id=_TG,
+        slot=1,
+        stream_id=0x22334455,
+        payload=b"\x00" * 33,
+    )
+    stack.inject(DeterministicScenario.voice_head_spec(spec).data(), _ADDR_TX)
+
+    tx_starts = [
+        e for e in stack.report_factory.events
+        if e.startswith(f"GROUP VOICE,START,TX,{stack.system_name},")
+    ]
+    assert len(tx_starts) == 1
+    parts = tx_starts[0].split(",")
+    assert int(parts[7]) == 2
+    assert int(parts[8]) == _TG
+
+
 def test_bridge_downlink_send_peers_filters_by_options() -> None:
     stack = _inject_proxy_stack()
     burst = _voice_burst()

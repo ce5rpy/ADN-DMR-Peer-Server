@@ -338,7 +338,7 @@ def peer_owns_multi_dynamic_ua(
     *,
     peer_id: bytes | None = None,
 ) -> bool:
-    """True when SINGLE=0 peer has keyed this non-static dynamic TG on ``slot``."""
+    """True when SINGLE=0 peer has keyed this non-static dynamic TG (either slot)."""
     if not sys_cfg or peer_single_mode(peer, sys_cfg):
         return False
     if peer_id is None:
@@ -352,8 +352,12 @@ def peer_owns_multi_dynamic_ua(
     per_peer = store.get(pk)
     if not isinstance(per_peer, dict):
         return False
-    slot_set = per_peer.get(int(slot))
-    return isinstance(slot_set, set) and int(tgid) in slot_set
+    tgid_i = int(tgid)
+    for voice_slot in (1, 2):
+        slot_set = per_peer.get(voice_slot)
+        if isinstance(slot_set, set) and tgid_i in slot_set:
+            return True
+    return False
 
 
 def register_peer_ua_session(
@@ -582,17 +586,21 @@ def peer_single_blocks_group_voice(
     peer_id: bytes | None = None,
     now: float | None = None,
 ) -> bool:
-    """True when SINGLE=1 peer must not receive downlink for ``tgid`` on ``slot``.
+    """True when SINGLE=1 peer must not receive downlink for ``tgid``.
 
     With an active session on TG X, every other TG (static or dynamic) is blocked
     until the TIMER expires or a new local TX replaces the session.
     """
+    del slot
     if not sys_cfg:
         return False
-    locked = peer_single_exclusive_tgid(peer, slot, sys_cfg, peer_id=peer_id, now=now)
-    if locked is None:
-        return False
-    return int(tgid) != locked
+    for voice_slot in (1, 2):
+        locked = peer_single_exclusive_tgid(
+            peer, voice_slot, sys_cfg, peer_id=peer_id, now=now,
+        )
+        if locked is not None and int(tgid) != locked:
+            return True
+    return False
 
 
 def peer_receives_group_tgid(peer: dict[str, Any], slot: int, tgid: int) -> bool:
@@ -602,7 +610,11 @@ def peer_receives_group_tgid(peer: dict[str, Any], slot: int, tgid: int) -> bool
     slot while self-service lists the TG on the other.
     """
     del slot
-    return peer_options_static_tg_slot(peer, tgid) is not None
+    from adn_server.application.report.payloads import parse_peer_options_static
+
+    ts1, ts2 = parse_peer_options_static(peer.get("OPTIONS"))
+    tg = str(tgid)
+    return tg in ts1 or tg in ts2
 
 
 def peer_options_static_tg_slot(peer: dict[str, Any], tgid: int) -> int | None:
@@ -618,6 +630,56 @@ def peer_options_static_tg_slot(peer: dict[str, Any], tgid: int) -> int | None:
     if in_ts2 and not in_ts1:
         return 2
     return None
+
+
+def synthetic_group_dmrd_route_packet(slot: int, tgid: int) -> bytes:
+    """Minimal DMRD for inject-only downlink fan-out lookup (slot + TG only)."""
+    bits = 0x80 if int(slot) == 2 else 0
+    return b"DMRD" + b"\x00" * 4 + bytes_3(tgid) + b"\x00" * 4 + bytes([bits]) + b"\x00" * 38
+
+
+def repeat_downlink_report_slot(
+    wire_slot: int,
+    tgid: int,
+    peers: dict[Any, Any],
+    downlink_peer_ids: tuple[bytes, ...],
+    sys_cfg: dict[str, Any] | None,
+) -> int:
+    """Monitor timeslot for REPEAT downlink START/TX (OBP bridge uses target TS, not wire slot).
+
+    When every downlink peer maps the TG to the same OPTIONS or UA slot, use that slot so
+    CTABLE chips match RF (cross-slot static/dynamic). Otherwise fall back to wire slot.
+    """
+    display_slots: set[int] = set()
+    tgid_i = int(tgid)
+    for peer_id in downlink_peer_ids:
+        peer = peers.get(peer_id)
+        if not isinstance(peer, dict):
+            continue
+        static_slot = peer_options_static_tg_slot(peer, tgid_i)
+        if static_slot is not None:
+            display_slots.add(static_slot)
+            continue
+        if not sys_cfg:
+            continue
+        pk = bytes_4(int_id(peer_id))
+        for voice_slot in (1, 2):
+            locked = peer_single_exclusive_tgid(
+                peer, voice_slot, sys_cfg, peer_id=peer_id,
+            )
+            if locked is not None and int(locked) == tgid_i:
+                display_slots.add(voice_slot)
+        store = sys_cfg.get("_PEER_UA_MULTI_TGS")
+        if isinstance(store, dict):
+            per_peer = store.get(pk)
+            if isinstance(per_peer, dict):
+                for voice_slot in (1, 2):
+                    slot_set = per_peer.get(voice_slot)
+                    if isinstance(slot_set, set) and tgid_i in slot_set:
+                        display_slots.add(voice_slot)
+    if len(display_slots) == 1:
+        return display_slots.pop()
+    return int(wire_slot)
 
 
 def peer_single_blocks_uplink(
@@ -651,8 +713,14 @@ def _peer_owns_dynamic_ua(
         return False
     if not sys_cfg:
         return False
-    locked = peer_single_exclusive_tgid(peer, slot, sys_cfg, peer_id=peer_id, now=now)
-    return locked is not None and int(tgid) == locked
+    tgid_i = int(tgid)
+    for voice_slot in (1, 2):
+        locked = peer_single_exclusive_tgid(
+            peer, voice_slot, sys_cfg, peer_id=peer_id, now=now,
+        )
+        if locked is not None and tgid_i == locked:
+            return True
+    return False
 
 
 def peer_should_receive_group_voice(
