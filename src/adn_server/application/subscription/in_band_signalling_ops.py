@@ -27,6 +27,7 @@ from typing import Any
 
 from adn_server.application.ports import SubscriptionStore
 from adn_server.application.routing.helpers import is_special_tg
+from adn_server.domain.config_coerce import coerce_bool
 from adn_server.application.subscription.routing_table_export import _legacy_to_type
 from adn_server.application.subscription.trigger_bytes import dst_in_triggers
 from adn_server.domain import bytes_3, int_id
@@ -115,7 +116,9 @@ def apply_in_band_signalling_store(
                     )
 
         sys_cfg = systems_cfg.get(system_name, {})
-        is_single_mode = sys_cfg.get("MODE") == "MASTER" and sys_cfg.get("SINGLE_MODE", False)
+        is_single_mode = sys_cfg.get("MODE") == "MASTER" and coerce_bool(
+            sys_cfg.get("SINGLE_MODE", False)
+        )
         off_list = sub.triggers.off
 
         if is_single_mode:
