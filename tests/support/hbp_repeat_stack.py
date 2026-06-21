@@ -70,6 +70,7 @@ class HbpRepeatStack:
     hbp: HBPProtocol
     bridge: RoutingUseCases
     transport: RecordingTransport
+    report_factory: FakeReportFactory
     dmra_capture: list[tuple[list[bytes], bytes | None]] = field(default_factory=list)
 
     def register_peer(
@@ -120,7 +121,8 @@ def build_hbp_repeat_stack(
     sys_cfg["USE_ACL"] = False
 
     transport = RecordingTransport()
-    hbp = HBPProtocol(system_name, config, router=_AclRouter())
+    report_factory = FakeReportFactory()
+    hbp = HBPProtocol(system_name, config, report_factory=report_factory, router=_AclRouter())
     hbp.transport = transport  # type: ignore[assignment]
 
     protocols: dict[str, Any] = {system_name: hbp}
@@ -143,7 +145,6 @@ def build_hbp_repeat_stack(
     def _get_dmra_blocks(_system: str, stream_id: bytes) -> dict[int, bytes] | None:
         return hbp.get_dmra_blocks(stream_id)
 
-    report_factory = FakeReportFactory()
     bridge = RoutingUseCases(
         InMemoryAclRouter(),
         config,
@@ -156,6 +157,7 @@ def build_hbp_repeat_stack(
         encode_emblc=encode_emblc,
         ta_emblc_encoder=default_ta_emblc_encoder,
     )
+    hbp._dmrd_received = bridge.dmrd_received
     hbp._on_talker_alias_repeat_prepare = bridge.prepare_talker_alias_local_repeat
     hbp._on_talker_alias_repeat_burst = bridge.rewrite_repeat_voice_burst
     hbp._on_talker_alias_stream_end = bridge.clear_talker_alias_stream
@@ -166,5 +168,6 @@ def build_hbp_repeat_stack(
         hbp=hbp,
         bridge=bridge,
         transport=transport,
+        report_factory=report_factory,
         dmra_capture=dmra_capture,
     )
