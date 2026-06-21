@@ -4,6 +4,19 @@ All notable changes to **adn-server** are documented here.
 
 <!-- version list -->
 
+## v2.0.4 (2026-06-21)
+
+### Bug Fixes
+
+- Cross-slot downlink and REPEAT monitor activity
+  ([`f561b26`](https://github.com/ce5rpy/ADN-DMR-Peer-Server/commit/f561b2685c53b8625b87ce73d599c0276fba8fa1))
+
+### Chores
+
+- **ci**: Sync develop via merge after release
+  ([`e05dc00`](https://github.com/ce5rpy/ADN-DMR-Peer-Server/commit/e05dc003185b49522d0838ed33c8074303f3600c))
+
+
 ## v2.0.3 (2026-06-21)
 
 ### Bug Fixes
