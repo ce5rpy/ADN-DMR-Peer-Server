@@ -72,6 +72,34 @@ def test_repeat_only_reaches_peers_with_matching_options() -> None:
     assert other_pkts == []
 
 
+def test_repeat_remaps_slot_to_peer_options_ts() -> None:
+    """Simplex TS2 TX / TG 7144 → duplex TS1=7144 receives DMRD on TS1 (slot bit flip)."""
+    stack = build_hbp_repeat_stack(talker_alias=False, system_name="MASTER-A")
+    stack.config["PROXY"] = {"TARGET_SYSTEM": "MASTER-A"}
+    stack.hbp._CONFIG = stack.config
+    simplex = bytes_4(730002)
+    duplex = bytes_4(730001)
+    addr_simplex = ("10.0.0.31", 62031)
+    addr_duplex = ("10.0.0.30", 62030)
+    stack.register_peer(simplex, addr_simplex, options="TS2=7144;")
+    stack.register_peer(duplex, addr_duplex, options="TS1=7144;TS2=714,71442;")
+
+    spec = PacketSpec(
+        peer_id=int.from_bytes(simplex, "big"),
+        rf_src=730002,
+        dst_id=7144,
+        slot=2,
+        stream_id=0x22334455,
+        payload=b"\x00" * 33,
+    )
+    burst = DeterministicScenario.voice_burst_spec(spec, seq=1, dtype_vseq=1).data()
+    stack.inject(burst, addr_simplex)
+
+    duplex_pkts = [p for p in stack.transport.for_addr(addr_duplex) if p[:4] == DMRD]
+    assert len(duplex_pkts) == 1
+    assert not (duplex_pkts[0][15] & 0x80)
+
+
 def test_repeat_cross_slot_static_tg_downlink() -> None:
     """Voice on TS1 reaches hotspot that lists the TG only on TS2 (PR #2 parity)."""
     stack = build_hbp_repeat_stack(talker_alias=False, system_name="MASTER-A")
