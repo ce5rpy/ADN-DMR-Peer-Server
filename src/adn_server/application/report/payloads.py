@@ -124,10 +124,17 @@ def resolve_peer_single_and_timer(
     sys_cfg: dict[str, Any],
 ) -> tuple[bool, float]:
     """Use OPTIONS ``SINGLE``/``TIMER`` when present; else YAML ``SINGLE_MODE``/``DEFAULT_UA_TIMER``."""
+    from adn_server.domain.config_coerce import coerce_bool, parse_options_single
+
     if "SINGLE" in fields:
-        single = str(fields["SINGLE"]).strip() == "1"
+        parsed_single = parse_options_single(fields["SINGLE"])
+        single = (
+            parsed_single
+            if parsed_single is not None
+            else coerce_bool(sys_cfg.get("SINGLE_MODE", False))
+        )
     else:
-        single = bool(sys_cfg.get("SINGLE_MODE", False))
+        single = coerce_bool(sys_cfg.get("SINGLE_MODE", False))
     if "TIMER" in fields:
         try:
             timer = float(fields["TIMER"])

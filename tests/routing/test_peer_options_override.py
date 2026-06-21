@@ -40,10 +40,12 @@ from adn_server.domain import bytes_3, bytes_4
 def _proxy_system_scenario(
     *,
     single_mode_yaml: bool = False,
+    max_peers: int = 50,
 ) -> DeterministicScenario:
     config = DeterministicScenario().config
     sys_cfg = config["SYSTEMS"]["MASTER-A"]
     sys_cfg["SINGLE_MODE"] = single_mode_yaml
+    sys_cfg["MAX_PEERS"] = max_peers
     sys_cfg["DEFAULT_UA_TIMER"] = 60
     sys_cfg.pop("OPTIONS", None)
     sys_cfg["TS1_STATIC"] = ""
@@ -73,9 +75,19 @@ def test_rpto_single_and_timer_override_yaml() -> None:
     )
 
     sys_cfg = scenario.config["SYSTEMS"]["MASTER-A"]
-    assert sys_cfg["SINGLE_MODE"] is True
+    assert sys_cfg["SINGLE_MODE"] is False
     assert scenario.routing.routing_table_for_report()["730444"][0]["TIMEOUT"] == 300.0
     assert scenario.routing.routing_table_for_report()["52090"][0]["TIMEOUT"] == 300.0
+
+
+def test_legacy_single_peer_master_applies_system_single_from_options() -> None:
+    """GENERATOR-style master (MAX_PEERS=1) may still mirror OPTIONS into SINGLE_MODE."""
+    scenario = _proxy_system_scenario(single_mode_yaml=False, max_peers=1)
+    scenario.routing.options_config_for_system(
+        "MASTER-A",
+        peer_options=b"TS2=730444;SINGLE=1;TIMER=5;",
+    )
+    assert scenario.config["SYSTEMS"]["MASTER-A"]["SINGLE_MODE"] is True
 
 
 def test_options_config_reads_connected_peer_without_yaml_options() -> None:
@@ -85,11 +97,11 @@ def test_options_config_reads_connected_peer_without_yaml_options() -> None:
 
     scenario.routing.options_config_for_system("MASTER-A")
 
-    assert scenario.config["SYSTEMS"]["MASTER-A"]["SINGLE_MODE"] is True
+    assert scenario.config["SYSTEMS"]["MASTER-A"]["SINGLE_MODE"] is False
 
 
 def test_single_mode_deactivates_other_static_tg_after_rpto() -> None:
-    scenario = _proxy_system_scenario(single_mode_yaml=False)
+    scenario = _proxy_system_scenario(single_mode_yaml=False, max_peers=1)
     bridges = {
         "730444": [
             {

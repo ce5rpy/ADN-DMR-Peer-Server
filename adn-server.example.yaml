@@ -108,6 +108,7 @@ SYSTEMS:
     TGID_TS1_ACL: PERMIT:ALL
     TGID_TS2_ACL: PERMIT:ALL
     DEFAULT_UA_TIMER: 60
+    # false = multiple user-activated dynamic TGs per hotspot (SINGLE=0); true = one at a time
     SINGLE_MODE: false
     VOICE_IDENT: false
     TS1_STATIC: ""
