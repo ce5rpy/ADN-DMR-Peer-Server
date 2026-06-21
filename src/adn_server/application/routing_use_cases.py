@@ -268,27 +268,7 @@ class RoutingUseCases(
             # legs; re-arm OPTIONS static destinations before forward (inject-only merged lists).
             if frame_type == HBPF_DATA_SYNC and dtype_vseq == HBPF_SLT_VHEAD:
                 self.apply_static_tg_to_bridge(dst_int)
-        has_source = bool(
-            self._voice_relay_tables_with_active_source(system_name, bridge_match_slot, dst_int)
-        )
-        if not has_source and systems_cfg.get(system_name, {}).get("MODE") == "MASTER":
-            self.options_config_for_system(system_name)
-            has_source = bool(
-                self._voice_relay_tables_with_active_source(system_name, bridge_match_slot, dst_int)
-            )
-        # Do not call ensure_dynamic_relay here for 9990–9999 when BRIDGES["9990"] already exists:
-        # ensure_dynamic_relay replaces the whole table and only sets the source MASTER ACTIVE; every
-        # other system (including ECHO with TO_TYPE NONE) becomes ACTIVE False — to_target then has
-        # no active target for the echo path (legacy _seed_echo_routing_table / make_bridges keeps ECHO
-        # ACTIVE True; activation of the source row is via in-band ON on VTERM, bridge_master ~3465).
-        if not has_source:
-            logger.debug(
-                "(ROUTER) No matching source rule for TG %s from %s slot %s (ACTIVE), not forwarding",
-                relay_table_key, system_name, bridge_match_slot,
-            )
-            return True
-
-        # Legacy bridge.py: BRDG_EVENT (OBP group/vcsbk START/END handled in _obp_group_voice_router_obp / post-forward VTERM)
+        # Legacy bridge_master routerHBP: BRDG_EVENT on VHEAD/VTERM before bridge source scan.
         _obp_grp = source_is_obp and call_type in ("group", "vcsbk")
         if frame_type == HBPF_DATA_SYNC and dtype_vseq == HBPF_SLT_VHEAD:
             if not _obp_grp:
@@ -342,6 +322,26 @@ class RoutingUseCases(
                         duration,
                     )
                 )
+        has_source = bool(
+            self._voice_relay_tables_with_active_source(system_name, bridge_match_slot, dst_int)
+        )
+        if not has_source and systems_cfg.get(system_name, {}).get("MODE") == "MASTER":
+            self.options_config_for_system(system_name)
+            has_source = bool(
+                self._voice_relay_tables_with_active_source(system_name, bridge_match_slot, dst_int)
+            )
+        # Do not call ensure_dynamic_relay here for 9990–9999 when BRIDGES["9990"] already exists:
+        # ensure_dynamic_relay replaces the whole table and only sets the source MASTER ACTIVE; every
+        # other system (including ECHO with TO_TYPE NONE) becomes ACTIVE False — to_target then has
+        # no active target for the echo path (legacy _seed_echo_routing_table / make_bridges keeps ECHO
+        # ACTIVE True; activation of the source row is via in-band ON on VTERM, bridge_master ~3465).
+        if not has_source:
+            logger.debug(
+                "(ROUTER) No matching source rule for TG %s from %s slot %s (ACTIVE), not forwarding",
+                relay_table_key, system_name, bridge_match_slot,
+            )
+            return True
+
         # ── Exact port of legacy bridge.py routerOBP/routerHBP forwarding to targets ──
         pkt_time = time.time()
         dmrpkt = data[20:53] if len(data) >= 53 else b""
