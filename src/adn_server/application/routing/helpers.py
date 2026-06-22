@@ -51,6 +51,7 @@ from ...domain.hbp_protocol import HBPF_SLT_VTERM, STREAM_TO
 
 RF_MODE_SIMPLEX = "simplex"
 RF_MODE_DUPLEX = "duplex"
+# MMDVMHost DMO: downlink DMRD with TS1 bit set is dropped; only TS2 passes (DMRNetwork.cpp).
 SIMPLEX_VOICE_SLOT = 2
 
 
