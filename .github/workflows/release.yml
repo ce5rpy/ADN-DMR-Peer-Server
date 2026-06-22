@@ -79,11 +79,26 @@ jobs:
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git fetch origin master develop
           git checkout -B develop origin/develop
-          # Merge (no force-push): keeps old develop as ancestor so local checkouts can pull/ff.
+          phantom_before="$(git rev-list --count origin/master..HEAD)"
+          echo "Develop commits not in master (before sync): ${phantom_before}"
+          # Fast-forward works when the release PR used "Create a merge commit" (not squash):
+          # develop's commits are ancestors of master, so develop can catch up without force-push.
           if git merge origin/master --ff-only; then
-            echo "Fast-forward develop to master"
+            echo "Fast-forwarded develop to master (branches aligned)"
           else
+            echo "::warning::Could not fast-forward develop to master."
+            echo "::warning::The release PR was likely squash-merged. Use 'Create a merge commit' on develop→master PRs."
+            echo "::warning::Applying fallback merge sync (phantom commits on develop will remain until a merge-commit release)."
             git merge origin/master --no-edit \
               -m "chore: sync develop from master after release ${VERSION}"
           fi
           git push origin develop
+          git fetch origin master develop
+          phantom_after="$(git rev-list --count origin/master..HEAD)"
+          echo "Develop commits not in master (after sync): ${phantom_after}"
+          if [[ "${phantom_after}" -eq 0 ]]; then
+            echo "Develop and master are aligned (next release PR will list only new commits)"
+          else
+            echo "::notice::Develop still has ${phantom_after} commit(s) not in master."
+            echo "::notice::Merge the next release PR with 'Create a merge commit' to realign automatically."
+          fi

@@ -1127,8 +1127,7 @@ class HBPProtocol(DatagramProtocol):
                         elif (
                             _frame_type == HBPF_DATA_SYNC
                             and _dtype_vseq == HBPF_SLT_VTERM
-                            and _stream_id == _slot_st.get("RX_STREAM_ID")
-                            and _slot_st.get("RX_TYPE") != HBPF_SLT_VTERM
+                            and _stream_id in self._repeat_downlink_report_start
                         ):
                             _start = self._repeat_downlink_report_start.pop(
                                 _stream_id, _slot_st.get("RX_START", pkt_time),
