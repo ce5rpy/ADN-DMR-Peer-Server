@@ -391,3 +391,44 @@ def test_obp_tx_fanout_suppressed_when_peer_slot_busy_on_other_tg() -> None:
     )
     systems = {ev.split(",")[3] for ev in events}
     assert systems == {"SYSTEM-1"}
+
+
+def test_obp_tx_fully_suppressed_when_all_receivers_busy() -> None:
+    """OBP downlink must not reach monitor when the sole eligible hotspot is slot-busy."""
+    hs = bytes_4(7300444)
+    peers = {hs: _peer(options=b"TS2=730444,7144;")}
+    config = _proxy_config(peers)
+    peer_slots = {hs: 1}
+    now = time.time()
+    master_status = {
+        2: {
+            "RX_TYPE": HBPF_SLT_VHEAD,
+            "TX_TYPE": HBPF_SLT_VTERM,
+            "RX_PEER": hs,
+            "RX_TGID": bytes_3(7144),
+            "RX_STREAM_ID": bytes_4(0x11111111),
+            "RX_TIME": now,
+            "TX_TIME": 0.0,
+        }
+    }
+    raw = "GROUP VOICE,START,TX,SYSTEM,4100887026,73010,7000002,2,730444"
+    bridges = {
+        "730444": [
+            {
+                "SYSTEM": "SYSTEM",
+                "TS": 2,
+                "TGID": 730444,
+                "ACTIVE": True,
+                "TO_TYPE": "ON",
+            }
+        ],
+    }
+    events = remap_inject_proxy_voice_events(
+        raw,
+        config,
+        config["SYSTEMS"],
+        peer_slots,
+        bridges,
+        master_status=master_status,
+    )
+    assert events == []

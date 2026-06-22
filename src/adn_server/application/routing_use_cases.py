@@ -42,6 +42,7 @@ from ..domain.dmr import bptc
 from ..domain import HBPF_DATA_SYNC, HBPF_SLT_VHEAD, HBPF_SLT_VTERM, bytes_3, bytes_4, int_id
 from .ports import AclRouter, DmrEmbeddedLcEncoder, SubscriptionStore, TalkerAliasEmblcEncoder
 from .talker_alias_use_cases import TalkerAliasUseCases
+from .routing.peer_downlink_index import count_connected_peers
 from .routing.helpers import (
     hbp_slot_blocks_group_voice,
     inject_only_defer_obp_hbp_slot_contention,
@@ -617,11 +618,18 @@ class RoutingUseCases(
                         _ts_st["TX_TYPE"] = HBPF_SLT_VTERM
                     # Slot contention: active QSO blocks any other stream; post-VTERM uses GROUP_HANGTIME.
                     _group_hangtime = float(_target_system.get("GROUP_HANGTIME", 0) or 0)
+                    _tgt_peers = getattr(tgt_proto, "_peers", None) if tgt_proto else None
+                    if _tgt_peers is None:
+                        _tgt_peers = _target_system.get("PEERS", {})
+                    _target_connected = (
+                        count_connected_peers(_tgt_peers) if isinstance(_tgt_peers, dict) else 0
+                    )
                     _defer_slot_contention = inject_only_defer_obp_hbp_slot_contention(
                         self._config,
                         entry["SYSTEM"],
                         _target_system,
                         source_is_obp=source_is_obp,
+                        connected_count=_target_connected,
                     )
                     if (
                         not _closing_bridge_leg
