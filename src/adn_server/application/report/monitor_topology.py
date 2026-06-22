@@ -29,13 +29,58 @@ same user or 6-digit legacy prefix.
 from __future__ import annotations
 
 import copy
+import time
 from typing import Any
 
-from adn_server.application.routing.helpers import is_special_tg, peer_downlink_voice_slot, peer_should_receive_group_voice
 from adn_server.application.proxy.deployment import is_proxy_inject_only, proxy_target_system
-from adn_server.domain.value_objects import bytes_4, int_id
+from adn_server.application.routing.helpers import (
+    hbp_slot_blocks_group_voice_for_peer,
+    is_special_tg,
+    peer_downlink_voice_slot,
+    peer_should_receive_group_voice,
+)
+from adn_server.domain import bytes_3, bytes_4
+from adn_server.domain.value_objects import int_id
 
 DEFAULT_REPORT_BASE_PORT = 56400
+
+
+def monitor_downlink_blocked_by_slot_contention(
+    peer_id: bytes,
+    peer: dict[str, Any],
+    wire_slot: int,
+    tgid: int,
+    stream_id: int,
+    master_status: dict[str, Any] | None,
+    sys_cfg: dict[str, Any],
+    *,
+    per_peer: bool,
+    pkt_time: float | None = None,
+) -> bool:
+    """True when a monitor downlink/companion voice event must be suppressed.
+
+    Report-layer filter: reuses routing slot contention (``hbp_slot_blocks_*``)
+    so monitor chips match who would actually receive REPEAT/bridge downlink.
+    """
+    if not master_status:
+        return False
+    voice_slot = peer_downlink_voice_slot(
+        peer, wire_slot, tgid, sys_cfg, peer_id=peer_id,
+    )
+    slot_st = master_status.get(voice_slot)
+    if not isinstance(slot_st, dict):
+        return False
+    hang = float(sys_cfg.get("GROUP_HANGTIME", 0) or 0)
+    t = pkt_time if pkt_time is not None else time.time()
+    return hbp_slot_blocks_group_voice_for_peer(
+        slot_st,
+        peer_id,
+        bytes_3(tgid),
+        bytes_4(stream_id),
+        t,
+        hang,
+        per_peer=per_peer,
+    )
 
 
 def _connected_peers(peers: dict[Any, dict[str, Any]]) -> list[tuple[Any, dict[str, Any]]]:
@@ -310,12 +355,20 @@ def _remap_voice_event_to_slot(
     return ",".join(out)
 
 
+def _voice_event_stream_id(parts: list[str]) -> int:
+    try:
+        return int(parts[4].strip())
+    except (ValueError, IndexError):
+        return 0
+
+
 def remap_inject_proxy_voice_events(
     event: str,
     config: dict[str, Any],
     systems: dict[str, Any],
     peer_slots: dict[bytes, int] | None = None,
     bridges: dict[str, Any] | None = None,
+    master_status: dict[str, Any] | None = None,
 ) -> list[str]:
     """Map inject-only ``SYSTEM`` voice events to one or more ``SYSTEM-N`` rows.
 
@@ -343,6 +396,8 @@ def remap_inject_proxy_voice_events(
     connected = _connected_peers(peers)
     slot_map = _resolve_slot_map(connected, peer_slots, max_slots=max_slots)
     trx = parts[2].strip() if len(parts) > 2 else ""
+    per_peer = is_proxy_inject_only(config, target)
+    stream_id = _voice_event_stream_id(parts)
 
     if trx == "TX":
         tgid_slot = _voice_event_tgid_slot(parts)
@@ -384,6 +439,17 @@ def remap_inject_proxy_voice_events(
         for peer_key, peer in receivers:
             mapped_slot = slot_map.get(peer_key)
             if mapped_slot is None:
+                continue
+            if monitor_downlink_blocked_by_slot_contention(
+                _peer_key_from_int(peer_key),
+                peer,
+                voice_slot,
+                tgid,
+                stream_id,
+                master_status,
+                sys_cfg,
+                per_peer=per_peer,
+            ):
                 continue
             peer_parts = _voice_event_with_peer_display_slot(
                 parts,
@@ -430,6 +496,17 @@ def remap_inject_proxy_voice_events(
             other_slot = slot_map.get(other_key)
             if other_slot is None:
                 continue
+            if monitor_downlink_blocked_by_slot_contention(
+                _peer_key_from_int(other_key),
+                peer,
+                voice_slot,
+                tgid,
+                stream_id,
+                master_status,
+                sys_cfg,
+                per_peer=per_peer,
+            ):
+                continue
             peer_parts = _voice_event_with_peer_display_slot(
                 tx_parts,
                 peer=peer,
@@ -455,8 +532,9 @@ def remap_inject_proxy_voice_event(
     systems: dict[str, Any],
     peer_slots: dict[bytes, int] | None = None,
     bridges: dict[str, Any] | None = None,
+    master_status: dict[str, Any] | None = None,
 ) -> str:
     """Single-event view of :func:`remap_inject_proxy_voice_events` (first mapping)."""
     return remap_inject_proxy_voice_events(
-        event, config, systems, peer_slots, bridges
+        event, config, systems, peer_slots, bridges, master_status
     )[0]

@@ -143,6 +143,19 @@
                     "expires_at": { "type": "number" }
                   }
                 }
+              },
+              "ua_multi_tgs": {
+                "type": "object",
+                "description": "Active SINGLE=0 multi-dynamic TG ids per slot (empty when none).",
+                "additionalProperties": {
+                  "type": "array",
+                  "items": { "$ref": "#/$defs/dmr_id" }
+                }
+              },
+              "rf_mode": {
+                "type": "string",
+                "enum": ["simplex", "duplex"],
+                "description": "Hotspot RF mode from RPTC SLOTS and RX/TX frequencies."
               }
             }
           }

@@ -39,10 +39,13 @@ from .reporting_use_cases import ReportingUseCases
 from bitarray import bitarray
 from ..domain.dmr import bptc
 
-from ..domain import HBPF_DATA_SYNC, HBPF_SLT_VHEAD, HBPF_SLT_VTERM, STREAM_TO, bytes_3, bytes_4, int_id
+from ..domain import HBPF_DATA_SYNC, HBPF_SLT_VHEAD, HBPF_SLT_VTERM, bytes_3, bytes_4, int_id
 from .ports import AclRouter, DmrEmbeddedLcEncoder, SubscriptionStore, TalkerAliasEmblcEncoder
 from .talker_alias_use_cases import TalkerAliasUseCases
 from .routing.helpers import (
+    hbp_slot_blocks_group_voice,
+    inject_only_defer_obp_hbp_slot_contention,
+    slot_has_active_voice,
     is_private_subscriber_dst,
     is_unit_data_ingress,
     obp_target_bcsq_quenches_stream,
@@ -272,24 +275,33 @@ class RoutingUseCases(
         _obp_grp = source_is_obp and call_type in ("group", "vcsbk")
         if frame_type == HBPF_DATA_SYNC and dtype_vseq == HBPF_SLT_VHEAD:
             if not _obp_grp:
-                _rx_report_peer = peer_id
+                _is_new_rx_stream = True
                 if not source_is_obp:
-                    _rx_report_peer = resolve_voice_peer_id(
-                        peer_id,
-                        rf_src,
-                        system_name,
-                        systems_cfg,
+                    protocols = self._get_protocols() if self._get_protocols else {}
+                    src_proto = protocols.get(system_name) if protocols else None
+                    if src_proto and getattr(src_proto, "STATUS", None):
+                        slot_st = src_proto.STATUS.get(slot, {})
+                        if isinstance(slot_st, dict):
+                            _is_new_rx_stream = stream_id != slot_st.get("RX_STREAM_ID")
+                if _is_new_rx_stream:
+                    _rx_report_peer = peer_id
+                    if not source_is_obp:
+                        _rx_report_peer = resolve_voice_peer_id(
+                            peer_id,
+                            rf_src,
+                            system_name,
+                            systems_cfg,
+                        )
+                    self._send_routing_event(
+                        "GROUP VOICE,START,RX,{},{},{},{},{},{}".format(
+                            system_name,
+                            int_id(stream_id),
+                            int_id(_rx_report_peer),
+                            int_id(rf_src),
+                            slot,
+                            int_id(dst_id),
+                        )
                     )
-                self._send_routing_event(
-                    "GROUP VOICE,START,RX,{},{},{},{},{},{}".format(
-                        system_name,
-                        int_id(stream_id),
-                        int_id(_rx_report_peer),
-                        int_id(rf_src),
-                        slot,
-                        int_id(dst_id),
-                    )
-                )
         elif frame_type == HBPF_DATA_SYNC and dtype_vseq == HBPF_SLT_VTERM:
             if not _obp_grp:
                 duration = 0.0
@@ -343,7 +355,6 @@ class RoutingUseCases(
             return True
 
         # ── Exact port of legacy bridge.py routerOBP/routerHBP forwarding to targets ──
-        pkt_time = time.time()
         dmrpkt = data[20:53] if len(data) >= 53 else b""
         _bits = data[15] if len(data) > 15 else 0
         protocols = self._get_protocols() if self._get_protocols else {}
@@ -604,28 +615,45 @@ class RoutingUseCases(
                             )
                         )
                         _ts_st["TX_TYPE"] = HBPF_SLT_VTERM
-                    # Contention handling (exact port of legacy bridge_master.py ~2056-2075).
-                    # VTERM for an active bridge TX leg must still tear down monitor/STATUS even
-                    # when another TG is busy on the other slot of the same MASTER (local QSO).
-                    if not _closing_bridge_leg and (entry_tgid_b != _ts_st.get("RX_TGID", b"\x00\x00\x00")) and ((pkt_time - _ts_st.get("RX_TIME", 0)) < float(_target_system.get("GROUP_HANGTIME", 0))):
+                    # Slot contention: active QSO blocks any other stream; post-VTERM uses GROUP_HANGTIME.
+                    _group_hangtime = float(_target_system.get("GROUP_HANGTIME", 0) or 0)
+                    _defer_slot_contention = inject_only_defer_obp_hbp_slot_contention(
+                        self._config,
+                        entry["SYSTEM"],
+                        _target_system,
+                        source_is_obp=source_is_obp,
+                    )
+                    if (
+                        not _closing_bridge_leg
+                        and not _defer_slot_contention
+                        and hbp_slot_blocks_group_voice(
+                            _ts_st,
+                            entry_tgid_b,
+                            stream_id,
+                            pkt_time,
+                            _group_hangtime,
+                        )
+                    ):
                         if not _src_stream_st.get("CONTENTION"):
                             _src_stream_st["CONTENTION"] = True
-                            logger.info("(%s) Call not routed to TGID %s, target active or in group hangtime: HBSystem: %s, TS: %s, TGID: %s", system_name, int_id(entry_tgid_b), entry.get("SYSTEM"), entry_ts, int_id(_ts_st.get("RX_TGID", b"")))
-                        continue
-                    if not _closing_bridge_leg and (entry_tgid_b != _ts_st.get("TX_TGID", b"\x00\x00\x00")) and ((pkt_time - _ts_st.get("TX_TIME", 0)) < float(_target_system.get("GROUP_HANGTIME", 0))):
-                        if not _src_stream_st.get("CONTENTION"):
-                            _src_stream_st["CONTENTION"] = True
-                            logger.info("(%s) Call not routed to TGID %s, target in group hangtime: HBSystem: %s, TS: %s, TGID: %s", system_name, int_id(entry_tgid_b), entry.get("SYSTEM"), entry_ts, int_id(_ts_st.get("TX_TGID", b"")))
-                        continue
-                    if not _closing_bridge_leg and (entry_tgid_b == _ts_st.get("RX_TGID", b"\x00\x00\x00")) and ((pkt_time - _ts_st.get("RX_TIME", 0)) < STREAM_TO):
-                        if not _src_stream_st.get("CONTENTION"):
-                            _src_stream_st["CONTENTION"] = True
-                            logger.info("(%s) Call not routed to TGID %s, matching call already active on target: HBSystem: %s, TS: %s, TGID: %s", system_name, int_id(entry_tgid_b), entry.get("SYSTEM"), entry_ts, int_id(_ts_st.get("RX_TGID", b"")))
-                        continue
-                    if not _closing_bridge_leg and (entry_tgid_b == _ts_st.get("TX_TGID", b"\x00\x00\x00")) and (rf_src != _ts_st.get("TX_RFS", b"")) and ((pkt_time - _ts_st.get("TX_TIME", 0)) < STREAM_TO):
-                        if not _src_stream_st.get("CONTENTION"):
-                            _src_stream_st["CONTENTION"] = True
-                            logger.info("(%s) Call not routed for subscriber %s, call route in progress on target: HBSystem: %s, TS: %s, TGID: %s, SUB: %s", system_name, int_id(rf_src), entry.get("SYSTEM"), entry_ts, int_id(_ts_st.get("TX_TGID", b"")), int_id(_ts_st.get("TX_RFS", b"")))
+                            if slot_has_active_voice(_ts_st, pkt_time):
+                                logger.info(
+                                    "(%s) Call not routed to TGID %s, target slot busy: HBSystem: %s, TS: %s, TGID: %s",
+                                    system_name,
+                                    int_id(entry_tgid_b),
+                                    entry.get("SYSTEM"),
+                                    entry_ts,
+                                    int_id(_ts_st.get("RX_TGID", b"") or _ts_st.get("TX_TGID", b"")),
+                                )
+                            else:
+                                logger.info(
+                                    "(%s) Call not routed to TGID %s, target in group hangtime: HBSystem: %s, TS: %s, TGID: %s",
+                                    system_name,
+                                    int_id(entry_tgid_b),
+                                    entry.get("SYSTEM"),
+                                    entry_ts,
+                                    int_id(_ts_st.get("RX_TGID", b"") or _ts_st.get("TX_TGID", b"")),
+                                )
                         continue
                     # New stream detection — legacy OBP uses _target_status[TS]['TX_STREAM_ID'], legacy HBP uses self.STATUS[_slot]['RX_STREAM_ID']
                     if source_is_obp:
@@ -1068,7 +1096,8 @@ class RoutingUseCases(
             "unit", dtype_vseq, stream_id, slot_st.get("RX_STREAM_ID"),
         )
         if stream_id != slot_st.get("RX_STREAM_ID"):
-            if (slot_st.get("RX_TYPE") != HBPF_SLT_VTERM) and (pkt_time < (slot_st.get("RX_TIME", 0) + STREAM_TO)) and (rf_src != slot_st.get("RX_RFS")):
+            _hangtime = float(systems_cfg.get(system_name, {}).get("GROUP_HANGTIME", 0) or 0)
+            if hbp_slot_blocks_group_voice(slot_st, dst_id, stream_id, pkt_time, _hangtime):
                 logger.warning(
                     "(%s) PRIVATE CALL Packet received with STREAM ID: %s <FROM> SUB: %s PEER: %s <TO> UNIT %s, SLOT %s collided with existing call",
                     system_name, int_id(stream_id), int_id(rf_src), int_id(peer_id), int_id(dst_id), slot,
@@ -1138,19 +1167,19 @@ class RoutingUseCases(
                 # pierce group/voice RX on the target slot — legacy pvt_call still
                 # sends via send_system even when sendDataToHBP is busy.
                 if not _unit_data:
-                    if (dst_id == ts_st.get("RX_TGID")) and ((pkt_time - ts_st.get("RX_TIME", 0)) < STREAM_TO):
-                        if frame_type == HBPF_DATA_SYNC and dtype_vseq == HBPF_SLT_VHEAD and slot_st.get("RX_STREAM_ID") != stream_id:
-                            logger.info(
-                                "(%s) PRIVATE Call not routed to destination %s, matching call already active on target: HBSystem: %s, TS: %s, DEST: %s",
-                                system_name, int_id(dst_id), _target, slot, int_id(ts_st.get("RX_TGID", b"")),
-                            )
-                        continue
-                    if (dst_id == ts_st.get("TX_TGID")) and (rf_src != ts_st.get("TX_RFS")) and ((pkt_time - ts_st.get("TX_TIME", 0)) < STREAM_TO):
-                        if frame_type == HBPF_DATA_SYNC and dtype_vseq == HBPF_SLT_VHEAD and slot_st.get("RX_STREAM_ID") != stream_id:
-                            logger.info(
-                                "(%s) PRIVATE Call not routed for subscriber %s, call route in progress on target: HBSystem: %s, TS: %s, DEST: %s, SUB: %s",
-                                system_name, int_id(rf_src), _target, slot, int_id(ts_st.get("TX_TGID", b"")), int_id(ts_st.get("TX_RFS", b"")),
-                            )
+                    _hangtime = float(_target_system.get("GROUP_HANGTIME", 0) or 0)
+                    if hbp_slot_blocks_group_voice(ts_st, dst_id, stream_id, pkt_time, _hangtime):
+                        if frame_type == HBPF_DATA_SYNC and dtype_vseq == HBPF_SLT_VHEAD:
+                            if slot_has_active_voice(ts_st, pkt_time):
+                                logger.info(
+                                    "(%s) PRIVATE Call not routed, target slot busy: HBSystem: %s, TS: %s, DEST: %s",
+                                    system_name, _target, slot, int_id(dst_id),
+                                )
+                            else:
+                                logger.info(
+                                    "(%s) PRIVATE Call not routed, target in group hangtime: HBSystem: %s, TS: %s, DEST: %s",
+                                    system_name, _target, slot, int_id(dst_id),
+                                )
                         continue
                 if stream_id != slot_st.get("RX_STREAM_ID"):
                     ts_st["TX_START"] = pkt_time

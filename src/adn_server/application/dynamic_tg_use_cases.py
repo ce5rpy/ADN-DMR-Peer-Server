@@ -38,8 +38,19 @@ from adn_server.application.routing.helpers import (
 )
 from adn_server.domain import int_id
 from adn_server.domain.dynamic_tg import DynamicTgEntry
+from adn_server.domain.ua_timer import ua_session_never_expires
 
 logger = logging.getLogger(__name__)
+
+
+def _dynamic_tg_entry_active(entry: DynamicTgEntry, now: float) -> bool:
+    if not entry.single_mode:
+        return True
+    if entry.expires_at is None:
+        return True
+    if ua_session_never_expires(float(entry.expires_at)):
+        return True
+    return float(entry.expires_at) > now
 
 
 class DynamicTgUseCases:
@@ -107,10 +118,7 @@ class DynamicTgUseCases:
         now = time.time()
 
         def _apply(entries: list[DynamicTgEntry]) -> list[int]:
-            active = [
-                e for e in entries
-                if not e.single_mode or e.expires_at is None or float(e.expires_at) > now
-            ]
+            active = [e for e in entries if _dynamic_tg_entry_active(e, now)]
             tgids = restore_peer_ua_entries_to_memory(sys_cfg, peer_id, active, now=now)
             if self._on_restored is not None:
                 self._on_restored(peer_id, system_name, sys_cfg, active, now=now)

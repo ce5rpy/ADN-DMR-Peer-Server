@@ -46,7 +46,9 @@ from __future__ import annotations
 import logging
 from hashlib import blake2b
 
-from ...domain import HBPF_SLT_VTERM, STREAM_TO, int_id
+from ...domain import int_id
+from ..proxy.deployment import is_proxy_inject_only
+from .helpers import hbp_ingress_new_stream_collision
 
 logger = logging.getLogger(__name__)
 
@@ -86,10 +88,9 @@ class HbpForwardMixin:
             _slot_st.pop("_bcsq", None)
             _slot_st["lastSeq"] = False
             _slot_st["lastData"] = False
-            if (
-                _slot_st.get("RX_TYPE") != HBPF_SLT_VTERM
-                and pkt_time < (_slot_st.get("RX_TIME", 0) + STREAM_TO)
-                and rf_src != _slot_st.get("RX_RFS", b"\x00")
+            per_peer = is_proxy_inject_only(self._config, system_name)
+            if hbp_ingress_new_stream_collision(
+                _slot_st, peer_id, rf_src, stream_id, pkt_time, per_peer=per_peer,
             ):
                 logger.warning(
                     "(%s) Packet received with STREAM ID: %s <FROM> SUB: %s PEER: %s <TO> TGID %s, SLOT %s collided with existing call",

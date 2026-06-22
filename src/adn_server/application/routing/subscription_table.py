@@ -468,14 +468,9 @@ class SubscriptionTableMixin:
 
     def _options_static_lists_valid(self, opt_str: bytes | str) -> bool:
         """Legacy: malformed TS1/TS2 in OPTIONS aborts static bridge refresh."""
-        parsed = self._parse_options_string(opt_str)
-        if not parsed:
-            return False
-        for key in ("TS1_STATIC", "TS2_STATIC"):
-            val = str(parsed.get(key) or "").strip()
-            if val and re.search(r"[^\d,]", val):
-                return False
-        return True
+        from adn_server.application.report.payloads import peer_options_static_valid
+
+        return peer_options_static_valid(opt_str)
 
     def _should_apply_system_single_from_options(self, system_name: str) -> bool:
         """Whether peer OPTIONS may overwrite system ``SINGLE_MODE`` (legacy single-hotspot only).
@@ -668,12 +663,16 @@ class SubscriptionTableMixin:
 
     def _static_tg_lists_from_runtime_cfg(self, sys_cfg: dict[str, Any]) -> tuple[list[int], list[int]] | None:
         """Build static TG lists from TS1_STATIC / TS2_STATIC (updated when peers send RPTO)."""
+        from ..report.payloads import normalize_static_tg_slot_lists, static_tg_list
+
         prohibited_tgs = (0, 1, 2, 3, 4, 5, 9, 9990, 9991, 9992, 9993, 9994, 9995, 9996, 9997, 9998, 9999)
+        ts1_parts, ts2_parts = normalize_static_tg_slot_lists(
+            static_tg_list(sys_cfg.get("TS1_STATIC")),
+            static_tg_list(sys_cfg.get("TS2_STATIC")),
+        )
         ts1_list: list[int] = []
         ts2_list: list[int] = []
-        for tg_s in str(sys_cfg.get("TS1_STATIC") or "").split(","):
-            if not tg_s.strip():
-                continue
+        for tg_s in ts1_parts:
             try:
                 tg = int(tg_s.strip())
             except ValueError:
@@ -681,9 +680,7 @@ class SubscriptionTableMixin:
             if tg in prohibited_tgs:
                 continue
             ts1_list.append(tg)
-        for tg_s in str(sys_cfg.get("TS2_STATIC") or "").split(","):
-            if not tg_s.strip():
-                continue
+        for tg_s in ts2_parts:
             try:
                 tg = int(tg_s.strip())
             except ValueError:

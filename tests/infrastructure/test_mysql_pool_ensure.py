@@ -44,18 +44,20 @@ def test_describe_mysql_error_unknown_database() -> None:
 
 def test_ensure_peer_dynamic_tgs_applies_migration_once() -> None:
     cur = MagicMock()
-    cur.fetchone.side_effect = [None, (1,)]  # migration missing, then exists on re-check path
+    cur.fetchone.side_effect = [None, None, (1,)]  # 004 missing, 005 missing, table exists
     _ensure_peer_dynamic_tgs_on_cursor(cur)
     executed = [call[0][0] for call in cur.execute.call_args_list]
     assert any("schema_migrations" in sql for sql in executed)
     assert any("peer_dynamic_tgs" in sql for sql in executed)
+    assert any("UPDATE peer_dynamic_tgs" in sql for sql in executed)
     assert any("INSERT IGNORE INTO schema_migrations" in sql for sql in executed)
 
 
-def test_ensure_peer_dynamic_tgs_skips_when_migration_marked() -> None:
+def test_ensure_peer_dynamic_tgs_skips_when_migrations_marked() -> None:
     cur = MagicMock()
     cur.fetchone.return_value = (1,)
     _ensure_peer_dynamic_tgs_on_cursor(cur)
     executed = [call[0][0] for call in cur.execute.call_args_list]
     assert any("schema_migrations" in sql for sql in executed)
     assert not any("CREATE TABLE IF NOT EXISTS peer_dynamic_tgs" in sql for sql in executed)
+    assert not any("UPDATE peer_dynamic_tgs" in sql for sql in executed)

@@ -47,6 +47,224 @@ import time
 from typing import Any
 
 from ...domain import HBPF_DATA_SYNC, HBPF_SLT_VHEAD, bytes_3, bytes_4, int_id
+from ...domain.hbp_protocol import HBPF_SLT_VTERM, STREAM_TO
+
+RF_MODE_SIMPLEX = "simplex"
+RF_MODE_DUPLEX = "duplex"
+# MMDVMHost DMO: downlink DMRD with TS1 bit set is dropped; only TS2 passes (DMRNetwork.cpp).
+SIMPLEX_VOICE_SLOT = 2
+
+
+def _peer_freq_text(value: Any) -> str:
+    if isinstance(value, bytes):
+        return value.decode("utf-8", errors="replace").strip("\x00").strip()
+    return str(value or "").strip()
+
+
+def parse_peer_slots_code(slots: Any) -> int | None:
+    """MMDVM RPTC ``SLOTS`` byte: 4=simplex, 1–3=duplex (per MMDVMHost / Wireshark dissector)."""
+    if isinstance(slots, bytes):
+        raw = slots[:1]
+    elif slots is None:
+        return None
+    else:
+        text = str(slots).strip()
+        raw = text[:1].encode("ascii", errors="ignore") if text else b""
+    if not raw:
+        return None
+    try:
+        return int(raw.decode("ascii", errors="ignore"))
+    except ValueError:
+        return None
+
+
+def derive_peer_rf_mode(peer: dict[str, Any]) -> str:
+    """Classify hotspot RF from RPTC ``SLOTS`` and matching RX/TX frequencies."""
+    slots_i = parse_peer_slots_code(peer.get("SLOTS"))
+    if slots_i == 4:
+        return RF_MODE_SIMPLEX
+    rx = _peer_freq_text(peer.get("RX_FREQ"))
+    tx = _peer_freq_text(peer.get("TX_FREQ"))
+    if rx and tx and rx == tx:
+        return RF_MODE_SIMPLEX
+    return RF_MODE_DUPLEX
+
+
+def apply_peer_rf_mode(peer: dict[str, Any]) -> str:
+    """Store derived ``RF_MODE`` on the peer after RPTC (or test harness setup)."""
+    mode = derive_peer_rf_mode(peer)
+    peer["RF_MODE"] = mode
+    return mode
+
+
+def peer_rf_mode(peer: dict[str, Any]) -> str:
+    """Cached or derived simplex/duplex mode for downlink and monitor."""
+    cached = peer.get("RF_MODE")
+    if cached in (RF_MODE_SIMPLEX, RF_MODE_DUPLEX):
+        return str(cached)
+    return derive_peer_rf_mode(peer)
+
+
+def peer_is_simplex(peer: dict[str, Any]) -> bool:
+    return peer_rf_mode(peer) == RF_MODE_SIMPLEX
+
+
+def slot_has_active_voice(slot_st: dict[str, Any], pkt_time: float) -> bool:
+    """True when the slot has an active group-voice RX or TX leg (within STREAM_TO)."""
+    rx_type = slot_st.get("RX_TYPE")
+    if rx_type is not None and rx_type != HBPF_SLT_VTERM:
+        if (pkt_time - float(slot_st.get("RX_TIME", 0))) < STREAM_TO:
+            return True
+    tx_type = slot_st.get("TX_TYPE")
+    if tx_type is not None and tx_type != HBPF_SLT_VTERM:
+        if (pkt_time - float(slot_st.get("TX_TIME", 0))) < STREAM_TO:
+            return True
+    return False
+
+
+def _slot_last_voice_activity(slot_st: dict[str, Any]) -> tuple[bytes, float]:
+    """Most recent RX/TX TG and timestamp on this slot."""
+    rx_tg = slot_st.get("RX_TGID", b"\x00\x00\x00")
+    rx_t = float(slot_st.get("RX_TIME", 0))
+    tx_tg = slot_st.get("TX_TGID", b"\x00\x00\x00")
+    tx_t = float(slot_st.get("TX_TIME", 0))
+    if tx_t >= rx_t:
+        return tx_tg, tx_t
+    return rx_tg, rx_t
+
+
+def slot_in_group_hangtime(
+    slot_st: dict[str, Any],
+    incoming_tgid_b: bytes,
+    pkt_time: float,
+    group_hangtime: float,
+) -> bool:
+    """True when the slot is idle but other TGs are blocked for GROUP_HANGTIME seconds."""
+    hang = float(group_hangtime or 0)
+    if hang <= 0:
+        return False
+    if slot_has_active_voice(slot_st, pkt_time):
+        return False
+    last_tg, last_t = _slot_last_voice_activity(slot_st)
+    if last_t <= 0:
+        return False
+    if bytes_4(int_id(incoming_tgid_b)) == bytes_4(int_id(last_tg)):
+        return False
+    return (pkt_time - last_t) < hang
+
+
+def hbp_slot_blocks_group_voice(
+    slot_st: dict[str, Any],
+    incoming_tgid_b: bytes,
+    stream_id: bytes,
+    pkt_time: float,
+    group_hangtime: float,
+    *,
+    allow_same_stream: bool = True,
+) -> bool:
+    """True when group voice must not be routed or repeated to this slot.
+
+    Active QSO: any other stream is blocked (independent of GROUP_HANGTIME).
+    Post-VTERM: other TGs are blocked for ``group_hangtime`` seconds from config.
+    """
+    if allow_same_stream and stream_id:
+        if stream_id == slot_st.get("RX_STREAM_ID") or stream_id == slot_st.get("TX_STREAM_ID"):
+            return False
+    if slot_has_active_voice(slot_st, pkt_time):
+        return True
+    return slot_in_group_hangtime(slot_st, incoming_tgid_b, pkt_time, group_hangtime)
+
+
+def slot_status_peer_owner(slot_st: dict[str, Any]) -> bytes | None:
+    """Hotspot radio id that last owned this slot STATUS row (RX preferred, then TX)."""
+    rx = slot_st.get("RX_PEER")
+    if rx is not None and int_id(rx) != 0:
+        return bytes_4(int_id(rx))
+    tx = slot_st.get("TX_PEER")
+    if tx is not None and int_id(tx) != 0:
+        return bytes_4(int_id(tx))
+    return None
+
+
+def inject_only_defer_obp_hbp_slot_contention(
+    config: dict[str, Any],
+    target_system: str,
+    target_system_cfg: dict[str, Any],
+    *,
+    source_is_obp: bool,
+) -> bool:
+    """Whether OBP→MASTER ``to_target`` should skip global slot STATUS contention.
+
+    Inject-only proxies defer slot checks to ``send_peer`` (same as REPEAT):
+    per-peer ``hbp_slot_blocks_group_voice_for_peer`` + OPTIONS/UA slot remap.
+    Global STATUS on the bridge wire TS would block cross-slot downlink while
+    another peer is active on that TS even though recipients listen on the other TS.
+    """
+    if not source_is_obp:
+        return False
+    if target_system_cfg.get("MODE") != "MASTER":
+        return False
+    from ..proxy.deployment import is_proxy_inject_only
+
+    return is_proxy_inject_only(config, target_system)
+
+
+def hbp_slot_blocks_group_voice_for_peer(
+    slot_st: dict[str, Any],
+    peer_id: bytes,
+    incoming_tgid_b: bytes,
+    stream_id: bytes,
+    pkt_time: float,
+    group_hangtime: float,
+    *,
+    per_peer: bool,
+) -> bool:
+    """Slot contention scoped to one hotspot when ``per_peer`` (inject-only multi-HS).
+
+    ``STATUS[slot]`` is shared at the MASTER, but each connected hotspot has an
+    independent RF timeslot. Another peer's active QSO must not block this peer.
+    """
+    if per_peer:
+        owner = slot_status_peer_owner(slot_st)
+        if owner is not None and bytes_4(int_id(owner)) != bytes_4(int_id(peer_id)):
+            return False
+    return hbp_slot_blocks_group_voice(
+        slot_st, incoming_tgid_b, stream_id, pkt_time, group_hangtime,
+    )
+
+
+def hbp_ingress_new_stream_collision(
+    slot_st: dict[str, Any],
+    peer_id: bytes,
+    rf_src: bytes,
+    stream_id: bytes,
+    pkt_time: float,
+    *,
+    per_peer: bool,
+) -> bool:
+    """True when a new group-voice stream must drop on ingress (legacy routerHBP).
+
+    Legacy blocks only when the prior stream is still open (STREAM_TO), the RF
+    source differs (another subscriber), and — in inject-only — the slot row
+    belongs to this hotspot. Same-subscriber rekey with a new stream id is allowed.
+    """
+    from ...domain.hbp_protocol import HBPF_SLT_VTERM, STREAM_TO
+
+    if stream_id and stream_id == slot_st.get("RX_STREAM_ID"):
+        return False
+    if slot_st.get("RX_TYPE") == HBPF_SLT_VTERM:
+        return False
+    rx_time = float(slot_st.get("RX_TIME", 0) or 0)
+    if pkt_time >= rx_time + STREAM_TO:
+        return False
+    prev_rfs = slot_st.get("RX_RFS", b"\x00\x00\x00")
+    if int_id(rf_src) != 0 and bytes_4(int_id(rf_src)) == bytes_4(int_id(prev_rfs)):
+        return False
+    if per_peer:
+        owner = slot_status_peer_owner(slot_st)
+        if owner is not None and bytes_4(int_id(owner)) != bytes_4(int_id(peer_id)):
+            return False
+    return True
 
 
 def is_private_subscriber_dst(dst_id: bytes) -> bool:
@@ -376,15 +594,23 @@ def register_peer_ua_session(
         register_peer_ua_multi_tg(peer, peer_id, slot, tgid, sys_cfg)
         return
     from adn_server.application.report.payloads import resolve_peer_single_and_timer
+    from adn_server.domain.ua_timer import UA_SESSION_NEVER_EXPIRES_AT, ua_timer_is_infinite
 
     _, timer_min = resolve_peer_single_and_timer(peer_options_fields(peer), sys_cfg)
     pkt_time = time.time() if now is None else now
+    if ua_timer_is_infinite(timer_min):
+        expires_at = UA_SESSION_NEVER_EXPIRES_AT
+    else:
+        expires_at = pkt_time + float(timer_min) * 60.0
+    # One exclusive dynamic TG per hotspot (either RF slot); new local TX replaces all others.
+    other_slot = 2 if int(slot) == 1 else 1
+    clear_peer_ua_sessions(peer, sys_cfg, peer_id, slot=other_slot)
     _write_peer_ua_session(
         peer,
         peer_id,
         slot,
         int(tgid),
-        pkt_time + float(timer_min) * 60.0,
+        expires_at,
         sys_cfg,
     )
 
@@ -460,9 +686,54 @@ def export_peer_ua_sessions(
             continue
         exp = float(entry.get("expires", 0) or 0)
         tgid = int(entry.get("tgid", 0) or 0)
-        if is_ua_session_tgid(tgid) and exp > pkt_time:
-            out[str(slot)] = {"tgid": tgid, "expires_at": exp}
+        if is_ua_session_tgid(tgid) and (exp == 0.0 or exp > pkt_time):
+            row: dict[str, float | int] = {"tgid": tgid}
+            if exp > pkt_time:
+                row["expires_at"] = exp
+            out[str(slot)] = row
     return out
+
+
+def export_peer_ua_multi_tgs(
+    sys_cfg: dict[str, Any],
+    peer_id: bytes | int,
+) -> dict[str, list[int]]:
+    """Active SINGLE=0 multi-dynamic TG sets for monitor snapshot."""
+    pk = bytes_4(int_id(peer_id))
+    store = sys_cfg.get("_PEER_UA_MULTI_TGS")
+    if not isinstance(store, dict):
+        return {}
+    per_peer = store.get(pk)
+    if not isinstance(per_peer, dict):
+        return {}
+    out: dict[str, list[int]] = {}
+    for slot in (1, 2):
+        tg_set = per_peer.get(slot)
+        if isinstance(tg_set, set) and tg_set:
+            tgids = sorted(
+                int(t) for t in tg_set if is_ua_session_tgid(int(t))
+            )
+            if tgids:
+                out[str(slot)] = tgids
+    return out
+
+
+def sync_peer_ua_memory_from_store(
+    peer: dict[str, Any],
+    peer_id: bytes,
+    sys_cfg: dict[str, Any],
+) -> None:
+    """Copy persisted UA rows from ``sys_cfg`` onto the live peer dict after DB restore."""
+    pk = bytes_4(int_id(peer_id))
+    store = sys_cfg.get("_PEER_UA_SESSIONS")
+    if isinstance(store, dict):
+        per_peer = store.get(pk)
+        if isinstance(per_peer, dict) and per_peer:
+            ua = peer.setdefault("_UA_SESSION", {})
+            ua.clear()
+            for slot, entry in per_peer.items():
+                if isinstance(entry, dict):
+                    ua[slot] = dict(entry)
 
 
 def restore_peer_ua_entries_to_memory(
@@ -482,13 +753,23 @@ def restore_peer_ua_entries_to_memory(
             continue
         slot = int(entry.slot)
         if entry.single_mode:
+            from adn_server.domain.ua_timer import UA_SESSION_NEVER_EXPIRES_AT, ua_session_never_expires
+
             expires = entry.expires_at
-            if expires is not None and float(expires) <= pkt_time:
+            if (
+                expires is not None
+                and not ua_session_never_expires(float(expires))
+                and float(expires) <= pkt_time
+            ):
                 continue
             per_peer = sys_cfg.setdefault("_PEER_UA_SESSIONS", {}).setdefault(pk, {})
+            if expires is None or ua_session_never_expires(float(expires)):
+                exp_mem = UA_SESSION_NEVER_EXPIRES_AT
+            else:
+                exp_mem = float(expires)
             per_peer[slot] = {
                 "tgid": tgid,
-                "expires": float(expires) if expires is not None else 0.0,
+                "expires": exp_mem,
             }
             restored.append(tgid)
         else:
@@ -571,7 +852,8 @@ def peer_single_exclusive_tgid(
             entry = sessions.get(slot)
     if not isinstance(entry, dict):
         return None
-    if pkt_time >= float(entry.get("expires", 0)):
+    exp = float(entry.get("expires", 0) or 0)
+    if exp > 0 and pkt_time >= exp:
         return None
     locked = entry.get("tgid")
     return int(locked) if locked is not None else None
@@ -625,6 +907,8 @@ def peer_options_static_tg_slot(peer: dict[str, Any], tgid: int) -> int | None:
     tg = str(tgid)
     in_ts1 = tg in ts1
     in_ts2 = tg in ts2
+    if peer_is_simplex(peer) and (in_ts1 or in_ts2):
+        return SIMPLEX_VOICE_SLOT
     if in_ts1 and not in_ts2:
         return 1
     if in_ts2 and not in_ts1:
@@ -647,6 +931,8 @@ def peer_downlink_voice_slot(
     peer_id: bytes | None = None,
 ) -> int:
     """Monitor/BRDG field 7: TS where this peer listens for ``tgid`` (OPTIONS or UA)."""
+    if peer_is_simplex(peer):
+        return SIMPLEX_VOICE_SLOT
     static = peer_options_static_tg_slot(peer, tgid)
     if static is not None:
         return static
