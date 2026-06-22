@@ -79,6 +79,7 @@ class HbpRepeatStack:
         sockaddr: tuple[str, int],
         *,
         options: str | bytes | None = None,
+        simplex: bool | None = None,
     ) -> None:
         peer: dict[str, Any] = {
             "CONNECTION": "YES",
@@ -88,8 +89,19 @@ class HbpRepeatStack:
             "CALLSIGN": b"CE5RPY  ",
             "RADIO_ID": str(int.from_bytes(peer_id, "big")),
         }
+        if simplex is True:
+            peer["SLOTS"] = b"4"
+            peer["RX_FREQ"] = b"145500000"
+            peer["TX_FREQ"] = b"145500000"
+        elif simplex is False:
+            peer["SLOTS"] = b"3"
+            peer["RX_FREQ"] = b"145625000"
+            peer["TX_FREQ"] = b"145125000"
         if options is not None:
             peer["OPTIONS"] = options.encode("utf-8") if isinstance(options, str) else options
+        from adn_server.application.routing.helpers import apply_peer_rf_mode
+
+        apply_peer_rf_mode(peer)
         self.hbp._peers[peer_id] = peer
         self.config["SYSTEMS"][self.system_name].setdefault("PEERS", {})[peer_id] = (
             self.hbp._peers[peer_id]
