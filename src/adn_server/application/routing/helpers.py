@@ -49,6 +49,9 @@ from typing import Any
 from ...domain import HBPF_DATA_SYNC, HBPF_SLT_VHEAD, bytes_3, bytes_4, int_id
 from ...domain.hbp_protocol import HBPF_SLT_VTERM, STREAM_TO
 
+PeerVoiceSlotRow = dict[str, Any]
+PeerVoiceSlotMap = dict[int, PeerVoiceSlotRow]
+
 RF_MODE_SIMPLEX = "simplex"
 RF_MODE_DUPLEX = "duplex"
 # MMDVMHost DMO: downlink DMRD with TS1 bit set is dropped; only TS2 passes (DMRNetwork.cpp).
@@ -186,27 +189,130 @@ def slot_status_peer_owner(slot_st: dict[str, Any]) -> bytes | None:
     return None
 
 
+def peer_key_in_peers(peer_id: bytes, peers: dict[Any, Any] | None) -> bool:
+    """True when ``peer_id`` is a connected hotspot key in ``PEERS``."""
+    if not peers:
+        return False
+    pk = bytes_4(int_id(peer_id))
+    if pk in peers:
+        return True
+    for key in peers:
+        try:
+            if bytes_4(int_id(key)) == pk:
+                return True
+        except (TypeError, ValueError):
+            continue
+    return False
+
+
+def slot_status_hotspot_owner(
+    slot_st: dict[str, Any],
+    peers: dict[Any, Any] | None = None,
+) -> bytes | None:
+    """Connected hotspot owning this slot row; ignores bridge ``TX_PEER`` (e.g. OBP 73010)."""
+    for field in ("RX_PEER", "TX_PEER"):
+        raw = slot_st.get(field)
+        if raw is None or int_id(raw) == 0:
+            continue
+        pk = bytes_4(int_id(raw))
+        if peers is not None and not peer_key_in_peers(pk, peers):
+            continue
+        return pk
+    return None
+
+
+def peer_hotspot_voice_slot_busy(
+    peer_id: bytes,
+    voice_slot: int,
+    stream_id: bytes,
+    incoming_tgid_b: bytes,
+    slot_st: dict[str, Any],
+    peer_slots: PeerVoiceSlotMap | None,
+    hang_row: tuple[int, float] | None,
+    pkt_time: float,
+    group_hangtime: float,
+) -> bool:
+    """True when this hotspot must not receive another group stream on ``voice_slot``."""
+    pk = bytes_4(int_id(peer_id))
+    active = (peer_slots or {}).get(int(voice_slot))
+    if isinstance(active, dict):
+        active_stream = active.get("stream_id")
+        if stream_id and active_stream == stream_id:
+            return False
+        # Session stays open until VTERM clears ``peer_slots``; DMR voice has
+        # inter-burst gaps longer than STREAM_TO so time-since-last-packet must
+        # not release the slot to another TG mid-QSO.
+        return True
+    if bytes_4(int_id(slot_st.get("RX_PEER", b""))) == pk:
+        if slot_has_active_voice(slot_st, pkt_time) and stream_id != slot_st.get("RX_STREAM_ID"):
+            return True
+        if slot_in_group_hangtime(slot_st, incoming_tgid_b, pkt_time, group_hangtime):
+            return True
+    if hang_row is not None and float(group_hangtime or 0) > 0:
+        last_tg, last_t = hang_row
+        if int_id(incoming_tgid_b) != int(last_tg) and (pkt_time - float(last_t)) < float(group_hangtime):
+            return True
+    return False
+
+
+def master_per_peer_slot_contention(
+    config: dict[str, Any],
+    system_name: str,
+    system_cfg: dict[str, Any],
+    *,
+    connected_count: int = 0,
+) -> bool:
+    """True when slot busy/hangtime applies per hotspot, not globally on the MASTER row."""
+    if system_cfg.get("MODE") != "MASTER":
+        return False
+    from ..proxy.deployment import is_proxy_inject_only
+
+    if is_proxy_inject_only(config, system_name):
+        return True
+    return connected_count > 1
+
+
 def inject_only_defer_obp_hbp_slot_contention(
     config: dict[str, Any],
     target_system: str,
     target_system_cfg: dict[str, Any],
     *,
     source_is_obp: bool,
+    connected_count: int = 0,
 ) -> bool:
     """Whether OBP→MASTER ``to_target`` should skip global slot STATUS contention.
 
-    Inject-only proxies defer slot checks to ``send_peer`` (same as REPEAT):
-    per-peer ``hbp_slot_blocks_group_voice_for_peer`` + OPTIONS/UA slot remap.
-    Global STATUS on the bridge wire TS would block cross-slot downlink while
-    another peer is active on that TS even though recipients listen on the other TS.
+    Defer to ``send_peer`` (same as REPEAT): per-peer ``hbp_slot_blocks_group_voice_for_peer``
+    + OPTIONS/UA slot remap. Global STATUS on the bridge wire TS would block cross-slot
+    downlink while another peer is active on that TS even though recipients listen elsewhere.
     """
     if not source_is_obp:
         return False
     if target_system_cfg.get("MODE") != "MASTER":
         return False
-    from ..proxy.deployment import is_proxy_inject_only
+    return master_per_peer_slot_contention(
+        config, target_system, target_system_cfg, connected_count=connected_count,
+    )
 
-    return is_proxy_inject_only(config, target_system)
+
+def _downlink_same_stream_for_peer(
+    slot_st: dict[str, Any],
+    peer_id: bytes,
+    stream_id: bytes,
+) -> bool:
+    """True when ``stream_id`` continues an RF leg owned by ``peer_id`` (downlink fan-out)."""
+    if not stream_id:
+        return False
+    pid = bytes_4(int_id(peer_id))
+    if stream_id == slot_st.get("RX_STREAM_ID"):
+        rx_peer = slot_st.get("RX_PEER")
+        if rx_peer is not None and bytes_4(int_id(rx_peer)) == pid:
+            return True
+    if stream_id == slot_st.get("TX_STREAM_ID"):
+        tx_peer = slot_st.get("TX_PEER")
+        if tx_peer is not None and bytes_4(int_id(tx_peer)) == pid:
+            return True
+    return False
 
 
 def hbp_slot_blocks_group_voice_for_peer(
@@ -218,16 +324,41 @@ def hbp_slot_blocks_group_voice_for_peer(
     group_hangtime: float,
     *,
     per_peer: bool,
+    peers: dict[Any, Any] | None = None,
+    peer_slots: PeerVoiceSlotMap | None = None,
+    peer_hang_row: tuple[int, float] | None = None,
+    voice_slot: int | None = None,
 ) -> bool:
     """Slot contention scoped to one hotspot when ``per_peer`` (inject-only multi-HS).
 
     ``STATUS[slot]`` is shared at the MASTER, but each connected hotspot has an
     independent RF timeslot. Another peer's active QSO must not block this peer.
+
+    Inject-only OBP→HBP defers global contention and stamps bridge ``TX_*`` on the
+    shared slot row before ``send_peer``. Same-stream exemption must not treat that
+    bridge TX stamp as the hotspot's own leg while the peer is still on the air (RX).
     """
     if per_peer:
-        owner = slot_status_peer_owner(slot_st)
+        if voice_slot is not None and peer_hotspot_voice_slot_busy(
+            peer_id,
+            int(voice_slot),
+            stream_id,
+            incoming_tgid_b,
+            slot_st,
+            peer_slots,
+            peer_hang_row,
+            pkt_time,
+            group_hangtime,
+        ):
+            return True
+        owner = slot_status_hotspot_owner(slot_st, peers)
         if owner is not None and bytes_4(int_id(owner)) != bytes_4(int_id(peer_id)):
             return False
+        if _downlink_same_stream_for_peer(slot_st, peer_id, stream_id):
+            return False
+        if slot_has_active_voice(slot_st, pkt_time):
+            return True
+        return slot_in_group_hangtime(slot_st, incoming_tgid_b, pkt_time, group_hangtime)
     return hbp_slot_blocks_group_voice(
         slot_st, incoming_tgid_b, stream_id, pkt_time, group_hangtime,
     )
@@ -429,17 +560,30 @@ def is_special_tg(relay_table_key: str) -> bool:
 
 def parse_dmrd_route_fields(packet: bytes) -> tuple[int, int, str] | None:
     """Parse HBP DMRD slot, destination TG, and call type for downlink OPTIONS filter."""
-    if len(packet) < 17 or packet[:4] != b"DMRD":
+    burst = parse_dmrd_burst_fields(packet)
+    if burst is None:
+        return None
+    slot, _, _, _, dst_id, call_type = burst
+    return slot, int_id(dst_id), call_type
+
+
+def parse_dmrd_burst_fields(
+    packet: bytes,
+) -> tuple[int, int, int, bytes, bytes, str] | None:
+    """Parse wire slot, frame type, dtype, stream id, dst, call type from group DMRD."""
+    if len(packet) < 20 or packet[:4] != b"DMRD":
         return None
     bits = packet[15]
     slot = 2 if (bits & 0x80) else 1
     if bits & 0x40:
-        call_type = "unit"
-    elif (bits & 0x23) == 0x23:
+        return None
+    if (bits & 0x23) == 0x23:
         call_type = "vcsbk"
     else:
         call_type = "group"
-    return slot, int_id(packet[8:11]), call_type
+    frame_type = (bits & 0x30) >> 4
+    dtype_vseq = bits & 0xF
+    return slot, frame_type, dtype_vseq, packet[16:20], packet[8:11], call_type
 
 
 def _system_has_active_bridge_leg(
