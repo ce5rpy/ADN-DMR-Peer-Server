@@ -37,7 +37,11 @@ from adn_server.application.report import (
 )
 from adn_server.application.routing.helpers import peer_should_receive_group_voice
 from adn_server.application.report.payloads import (
+    parse_peer_options_fields,
     parse_peer_options_static,
+    peer_options_pass_only,
+    peer_options_pass_valid,
+    peer_options_static_valid,
     resolve_peer_single_and_timer,
 )
 from adn_server.domain import bytes_3, bytes_4
@@ -57,6 +61,90 @@ def test_parse_peer_options_static_ts2():
     ts1, ts2 = parse_peer_options_static(b"TS2=730444;TIMER=15;")
     assert ts1 == []
     assert ts2 == ["730444"]
+
+
+def test_malformed_comma_before_voice_rejects_static() -> None:
+    """WPSD RPTO typo: comma instead of semicolon between TS2 and VOICE (730264101)."""
+    opts = b"TS2=730444,VOICE=0;TIMER=300;"
+    assert peer_options_static_valid(opts) is False
+    assert parse_peer_options_static(opts) == ([], [])
+    assert parse_peer_options_fields(opts) == {}
+
+
+def test_build_topology_ignores_malformed_peer_options() -> None:
+    systems = {
+        "SYSTEM": {
+            "MODE": "MASTER",
+            "ENABLED": True,
+            "DEFAULT_UA_TIMER": 60,
+            "PEERS": {
+                bytes_4(730264101): {
+                    "CONNECTION": "YES",
+                    "OPTIONS": b"TS2=730444,VOICE=0;TIMER=300;",
+                },
+            },
+        },
+    }
+    doc = build_topology(systems, seq=1)
+    peer = doc["systems"][0]["peers"][0]
+    assert "ts2_static" not in peer
+    assert "ts1_static" not in peer
+    assert "options" not in peer
+    assert peer["ua_timer_min"] == 60.0
+
+
+def test_malformed_options_not_eligible_for_group_voice_downlink() -> None:
+    peer = {"OPTIONS": b"TS2=730444,VOICE=0;TIMER=300;"}
+    assert not peer_should_receive_group_voice(peer, 2, 730444, connected_count=8)
+
+
+def test_pass_only_options_valid_for_pass_not_static() -> None:
+    opts = b"PASS=secret123;"
+    assert peer_options_pass_only(opts) is True
+    assert peer_options_pass_valid(opts) is True
+    assert peer_options_static_valid(opts) is False
+    assert parse_peer_options_static(opts) == ([], [])
+    assert parse_peer_options_fields(opts) == {}
+
+
+def test_pass_combined_with_static_options_invalid() -> None:
+    opts = b"PASS=secret123;TS2=730444;SINGLE=1;"
+    assert peer_options_pass_valid(opts) is False
+    assert peer_options_static_valid(opts) is False
+    assert parse_peer_options_static(opts) == ([], [])
+
+
+def test_pass_with_malformed_static_rejects_all() -> None:
+    opts = b"PASS=secret123;TS2=730444,VOICE=0;TIMER=300;"
+    assert peer_options_pass_valid(opts) is False
+    assert peer_options_static_valid(opts) is False
+    assert parse_peer_options_static(opts) == ([], [])
+
+
+def test_pass_empty_value_invalid() -> None:
+    assert peer_options_pass_valid(b"PASS=;") is False
+    assert peer_options_pass_valid(b"PASS=;TS2=730;") is False
+
+
+def test_topology_pass_only_omits_options_and_static() -> None:
+    systems = {
+        "SYSTEM": {
+            "MODE": "MASTER",
+            "ENABLED": True,
+            "DEFAULT_UA_TIMER": 60,
+            "PEERS": {
+                bytes_4(730039101): {
+                    "CONNECTION": "YES",
+                    "OPTIONS": b"PASS=secret123;",
+                },
+            },
+        },
+    }
+    doc = build_topology(systems, seq=1)
+    peer = doc["systems"][0]["peers"][0]
+    assert "options" not in peer
+    assert "ts1_static" not in peer
+    assert "ts2_static" not in peer
 
 
 def test_resolve_peer_single_and_timer_yaml_defaults() -> None:
@@ -125,7 +213,7 @@ def test_build_topology_exports_peer_options_static() -> None:
     assert peer["options"] == "TS2=730444;TIMER=15;"
 
 
-def test_build_topology_omits_pass_from_peer_options() -> None:
+def test_build_topology_rejects_combined_pass_and_options() -> None:
     systems = {
         "SYSTEM": {
             "MODE": "MASTER",
@@ -140,8 +228,8 @@ def test_build_topology_omits_pass_from_peer_options() -> None:
     }
     doc = build_topology(systems, seq=1)
     peer = doc["systems"][0]["peers"][0]
-    assert peer["options"] == "TS2=730;SINGLE=1;"
-    assert "PASS" not in peer["options"]
+    assert "options" not in peer
+    assert "ts2_static" not in peer
 
 
 def test_build_topology_exports_master_static_tgs() -> None:
