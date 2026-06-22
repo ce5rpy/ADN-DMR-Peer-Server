@@ -60,6 +60,34 @@ def _peer_connected(peer: dict[str, Any]) -> bool:
     return peer.get("CONNECTION") == "YES"
 
 
+def _parse_options_kv(options: Any) -> dict[str, str]:
+    """Parse RPTO OPTIONS string into upper-case keys (legacy normalisation)."""
+    if options is None:
+        return {}
+    if isinstance(options, bytes):
+        text = options.decode("utf-8", errors="replace")
+    else:
+        text = str(options)
+    text = text.rstrip("\x00").encode("ascii", "ignore").decode()
+    text = re.sub(r"['\"]", "", text).strip()
+    if not text:
+        return {}
+    parsed: dict[str, str] = {}
+    for part in text.split(";"):
+        part = part.strip()
+        if "=" not in part:
+            continue
+        key, value = part.split("=", 1)
+        parsed[key.strip().upper()] = value.strip()
+    for old, new in (("TS1", "TS1_STATIC"), ("TS2", "TS2_STATIC"), ("TIMER", "DEFAULT_UA_TIMER")):
+        if old in parsed and new not in parsed:
+            parsed[new] = parsed[old]
+    return parsed
+
+
+_STATIC_TG_TOKEN_RE = re.compile(r"^\d+$")
+
+
 def static_tg_list(value: Any) -> list[str]:
     """Normalize legacy TS1_STATIC / TS2_STATIC (comma string or list) to string TG ids."""
     if value is None:
@@ -93,33 +121,61 @@ def normalize_static_tg_slot_lists(
     return dedupe_static_tg_list(ts1), dedupe_static_tg_list(ts2)
 
 
-def _parse_options_kv(options: Any) -> dict[str, str]:
-    """Parse RPTO OPTIONS string into upper-case keys (legacy normalisation)."""
-    if options is None:
-        return {}
-    if isinstance(options, bytes):
-        text = options.decode("utf-8", errors="replace")
-    else:
-        text = str(options)
-    text = text.rstrip("\x00").encode("ascii", "ignore").decode()
-    text = re.sub(r"['\"]", "", text).strip()
-    if not text:
-        return {}
-    parsed: dict[str, str] = {}
-    for part in text.split(";"):
-        part = part.strip()
-        if "=" not in part:
+def _static_slot_csv_valid(raw: str) -> bool:
+    """True when every comma-separated token in TS1/TS2 is a numeric talkgroup id."""
+    val = raw.strip()
+    if not val:
+        return True
+    if re.search(r"[^\d,]", val):
+        return False
+    for token in val.split(","):
+        token = token.strip()
+        if not token:
             continue
-        key, value = part.split("=", 1)
-        parsed[key.strip().upper()] = value.strip()
-    for old, new in (("TS1", "TS1_STATIC"), ("TS2", "TS2_STATIC"), ("TIMER", "DEFAULT_UA_TIMER")):
-        if old in parsed and new not in parsed:
-            parsed[new] = parsed[old]
-    return parsed
+        if not _STATIC_TG_TOKEN_RE.match(token):
+            return False
+    return True
+
+
+def peer_options_pass_only(options: Any) -> bool:
+    """True when OPTIONS is exclusively ``PASS=password`` (self-service RPTO)."""
+    parsed = _parse_options_kv(options)
+    return list(parsed.keys()) == ["PASS"] and bool(parsed["PASS"].strip())
+
+
+def peer_options_pass_valid(options: Any) -> bool:
+    """True when ``PASS=`` is absent or is the only key with a non-empty value."""
+    parsed = _parse_options_kv(options)
+    if "PASS" not in parsed:
+        return True
+    return peer_options_pass_only(options)
+
+
+def peer_options_static_valid(options: Any) -> bool:
+    """False when TS1/TS2 static lists contain non-numeric tokens (legacy bridge_master parity).
+
+    ``PASS=`` must be sent alone (self-service); combined PASS+OPTIONS is rejected here.
+    """
+    parsed = _parse_options_kv(options)
+    if not parsed:
+        return True
+    if "PASS" in parsed:
+        return False
+    for slot in (1, 2):
+        for i in range(1, 10):
+            key = f"TS{slot}_{i}"
+            if key in parsed and not _STATIC_TG_TOKEN_RE.match(parsed[key].strip()):
+                return False
+    for key in ("TS1_STATIC", "TS2_STATIC"):
+        if key in parsed and not _static_slot_csv_valid(parsed[key]):
+            return False
+    return True
 
 
 def parse_peer_options_fields(options: Any) -> dict[str, Any]:
     """Parse OPTIONS into static lists plus optional ``SINGLE`` / ``TIMER`` when present."""
+    if not peer_options_static_valid(options):
+        return {}
     parsed = _parse_options_kv(options)
     if not parsed:
         return {}
@@ -170,6 +226,8 @@ def resolve_peer_single_and_timer(
 
 def parse_peer_options_static(options: Any) -> tuple[list[str], list[str]]:
     """Parse hotspot RPTO OPTIONS (``TS1=…;TS2=…;``) into static TG id lists."""
+    if not peer_options_static_valid(options):
+        return [], []
     parsed = _parse_options_kv(options)
     if not parsed:
         return [], []
@@ -284,7 +342,7 @@ def _topology_peer_row(
         if text is not None:
             row[json_key] = text
     yaml_cfg = sys_cfg if isinstance(sys_cfg, dict) else {}
-    if "OPTIONS" in peer:
+    if "OPTIONS" in peer and peer_options_static_valid(peer.get("OPTIONS")):
         opt_text = _sanitized_peer_options_text(peer.get("OPTIONS"))
         if opt_text:
             row["options"] = opt_text

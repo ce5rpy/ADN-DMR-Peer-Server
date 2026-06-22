@@ -468,14 +468,9 @@ class SubscriptionTableMixin:
 
     def _options_static_lists_valid(self, opt_str: bytes | str) -> bool:
         """Legacy: malformed TS1/TS2 in OPTIONS aborts static bridge refresh."""
-        parsed = self._parse_options_string(opt_str)
-        if not parsed:
-            return False
-        for key in ("TS1_STATIC", "TS2_STATIC"):
-            val = str(parsed.get(key) or "").strip()
-            if val and re.search(r"[^\d,]", val):
-                return False
-        return True
+        from adn_server.application.report.payloads import peer_options_static_valid
+
+        return peer_options_static_valid(opt_str)
 
     def _should_apply_system_single_from_options(self, system_name: str) -> bool:
         """Whether peer OPTIONS may overwrite system ``SINGLE_MODE`` (legacy single-hotspot only).
