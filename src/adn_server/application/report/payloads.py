@@ -72,28 +72,25 @@ def static_tg_list(value: Any) -> list[str]:
     return [text] if text else []
 
 
+def dedupe_static_tg_list(parts: list[str]) -> list[str]:
+    """Collapse duplicate TG ids within one TS list (order preserved)."""
+    out: list[str] = []
+    seen: set[str] = set()
+    for tg in parts:
+        t = str(tg).strip()
+        if not t or t in seen:
+            continue
+        seen.add(t)
+        out.append(t)
+    return out
+
+
 def normalize_static_tg_slot_lists(
     ts1: list[str],
     ts2: list[str],
 ) -> tuple[list[str], list[str]]:
-    """Collapse duplicate TGs: unique per list, TS1 wins over TS2 (duplex OPTIONS)."""
-    ts1_out: list[str] = []
-    ts1_seen: set[str] = set()
-    for tg in ts1:
-        t = str(tg).strip()
-        if not t or t in ts1_seen:
-            continue
-        ts1_seen.add(t)
-        ts1_out.append(t)
-    ts2_out: list[str] = []
-    ts2_seen: set[str] = set()
-    for tg in ts2:
-        t = str(tg).strip()
-        if not t or t in ts1_seen or t in ts2_seen:
-            continue
-        ts2_seen.add(t)
-        ts2_out.append(t)
-    return ts1_out, ts2_out
+    """Dedupe within each slot list; same TG may appear on TS1 and TS2 (duplex)."""
+    return dedupe_static_tg_list(ts1), dedupe_static_tg_list(ts2)
 
 
 def _parse_options_kv(options: Any) -> dict[str, str]:
