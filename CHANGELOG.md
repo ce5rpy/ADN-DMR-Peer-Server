@@ -4,6 +4,21 @@ All notable changes to **adn-server** are documented here.
 
 <!-- version list -->
 
+## v2.0.6 (2026-06-22)
+
+### Bug Fixes
+
+- Tear down REPEAT and bridge TX per stream on concurrent duplex slots
+  ([#19](https://github.com/ce5rpy/ADN-DMR-Peer-Server/pull/19),
+  [`de05504`](https://github.com/ce5rpy/ADN-DMR-Peer-Server/commit/de05504a700193706dbae2acc0892b26daff3482))
+
+### Chores
+
+- **ci**: Require merge-commit release PRs for develop ff sync
+  ([#21](https://github.com/ce5rpy/ADN-DMR-Peer-Server/pull/21),
+  [`374cc68`](https://github.com/ce5rpy/ADN-DMR-Peer-Server/commit/374cc686efcdbae314e8b67d125032a0b1d22722))
+
+
 ## v2.0.5 (2026-06-21)
 
 ### Bug Fixes
