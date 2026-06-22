@@ -22,6 +22,8 @@
 
 from __future__ import annotations
 
+import time
+
 import pytest
 
 from adn_server.domain import bytes_4
@@ -217,6 +219,87 @@ def test_echo_tg_9990_reaches_caller_without_9990_in_options() -> None:
 
     pkts = [p for p in stack.transport.for_addr(("10.0.0.20", 62020)) if p[:4] == DMRD]
     assert len(pkts) == 1
+
+
+def test_repeat_skips_downlink_report_when_peer_slot_busy() -> None:
+    from adn_server.domain import bytes_3, bytes_4
+    from adn_server.domain.hbp_protocol import HBPF_SLT_VHEAD, HBPF_SLT_VTERM
+
+    stack = build_hbp_repeat_stack(talker_alias=False, system_name="MASTER-A")
+    stack.config["PROXY"] = {"TARGET_SYSTEM": "MASTER-A"}
+    stack.config["REPORTS"] = {"REPORT": True}
+    stack.config["GROUP_HANGTIME"] = 0
+    stack.hbp._CONFIG = stack.config
+    stack.register_peer(_PEER_TX, _ADDR_TX, options=f"TS2={_TG};")
+    stack.register_peer(_PEER_RX_MATCH, _ADDR_MATCH, options=f"TS2={_TG};")
+
+    stack.hbp.STATUS[2] = {
+        "RX_TYPE": HBPF_SLT_VHEAD,
+        "TX_TYPE": HBPF_SLT_VTERM,
+        "RX_TGID": bytes_3(_TG),
+        "RX_TIME": time.time(),
+        "RX_STREAM_ID": bytes_4(0xAABBCCDD),
+        "RX_RFS": bytes_3(7300999),
+        "RX_PEER": _PEER_RX_MATCH,
+    }
+
+    spec = PacketSpec(
+        peer_id=int.from_bytes(_PEER_TX, "big"),
+        rf_src=7300444,
+        dst_id=_TG,
+        slot=2,
+        stream_id=0x11223344,
+        payload=b"\x00" * 33,
+    )
+    stack.inject(DeterministicScenario.voice_head_spec(spec).data(), _ADDR_TX)
+
+    assert stack.transport.for_addr(_ADDR_MATCH) == []
+    tx_starts = [
+        e for e in stack.report_factory.events
+        if e.startswith(f"GROUP VOICE,START,TX,{stack.system_name},")
+    ]
+    assert tx_starts == []
+
+
+def test_repeat_delivers_when_only_other_hotspot_busy_on_slot() -> None:
+    """Peer B ingress and REPEAT proceed when peer A owns the shared STATUS row."""
+    from adn_server.domain import bytes_3, bytes_4
+    from adn_server.domain.hbp_protocol import HBPF_SLT_VHEAD, HBPF_SLT_VTERM
+
+    stack = build_hbp_repeat_stack(talker_alias=False, system_name="MASTER-A")
+    stack.config["PROXY"] = {"TARGET_SYSTEM": "MASTER-A"}
+    stack.config["REPORTS"] = {"REPORT": True}
+    stack.config["GROUP_HANGTIME"] = 0
+    stack.hbp._CONFIG = stack.config
+    stack.register_peer(_PEER_TX, _ADDR_TX, options=f"TS2={_TG};")
+    stack.register_peer(_PEER_RX_MATCH, _ADDR_MATCH, options=f"TS2={_TG};")
+
+    stack.hbp.STATUS[2] = {
+        "RX_TYPE": HBPF_SLT_VHEAD,
+        "TX_TYPE": HBPF_SLT_VTERM,
+        "RX_TGID": bytes_3(7144),
+        "RX_TIME": time.time(),
+        "RX_STREAM_ID": bytes_4(0xAABBCCDD),
+        "RX_RFS": bytes_3(7300999),
+        "RX_PEER": _PEER_TX,
+    }
+
+    spec = PacketSpec(
+        peer_id=int.from_bytes(_PEER_RX_MATCH, "big"),
+        rf_src=7300445,
+        dst_id=_TG,
+        slot=2,
+        stream_id=0x55667788,
+        payload=b"\x00" * 33,
+    )
+    stack.inject(DeterministicScenario.voice_head_spec(spec).data(), _ADDR_MATCH)
+
+    rx_starts = [
+        e for e in stack.report_factory.events
+        if e.startswith(f"GROUP VOICE,START,RX,{stack.system_name},")
+    ]
+    assert len(rx_starts) == 1
+    assert str(int.from_bytes(_PEER_RX_MATCH, "big")) in rx_starts[0]
 
 
 def test_rpto_does_not_overwrite_system_options_on_inject_proxy() -> None:

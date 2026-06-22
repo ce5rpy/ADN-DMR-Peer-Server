@@ -44,6 +44,7 @@ from .ports import AclRouter, DmrEmbeddedLcEncoder, SubscriptionStore, TalkerAli
 from .talker_alias_use_cases import TalkerAliasUseCases
 from .routing.helpers import (
     hbp_slot_blocks_group_voice,
+    inject_only_defer_obp_hbp_slot_contention,
     slot_has_active_voice,
     is_private_subscriber_dst,
     is_unit_data_ingress,
@@ -274,24 +275,33 @@ class RoutingUseCases(
         _obp_grp = source_is_obp and call_type in ("group", "vcsbk")
         if frame_type == HBPF_DATA_SYNC and dtype_vseq == HBPF_SLT_VHEAD:
             if not _obp_grp:
-                _rx_report_peer = peer_id
+                _is_new_rx_stream = True
                 if not source_is_obp:
-                    _rx_report_peer = resolve_voice_peer_id(
-                        peer_id,
-                        rf_src,
-                        system_name,
-                        systems_cfg,
+                    protocols = self._get_protocols() if self._get_protocols else {}
+                    src_proto = protocols.get(system_name) if protocols else None
+                    if src_proto and getattr(src_proto, "STATUS", None):
+                        slot_st = src_proto.STATUS.get(slot, {})
+                        if isinstance(slot_st, dict):
+                            _is_new_rx_stream = stream_id != slot_st.get("RX_STREAM_ID")
+                if _is_new_rx_stream:
+                    _rx_report_peer = peer_id
+                    if not source_is_obp:
+                        _rx_report_peer = resolve_voice_peer_id(
+                            peer_id,
+                            rf_src,
+                            system_name,
+                            systems_cfg,
+                        )
+                    self._send_routing_event(
+                        "GROUP VOICE,START,RX,{},{},{},{},{},{}".format(
+                            system_name,
+                            int_id(stream_id),
+                            int_id(_rx_report_peer),
+                            int_id(rf_src),
+                            slot,
+                            int_id(dst_id),
+                        )
                     )
-                self._send_routing_event(
-                    "GROUP VOICE,START,RX,{},{},{},{},{},{}".format(
-                        system_name,
-                        int_id(stream_id),
-                        int_id(_rx_report_peer),
-                        int_id(rf_src),
-                        slot,
-                        int_id(dst_id),
-                    )
-                )
         elif frame_type == HBPF_DATA_SYNC and dtype_vseq == HBPF_SLT_VTERM:
             if not _obp_grp:
                 duration = 0.0
@@ -607,12 +617,22 @@ class RoutingUseCases(
                         _ts_st["TX_TYPE"] = HBPF_SLT_VTERM
                     # Slot contention: active QSO blocks any other stream; post-VTERM uses GROUP_HANGTIME.
                     _group_hangtime = float(_target_system.get("GROUP_HANGTIME", 0) or 0)
-                    if not _closing_bridge_leg and hbp_slot_blocks_group_voice(
-                        _ts_st,
-                        entry_tgid_b,
-                        stream_id,
-                        pkt_time,
-                        _group_hangtime,
+                    _defer_slot_contention = inject_only_defer_obp_hbp_slot_contention(
+                        self._config,
+                        entry["SYSTEM"],
+                        _target_system,
+                        source_is_obp=source_is_obp,
+                    )
+                    if (
+                        not _closing_bridge_leg
+                        and not _defer_slot_contention
+                        and hbp_slot_blocks_group_voice(
+                            _ts_st,
+                            entry_tgid_b,
+                            stream_id,
+                            pkt_time,
+                            _group_hangtime,
+                        )
                     ):
                         if not _src_stream_st.get("CONTENTION"):
                             _src_stream_st["CONTENTION"] = True

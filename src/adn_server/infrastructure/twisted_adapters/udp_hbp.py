@@ -44,7 +44,7 @@ from ...application.routing.helpers import (
     apply_peer_rf_mode,
     clear_peer_rx_status_slots,
     clear_peer_ua_sessions,
-    hbp_slot_blocks_group_voice,
+    hbp_slot_blocks_group_voice_for_peer,
     is_special_tg,
     is_unit_data_ingress,
     parse_dmrd_route_fields,
@@ -53,6 +53,7 @@ from ...application.routing.helpers import (
     peer_should_receive_group_voice,
     peer_single_exclusive_tgid,
     register_peer_ua_session,
+    sync_peer_ua_memory_from_store,
     remap_dmrd_to_peer_static_slot,
     resolve_voice_peer_id,
     repeat_downlink_report_slot,
@@ -576,29 +577,44 @@ class HBPProtocol(DatagramProtocol):
             sys_cfg=self._config,
         )
 
+    def _peer_would_accept_group_dmrd(self, peer_id: bytes, packet: bytes) -> bool:
+        """True when a group/vcsbk DMRD would be sent to ``peer_id`` (OPTIONS + slot contention)."""
+        if packet[:4] != DMRD or not self._peer_should_receive_dmrd(peer_id, packet):
+            return False
+        peer = self._peers.get(peer_id)
+        parsed = parse_dmrd_route_fields(packet)
+        if parsed is None or peer is None:
+            return True
+        wire_slot, tgid, call_type = parsed
+        if call_type not in ("group", "vcsbk"):
+            return True
+        voice_slot = peer_downlink_voice_slot(
+            peer, wire_slot, tgid, self._config, peer_id=peer_id,
+        )
+        if voice_slot not in self.STATUS:
+            return True
+        per_peer = self._inject_multi_peer_options_filter()
+        if not per_peer:
+            return True
+        stream_id = packet[4:8] if len(packet) >= 8 else b""
+        hang = float(self._config.get("GROUP_HANGTIME", 0) or 0)
+        return not hbp_slot_blocks_group_voice_for_peer(
+            self.STATUS[voice_slot],
+            peer_id,
+            bytes_3(tgid),
+            stream_id,
+            time.time(),
+            hang,
+            per_peer=per_peer,
+        )
+
     def send_peer(self, _peer: bytes, _packet: bytes) -> None:
         if _packet[:4] == DMRD:
             if not self._peer_should_receive_dmrd(_peer, _packet):
                 return
+            if not self._peer_would_accept_group_dmrd(_peer, _packet):
+                return
             peer = self._peers.get(_peer)
-            parsed = parse_dmrd_route_fields(_packet)
-            if parsed is not None and peer is not None:
-                wire_slot, tgid, call_type = parsed
-                if call_type in ("group", "vcsbk"):
-                    voice_slot = peer_downlink_voice_slot(
-                        peer, wire_slot, tgid, self._config, peer_id=_peer,
-                    )
-                    if voice_slot in self.STATUS:
-                        stream_id = _packet[4:8] if len(_packet) >= 8 else b""
-                        hang = float(self._config.get("GROUP_HANGTIME", 0) or 0)
-                        if hbp_slot_blocks_group_voice(
-                            self.STATUS[voice_slot],
-                            bytes_3(tgid),
-                            stream_id,
-                            time.time(),
-                            hang,
-                        ):
-                            return
             if peer is not None:
                 _packet = remap_dmrd_to_peer_static_slot(
                     _packet, peer, self._config, peer_id=_peer,
@@ -1122,11 +1138,15 @@ class HBPProtocol(DatagramProtocol):
                         )
                         _repeat_tail = b"".join([_data[15:20], _dmrpkt_out, _data[53:]])
                     _repeat_pkt = b"".join([_data[:11], _peer_id, _repeat_tail])
-                    _downlink_peers = tuple(
+                    _repeat_candidates = tuple(
                         _p for _p in self._iter_downlink_peers(_repeat_pkt) if _p != _peer_id
                     )
-                    for _peer in _downlink_peers:
+                    _downlink_peers: list[bytes] = []
+                    for _peer in _repeat_candidates:
+                        if not self._peer_would_accept_group_dmrd(_peer, _repeat_pkt):
+                            continue
                         self.send_peer(_peer, _repeat_pkt)
+                        _downlink_peers.append(_peer)
                     if _downlink_peers and _slot in self.STATUS:
                         _slot_st = self.STATUS[_slot]
                         if (
@@ -1142,7 +1162,7 @@ class HBPProtocol(DatagramProtocol):
                                 _dst_id,
                                 _slot,
                                 _stream_id,
-                                _downlink_peers,
+                                tuple(_downlink_peers),
                                 pkt_time=pkt_time,
                             )
                         elif (
@@ -1160,7 +1180,7 @@ class HBPProtocol(DatagramProtocol):
                                 _dst_id,
                                 _slot,
                                 _stream_id,
-                                _downlink_peers,
+                                tuple(_downlink_peers),
                                 pkt_time=pkt_time,
                                 duration=pkt_time - float(_start),
                             )
@@ -1185,7 +1205,14 @@ class HBPProtocol(DatagramProtocol):
                     _call_type, _dtype_vseq, _stream_id,
                     self.STATUS.get(_slot, {}).get("RX_STREAM_ID") if _slot in self.STATUS else None,
                 )
-                if _slot in self.STATUS and not _unit_data:
+                _accepted = False
+                if self._dmrd_received:
+                    _accepted = self._dmrd_received(
+                        self._system, _peer_id, _rf_src, _dst_id, _seq, _slot,
+                        _call_type, _frame_type, _dtype_vseq, _stream_id, _data,
+                        ingress_pkt_time=pkt_time,
+                    )
+                if _slot in self.STATUS and not _unit_data and _accepted:
                     if _stream_id != self.STATUS[_slot].get("RX_STREAM_ID"):
                         self.STATUS[_slot]["RX_START"] = pkt_time
                         if _frame_type == HBPF_DATA_SYNC and _dtype_vseq == HBPF_SLT_VHEAD and len(dmrpkt) >= 33:
@@ -1196,13 +1223,13 @@ class HBPProtocol(DatagramProtocol):
                                 self.STATUS[_slot]["RX_LC"] = LC_OPT + _dst_id + _rf_src
                         else:
                             self.STATUS[_slot]["RX_LC"] = LC_OPT + _dst_id + _rf_src
-                _accepted = False
-                if self._dmrd_received:
-                    _accepted = self._dmrd_received(
-                        self._system, _peer_id, _rf_src, _dst_id, _seq, _slot,
-                        _call_type, _frame_type, _dtype_vseq, _stream_id, _data,
-                        ingress_pkt_time=pkt_time,
-                    )
+                    self.STATUS[_slot]["RX_PEER"] = _peer_id
+                    self.STATUS[_slot]["RX_SEQ"] = _seq
+                    self.STATUS[_slot]["RX_RFS"] = _rf_src
+                    self.STATUS[_slot]["RX_TYPE"] = _dtype_vseq
+                    self.STATUS[_slot]["RX_TGID"] = _dst_id
+                    self.STATUS[_slot]["RX_TIME"] = pkt_time
+                    self.STATUS[_slot]["RX_STREAM_ID"] = _stream_id
                 _voice = self._CONFIG.get("VOICE", {})
                 if _accepted and self._on_handle_recording and _voice.get("RECORDING_ENABLED") and int_id(_dst_id) == _voice.get("RECORDING_TG") and _slot == _voice.get("RECORDING_TIMESLOT", 2):
                     dmrpkt = _data[20:53] if len(_data) >= 53 else _data[20:]
@@ -1231,15 +1258,6 @@ class HBPProtocol(DatagramProtocol):
                     and self._on_talker_alias_stream_end
                 ):
                     self._on_talker_alias_stream_end(self._system, _stream_id)
-                # Legacy routerHBP: unit data (_data_call) does not mark slot RX busy.
-                if _slot in self.STATUS and not _unit_data:
-                    self.STATUS[_slot]["RX_PEER"] = _peer_id
-                    self.STATUS[_slot]["RX_SEQ"] = _seq
-                    self.STATUS[_slot]["RX_RFS"] = _rf_src
-                    self.STATUS[_slot]["RX_TYPE"] = _dtype_vseq
-                    self.STATUS[_slot]["RX_TGID"] = _dst_id
-                    self.STATUS[_slot]["RX_TIME"] = pkt_time
-                    self.STATUS[_slot]["RX_STREAM_ID"] = _stream_id
 
         elif _command == RPTL:
             _peer_id = _data[4:8]
@@ -1401,11 +1419,22 @@ class HBPProtocol(DatagramProtocol):
                         self._push_config_to_monitor()
                         if self._dynamic_tg_uc is not None:
                             _sys_cfg = self._CONFIG.get("SYSTEMS", {}).get(self._system, {})
+                            _peer_for_restore = _peer_id
+
+                            def _after_dynamic_tg_restore(tgids: list[int]) -> list[int]:
+                                if tgids:
+                                    peer = self._peers.get(_peer_for_restore)
+                                    if peer is not None:
+                                        sync_peer_ua_memory_from_store(
+                                            peer, _peer_for_restore, _sys_cfg,
+                                        )
+                                    self._mark_downlink_index_dirty()
+                                    self._push_config_to_monitor()
+                                return tgids
+
                             self._dynamic_tg_uc.restore_peer(
                                 _peer_id, self._system, _sys_cfg,
-                            ).addCallback(
-                                lambda tgids: self._mark_downlink_index_dirty() if tgids else tgids
-                            )
+                            ).addCallback(_after_dynamic_tg_restore)
                 else:
                     self.transport.write(b"".join([MSTNAK, _peer_id]), _sockaddr)
                     logger.info("(%s) Peer info from Radio ID that has not logged in: %s", self._system, int_id(_peer_id))
@@ -1600,7 +1629,14 @@ class HBPProtocol(DatagramProtocol):
                     _call_type, _dtype_vseq, _stream_id,
                     self.STATUS.get(_slot, {}).get("RX_STREAM_ID") if _slot in self.STATUS else None,
                 )
-                if _slot in self.STATUS and not _unit_data:
+                _accepted = False
+                if self._dmrd_received:
+                    _accepted = self._dmrd_received(
+                        self._system, _peer_id, _rf_src, _dst_id, _seq, _slot,
+                        _call_type, _frame_type, _dtype_vseq, _stream_id, _data,
+                        ingress_pkt_time=pkt_time,
+                    )
+                if _slot in self.STATUS and not _unit_data and _accepted:
                     if _stream_id != self.STATUS[_slot].get("RX_STREAM_ID"):
                         self.STATUS[_slot]["RX_START"] = pkt_time
                         if _frame_type == HBPF_DATA_SYNC and _dtype_vseq == HBPF_SLT_VHEAD and len(dmrpkt) >= 33:
@@ -1611,13 +1647,13 @@ class HBPProtocol(DatagramProtocol):
                                 self.STATUS[_slot]["RX_LC"] = LC_OPT + _dst_id + _rf_src
                         else:
                             self.STATUS[_slot]["RX_LC"] = LC_OPT + _dst_id + _rf_src
-                _accepted = False
-                if self._dmrd_received:
-                    _accepted = self._dmrd_received(
-                        self._system, _peer_id, _rf_src, _dst_id, _seq, _slot,
-                        _call_type, _frame_type, _dtype_vseq, _stream_id, _data,
-                        ingress_pkt_time=pkt_time,
-                    )
+                    self.STATUS[_slot]["RX_PEER"] = _peer_id
+                    self.STATUS[_slot]["RX_SEQ"] = _seq
+                    self.STATUS[_slot]["RX_RFS"] = _rf_src
+                    self.STATUS[_slot]["RX_TYPE"] = _dtype_vseq
+                    self.STATUS[_slot]["RX_TGID"] = _dst_id
+                    self.STATUS[_slot]["RX_TIME"] = pkt_time
+                    self.STATUS[_slot]["RX_STREAM_ID"] = _stream_id
                 _voice = self._CONFIG.get("VOICE", {})
                 if _accepted and self._on_handle_recording and _voice.get("RECORDING_ENABLED") and int_id(_dst_id) == _voice.get("RECORDING_TG") and _slot == _voice.get("RECORDING_TIMESLOT", 2):
                     dmrpkt = _data[20:53] if len(_data) >= 53 else _data[20:]
@@ -1640,16 +1676,6 @@ class HBPProtocol(DatagramProtocol):
                     and self._on_in_band_signalling
                 ):
                     self._on_in_band_signalling(self._system, _slot, _dst_id, pkt_time)
-                if _slot in self.STATUS and not _unit_data:
-                    if _stream_id != self.STATUS[_slot].get("RX_STREAM_ID"):
-                        self.STATUS[_slot]["RX_START"] = pkt_time
-                    self.STATUS[_slot]["RX_PEER"] = _peer_id
-                    self.STATUS[_slot]["RX_SEQ"] = _seq
-                    self.STATUS[_slot]["RX_RFS"] = _rf_src
-                    self.STATUS[_slot]["RX_TYPE"] = _dtype_vseq
-                    self.STATUS[_slot]["RX_TGID"] = _dst_id
-                    self.STATUS[_slot]["RX_TIME"] = pkt_time
-                    self.STATUS[_slot]["RX_STREAM_ID"] = _stream_id
 
         elif _command == DMRA:
             if len(_data) >= DMRA_PACKET_LEN:

@@ -89,6 +89,7 @@ class ReportServerFactory(Factory):
         self._systems: dict[str, Any] = {}
         self._bridges: dict[str, Any] = {}
         self._peer_slot_map: Callable[[], dict[bytes, int]] | None = None
+        self._master_status: Callable[[], dict[str, Any] | None] | None = None
 
     def buildProtocol(self, addr: Any) -> ReportProtocol | None:
         allowed = self._config.get("REPORTS", {}).get("REPORT_CLIENTS", ["127.0.0.1"])
@@ -113,6 +114,10 @@ class ReportServerFactory(Factory):
     def set_peer_slot_map(self, provider: Callable[[], dict[bytes, int]] | None) -> None:
         """Provide proxy upstream slot indices for monitor topology expansion."""
         self._peer_slot_map = provider
+
+    def set_master_status(self, provider: Callable[[], dict[str, Any] | None] | None) -> None:
+        """Provide inject-target HBP STATUS for monitor downlink slot contention."""
+        self._master_status = provider
 
     def _systems_for_report(self) -> dict[str, Any]:
         systems = self._systems
@@ -160,8 +165,9 @@ class ReportServerFactory(Factory):
 
     def send_routing_event(self, event: str) -> None:
         peer_slots = self._peer_slot_map() if self._peer_slot_map is not None else None
+        master_status = self._master_status() if self._master_status is not None else None
         events = remap_inject_proxy_voice_events(
-            event, self._config, self._systems, peer_slots, self._bridges
+            event, self._config, self._systems, peer_slots, self._bridges, master_status
         )
         for mapped in events:
             frames = self._wire.bridge_event_frames(mapped)

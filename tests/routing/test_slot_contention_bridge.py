@@ -64,6 +64,8 @@ def test_bridge_blocks_second_tg_on_busy_slot_with_zero_hangtime() -> None:
 
 def test_send_peer_blocks_downlink_on_busy_slot() -> None:
     stack = build_hbp_repeat_stack(talker_alias=False, system_name="MASTER-A")
+    stack.config["PROXY"] = {"TARGET_SYSTEM": "MASTER-A"}
+    stack.hbp._CONFIG = stack.config
     peer = bytes_4(730002)
     addr = ("10.0.0.31", 62031)
     stack.register_peer(peer, addr, options=f"TS2={_TG_A},{_TG_B};")
@@ -73,6 +75,7 @@ def test_send_peer_blocks_downlink_on_busy_slot() -> None:
         "RX_TGID": bytes_3(_TG_A),
         "RX_TIME": time.time(),
         "RX_STREAM_ID": bytes_4(0xCCCCCCCC),
+        "RX_PEER": peer,
     }
     spec = PacketSpec(dst_id=_TG_B, slot=2, stream_id=0xDDDDDDDD, payload=b"\x00" * 33)
     pkt = DeterministicScenario.voice_burst_spec(spec, seq=1, dtype_vseq=1).data()

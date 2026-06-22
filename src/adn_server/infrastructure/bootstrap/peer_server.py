@@ -125,10 +125,15 @@ class ReportSenderAdapter(ReportSender):
 def _wire_proxy_report_slots(
     report_factory: ReportServerFactory,
     proxy_state: Any,
+    protocols: dict[str, Any],
+    config: dict[str, Any],
 ) -> None:
-    """Bind proxy upstream slot indices into monitor topology expansion."""
+    """Bind proxy upstream slot indices and MASTER STATUS into monitor topology expansion."""
+    target = proxy_target_system(config) if proxy_state is not None else None
+
     if proxy_state is None:
         report_factory.set_peer_slot_map(None)
+        report_factory.set_master_status(None)
         return
 
     def _slot_map() -> dict[bytes, int]:
@@ -138,7 +143,15 @@ def _wire_proxy_report_slots(
             if slot.report_slot is not None
         }
 
+    def _status() -> dict[str, Any] | None:
+        if not target:
+            return None
+        protocol = protocols.get(target)
+        status = getattr(protocol, "STATUS", None) if protocol is not None else None
+        return status if isinstance(status, dict) else None
+
     report_factory.set_peer_slot_map(_slot_map)
+    report_factory.set_master_status(_status)
 
 
 def _seed_echo_routing_table(config: dict) -> dict:
@@ -598,12 +611,12 @@ def run_peer_server(
         )
         if proxy_state is not None:
             apply_proxy_config_reload(proxy_state, config, logger=logger)
-            _wire_proxy_report_slots(report_factory, proxy_state)
+            _wire_proxy_report_slots(report_factory, proxy_state, protocols, config)
         elif proxy_enabled and proxy_target_system(config):
             proxy_state = start_proxy_service(config, protocols, logger=logger)
-            _wire_proxy_report_slots(report_factory, proxy_state)
+            _wire_proxy_report_slots(report_factory, proxy_state, protocols, config)
         else:
-            _wire_proxy_report_slots(report_factory, None)
+            _wire_proxy_report_slots(report_factory, None, protocols, config)
         if result.added or result.removed or result.updated or result.rebound:
             _on_config_systems_changed()
 
@@ -711,7 +724,7 @@ def run_peer_server(
                 proxy_state.stop()
 
         reactor.addSystemEventTrigger("before", "shutdown", _stop_proxy)
-        _wire_proxy_report_slots(report_factory, proxy_state)
+        _wire_proxy_report_slots(report_factory, proxy_state, protocols, config)
 
     logger.info("(GLOBAL) ADN DMR Peer Server started. Use adn-dmr-server as reference.")
     reactor.suggestThreadPoolSize(100)

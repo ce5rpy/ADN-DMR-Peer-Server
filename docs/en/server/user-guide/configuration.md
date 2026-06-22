@@ -211,7 +211,7 @@ Do **not** run standalone **`adn-proxy`** on the same **`LISTEN_PORT`** when the
 
 **Uses one shared connection pool** for:
 
-- **Dynamic TG persistence** — table **`peer_dynamic_tgs`** (per-peer user-activated TGs across hotspot reconnects). The server **creates the table on startup** if missing (migration id **`004_peer_dynamic_tgs`**, same schema as adn-monitor).
+- **Dynamic TG persistence** — table **`peer_dynamic_tgs`** (per-peer user-activated TGs across hotspot reconnects). The server **creates the table on startup** if missing (migration id **`004_peer_dynamic_tgs`**, same schema as adn-monitor). Migration **`005_peer_dynamic_tgs_expires_null`** normalizes legacy infinite-timer rows (`expires_at = 0` → `NULL` for `single_mode = 1`).
 - **Integrated self-service** — table **`Clients`** when **`SELF_SERVICE.USE_SELFSERVICE: true`**.
 
 Startup aborts with a clear log if MariaDB is unreachable or **`DATABASE`** is incomplete. Install **`mysqlclient`** (`pip install -e ".[selfservice]"` includes it).

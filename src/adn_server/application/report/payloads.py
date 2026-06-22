@@ -26,7 +26,13 @@ import re
 import time
 from typing import Any
 
-from adn_server.application.routing.helpers import export_peer_ua_sessions, peer_rf_mode
+from adn_server.domain.ua_timer import normalize_ua_timer_minutes, ua_timer_is_infinite
+
+from adn_server.application.routing.helpers import (
+    export_peer_ua_multi_tgs,
+    export_peer_ua_sessions,
+    peer_rf_mode,
+)
 from adn_server.domain import int_id
 
 REPORT_PROTOCOL = 2
@@ -214,13 +220,20 @@ def resolve_peer_single_and_timer(
         single = coerce_bool(sys_cfg.get("SINGLE_MODE", False))
     if "TIMER" in fields:
         try:
-            timer = float(fields["TIMER"])
+            timer = normalize_ua_timer_minutes(
+                float(fields["TIMER"]),
+                default_minutes=float(sys_cfg.get("DEFAULT_UA_TIMER", 10)),
+            )
         except (TypeError, ValueError):
-            timer = float(sys_cfg.get("DEFAULT_UA_TIMER", 10))
+            timer = normalize_ua_timer_minutes(
+                float(sys_cfg.get("DEFAULT_UA_TIMER", 10)),
+                default_minutes=10.0,
+            )
     else:
-        timer = float(sys_cfg.get("DEFAULT_UA_TIMER", 10))
-    if timer <= 0:
-        timer = 35_791_394.0
+        timer = normalize_ua_timer_minutes(
+            float(sys_cfg.get("DEFAULT_UA_TIMER", 10)),
+            default_minutes=10.0,
+        )
     return single, timer
 
 
@@ -363,8 +376,10 @@ def _topology_peer_row(
         if ts2:
             row["ts2_static"] = ts2
     row["single_mode"] = single
-    row["ua_timer_min"] = timer
+    if not ua_timer_is_infinite(timer):
+        row["ua_timer_min"] = timer
     row["ua_sessions"] = export_peer_ua_sessions(yaml_cfg, peer_key)
+    row["ua_multi_tgs"] = export_peer_ua_multi_tgs(yaml_cfg, peer_key)
     row["rf_mode"] = peer_rf_mode(peer)
     return row
 

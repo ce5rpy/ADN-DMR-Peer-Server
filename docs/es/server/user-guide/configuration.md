@@ -211,7 +211,7 @@ Se arranca siempre que exista un bloque **`PROXY`** (ver `adn-server.example.yam
 
 **Un solo pool** compartido para:
 
-- **Persistencia de TG dinámicos** — tabla **`peer_dynamic_tgs`** (TG activados por usuario por hotspot entre reconexiones). El servidor **crea la tabla al arranque** si falta (migración **`004_peer_dynamic_tgs`**, mismo esquema que adn-monitor).
+- **Persistencia de TG dinámicos** — tabla **`peer_dynamic_tgs`** (TG activados por usuario por hotspot entre reconexiones). El servidor **crea la tabla al arranque** si falta (migración **`004_peer_dynamic_tgs`**, mismo esquema que adn-monitor). La migración **`005_peer_dynamic_tgs_expires_null`** corrige filas legacy de timer infinito (`expires_at = 0` → `NULL` cuando `single_mode = 1`).
 - **Self-service integrado** — tabla **`Clients`** con **`SELF_SERVICE.USE_SELFSERVICE: true`**.
 
 El arranque aborta con log claro si MariaDB no responde o **`DATABASE`** está incompleto. Instala **`mysqlclient`** (`pip install -e ".[selfservice]"` lo incluye).

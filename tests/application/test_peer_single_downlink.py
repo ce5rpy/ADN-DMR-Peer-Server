@@ -498,3 +498,22 @@ def test_new_tx_replaces_single_session_tg() -> None:
     assert not peer_should_receive_group_voice(
         peer, 2, 7305, peer_id=peer_id, connected_count=8, sys_cfg=sys_cfg, now=now + 121
     )
+
+
+def test_single_tx_on_other_slot_replaces_indigo_and_unblocks_downlink() -> None:
+    """Dual-slot hotspot: TX 7144 TS1 must clear stale 730444 session on TS2 (SINGLE=1)."""
+    peer = {"OPTIONS": b"TS2=714,71442;SINGLE=1;TIMER=300;"}
+    sys_cfg = _sys_cfg()
+    peer_id = _peer_id()
+    now = 1_000_000.0
+    register_peer_ua_session(peer, peer_id, 2, 730444, sys_cfg, now=now)
+    assert not peer_should_receive_group_voice(
+        peer, 1, 7144, peer_id=peer_id, connected_count=2, sys_cfg=sys_cfg, now=now + 10,
+    )
+    register_peer_ua_session(peer, peer_id, 1, 7144, sys_cfg, now=now + 20)
+    assert peer_should_receive_group_voice(
+        peer, 1, 7144, peer_id=peer_id, connected_count=2, sys_cfg=sys_cfg, now=now + 30,
+    )
+    assert not peer_should_receive_group_voice(
+        peer, 2, 730444, peer_id=peer_id, connected_count=2, sys_cfg=sys_cfg, now=now + 30,
+    )

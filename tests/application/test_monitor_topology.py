@@ -22,6 +22,8 @@
 
 from __future__ import annotations
 
+import time
+
 import pytest
 
 from adn_server.application.report.monitor_topology import (
@@ -30,7 +32,8 @@ from adn_server.application.report.monitor_topology import (
     remap_inject_proxy_voice_events,
 )
 from adn_server.application.report.payloads import build_topology
-from adn_server.domain.value_objects import bytes_4
+from adn_server.domain import bytes_3, bytes_4
+from adn_server.domain.hbp_protocol import HBPF_SLT_VHEAD, HBPF_SLT_VTERM
 
 
 def _peer(*, connected: bool = True, options: bytes | None = None) -> dict:
@@ -236,6 +239,7 @@ def test_local_hotspot_rx_companion_tx_uses_receiver_options_slot() -> None:
         hs1: _peer(options=b"TS1=7144;TS2=714,71442;"),
         hs2: _peer(options=b"TS2=7144;"),
     }
+    peers[hs1]["TX_FREQ"] = b"145825000"
     config = _proxy_config(peers)
     peer_slots = {hs1: 0, hs2: 1}
     raw = "GROUP VOICE,START,RX,SYSTEM,3262598598,730002,730002,2,7144"
@@ -312,3 +316,78 @@ def test_non_proxy_systems_pass_through_unchanged() -> None:
         "ECHO": {"MODE": "MASTER", "ENABLED": True, "PEERS": {}},
     }
     assert expand_inject_proxy_systems({"PROXY": {"TARGET_SYSTEM": "SYSTEM"}}, systems) is systems
+
+
+def test_companion_tx_suppressed_when_receiver_slot_busy_on_other_tg() -> None:
+    """HS1 TX on TG 7144 must not get companion TX for another peer's TG on the same slot."""
+    hs1 = bytes_4(730001)
+    hs2 = bytes_4(730002)
+    peers = {
+        hs1: _peer(options=b"TS2=7144,730444;"),
+        hs2: _peer(options=b"TS2=730444;"),
+    }
+    config = _proxy_config(peers)
+    peer_slots = {hs1: 0, hs2: 1}
+    master_status = {
+        2: {
+            "RX_TYPE": HBPF_SLT_VHEAD,
+            "TX_TYPE": HBPF_SLT_VTERM,
+            "RX_PEER": hs1,
+            "RX_TGID": bytes_3(7144),
+            "RX_STREAM_ID": bytes_4(0x11111111),
+            "RX_TIME": time.time(),
+            "TX_TIME": 0.0,
+        }
+    }
+    raw = "GROUP VOICE,START,RX,SYSTEM,222,730002,730002,2,730444"
+    events = remap_inject_proxy_voice_events(
+        raw, config, config["SYSTEMS"], peer_slots, master_status=master_status
+    )
+    assert len(events) == 1
+    assert events[0].split(",")[3] == "SYSTEM-1"
+    assert events[0].split(",")[2] == "RX"
+
+
+def test_obp_tx_fanout_suppressed_when_peer_slot_busy_on_other_tg() -> None:
+    """OBP downlink TX must not light a hotspot already active on another TG (same slot)."""
+    hs1 = bytes_4(7300444)
+    hs2 = bytes_4(7301795)
+    peers = {
+        hs1: _peer(options=b"TS2=7144,730444;"),
+        hs2: _peer(options=b"TS2=730444;"),
+    }
+    config = _proxy_config(peers)
+    peer_slots = {hs1: 3, hs2: 1}
+    master_status = {
+        2: {
+            "RX_TYPE": HBPF_SLT_VHEAD,
+            "TX_TYPE": HBPF_SLT_VTERM,
+            "RX_PEER": hs1,
+            "RX_TGID": bytes_3(7144),
+            "RX_STREAM_ID": bytes_4(0x11111111),
+            "RX_TIME": time.time(),
+            "TX_TIME": 0.0,
+        }
+    }
+    raw = "GROUP VOICE,START,TX,SYSTEM,4100887026,73010,7000002,2,730444"
+    bridges = {
+        "730444": [
+            {
+                "SYSTEM": "SYSTEM",
+                "TS": 2,
+                "TGID": 730444,
+                "ACTIVE": True,
+                "TO_TYPE": "ON",
+            }
+        ],
+    }
+    events = remap_inject_proxy_voice_events(
+        raw,
+        config,
+        config["SYSTEMS"],
+        peer_slots,
+        bridges,
+        master_status=master_status,
+    )
+    systems = {ev.split(",")[3] for ev in events}
+    assert systems == {"SYSTEM-1"}
