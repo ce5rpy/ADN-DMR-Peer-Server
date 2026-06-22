@@ -81,10 +81,10 @@ def test_parse_peer_options_static_strips_wrapping_quotes() -> None:
     assert ts2 == ["730444"]
 
 
-def test_parse_peer_options_static_ts1_wins_duplicate_tg_on_ts2() -> None:
+def test_parse_peer_options_static_same_tg_on_both_slots() -> None:
     ts1, ts2 = parse_peer_options_static(b"TS1=730,7144;TS2=730,730444;")
     assert ts1 == ["730", "7144"]
-    assert ts2 == ["730444"]
+    assert ts2 == ["730", "730444"]
 
 
 def test_parse_peer_options_static_dedupes_within_slot() -> None:
@@ -93,11 +93,11 @@ def test_parse_peer_options_static_dedupes_within_slot() -> None:
     assert ts2 == ["730", "730444"]
 
 
-def test_peer_options_static_tg_slot_duplex_duplicate_only_on_ts1() -> None:
+def test_peer_options_static_tg_slot_ambiguous_when_on_both_slots() -> None:
     from adn_server.application.routing.helpers import peer_options_static_tg_slot
 
     peer = {"OPTIONS": b"TS1=730;TS2=730;"}
-    assert peer_options_static_tg_slot(peer, 730) == 1
+    assert peer_options_static_tg_slot(peer, 730) is None
 
 
 def test_quoted_options_eligible_for_group_voice_downlink() -> None:
