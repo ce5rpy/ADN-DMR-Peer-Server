@@ -35,6 +35,22 @@ from adn_server.domain.dynamic_tg import DynamicTgEntry
 logger = logging.getLogger(__name__)
 
 
+def _expires_at_db_value(expires_at: float | None) -> int | None:
+    """Map runtime expiry to signed INT column (NULL = no wall-clock expiry)."""
+    from adn_server.domain.ua_timer import ua_session_never_expires
+
+    if expires_at is None:
+        return None
+    if ua_session_never_expires(float(expires_at)):
+        return None
+    exp = int(expires_at)
+    if exp <= 0:
+        return None
+    if exp > 2147483647:
+        return 2147483647
+    return exp
+
+
 def _row_to_entry(row: tuple[Any, ...]) -> DynamicTgEntry:
     return DynamicTgEntry(
         int_id=int(row[0]),
@@ -55,7 +71,9 @@ class MysqlDynamicTgRepository(DynamicTgStore):
 
     def upsert(self, entry: DynamicTgEntry) -> None:
         updated = int(entry.updated_at or time.time())
-        expires = int(entry.expires_at) if entry.expires_at is not None else None
+        expires = _expires_at_db_value(
+            float(entry.expires_at) if entry.expires_at is not None else None
+        )
         self._pool.runOperation(
             """INSERT INTO peer_dynamic_tgs
                (int_id, system_name, slot, tgid, single_mode, expires_at, updated_at)

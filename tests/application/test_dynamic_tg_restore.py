@@ -128,6 +128,32 @@ def test_restore_single_preserves_absolute_expires_timestamp() -> None:
     assert per_peer[2]["expires"] - reconnect_at == pytest.approx(26.0 * 60.0, rel=0.01)
 
 
+def test_restore_single_infinite_expires_at_zero() -> None:
+    """TIMER=0 / infinite SINGLE sessions use expires_at=0 and must restore from DB."""
+    from adn_server.domain.ua_timer import UA_SESSION_NEVER_EXPIRES_AT
+
+    peer_id = _peer_id()
+    sys_cfg = _sys_cfg()
+    now = 1_000_000.0
+    entries = [
+        DynamicTgEntry(
+            int_id=730039101,
+            system_name="MASTER-A",
+            slot=1,
+            tgid=7144,
+            single_mode=True,
+            expires_at=UA_SESSION_NEVER_EXPIRES_AT,
+            updated_at=now,
+        ),
+    ]
+    restored = restore_peer_ua_entries_to_memory(sys_cfg, peer_id, entries, now=now + 10)
+    assert restored == [7144]
+    peer = {"OPTIONS": b"TS2=714,71442;SINGLE=1;TIMER=0;"}
+    assert peer_should_receive_group_voice(
+        peer, 1, 7144, peer_id=peer_id, connected_count=2, sys_cfg=sys_cfg, now=now + 20,
+    )
+
+
 def test_purge_expired_peer_ua_sessions() -> None:
     peer_id = _peer_id()
     sys_cfg = _sys_cfg()

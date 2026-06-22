@@ -44,6 +44,7 @@ from .ports import AclRouter, DmrEmbeddedLcEncoder, SubscriptionStore, TalkerAli
 from .talker_alias_use_cases import TalkerAliasUseCases
 from .routing.helpers import (
     hbp_slot_blocks_group_voice,
+    inject_only_defer_obp_hbp_slot_contention,
     slot_has_active_voice,
     is_private_subscriber_dst,
     is_unit_data_ingress,
@@ -616,12 +617,22 @@ class RoutingUseCases(
                         _ts_st["TX_TYPE"] = HBPF_SLT_VTERM
                     # Slot contention: active QSO blocks any other stream; post-VTERM uses GROUP_HANGTIME.
                     _group_hangtime = float(_target_system.get("GROUP_HANGTIME", 0) or 0)
-                    if not _closing_bridge_leg and hbp_slot_blocks_group_voice(
-                        _ts_st,
-                        entry_tgid_b,
-                        stream_id,
-                        pkt_time,
-                        _group_hangtime,
+                    _defer_slot_contention = inject_only_defer_obp_hbp_slot_contention(
+                        self._config,
+                        entry["SYSTEM"],
+                        _target_system,
+                        source_is_obp=source_is_obp,
+                    )
+                    if (
+                        not _closing_bridge_leg
+                        and not _defer_slot_contention
+                        and hbp_slot_blocks_group_voice(
+                            _ts_st,
+                            entry_tgid_b,
+                            stream_id,
+                            pkt_time,
+                            _group_hangtime,
+                        )
                     ):
                         if not _src_stream_st.get("CONTENTION"):
                             _src_stream_st["CONTENTION"] = True

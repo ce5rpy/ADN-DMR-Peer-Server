@@ -53,6 +53,7 @@ from ...application.routing.helpers import (
     peer_should_receive_group_voice,
     peer_single_exclusive_tgid,
     register_peer_ua_session,
+    sync_peer_ua_memory_from_store,
     remap_dmrd_to_peer_static_slot,
     resolve_voice_peer_id,
     repeat_downlink_report_slot,
@@ -1418,11 +1419,22 @@ class HBPProtocol(DatagramProtocol):
                         self._push_config_to_monitor()
                         if self._dynamic_tg_uc is not None:
                             _sys_cfg = self._CONFIG.get("SYSTEMS", {}).get(self._system, {})
+                            _peer_for_restore = _peer_id
+
+                            def _after_dynamic_tg_restore(tgids: list[int]) -> list[int]:
+                                if tgids:
+                                    peer = self._peers.get(_peer_for_restore)
+                                    if peer is not None:
+                                        sync_peer_ua_memory_from_store(
+                                            peer, _peer_for_restore, _sys_cfg,
+                                        )
+                                    self._mark_downlink_index_dirty()
+                                    self._push_config_to_monitor()
+                                return tgids
+
                             self._dynamic_tg_uc.restore_peer(
                                 _peer_id, self._system, _sys_cfg,
-                            ).addCallback(
-                                lambda tgids: self._mark_downlink_index_dirty() if tgids else tgids
-                            )
+                            ).addCallback(_after_dynamic_tg_restore)
                 else:
                     self.transport.write(b"".join([MSTNAK, _peer_id]), _sockaddr)
                     logger.info("(%s) Peer info from Radio ID that has not logged in: %s", self._system, int_id(_peer_id))

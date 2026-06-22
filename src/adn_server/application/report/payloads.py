@@ -28,7 +28,11 @@ from typing import Any
 
 from adn_server.domain.ua_timer import normalize_ua_timer_minutes, ua_timer_is_infinite
 
-from adn_server.application.routing.helpers import export_peer_ua_sessions, peer_rf_mode
+from adn_server.application.routing.helpers import (
+    export_peer_ua_multi_tgs,
+    export_peer_ua_sessions,
+    peer_rf_mode,
+)
 from adn_server.domain import int_id
 
 REPORT_PROTOCOL = 2
@@ -375,6 +379,7 @@ def _topology_peer_row(
     if not ua_timer_is_infinite(timer):
         row["ua_timer_min"] = timer
     row["ua_sessions"] = export_peer_ua_sessions(yaml_cfg, peer_key)
+    row["ua_multi_tgs"] = export_peer_ua_multi_tgs(yaml_cfg, peer_key)
     row["rf_mode"] = peer_rf_mode(peer)
     return row
 

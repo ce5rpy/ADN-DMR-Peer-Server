@@ -61,6 +61,14 @@ def test_upsert_issues_insert(repo: MysqlDynamicTgRepository) -> None:
     assert args[3] == 7305
 
 
+def test_upsert_infinite_expires_stored_as_null(repo: MysqlDynamicTgRepository) -> None:
+    from adn_server.domain.ua_timer import UA_SESSION_NEVER_EXPIRES_AT
+
+    repo.upsert(_entry(expires_at=UA_SESSION_NEVER_EXPIRES_AT))
+    _sql, args = repo._pool.runOperation.call_args[0]  # noqa: SLF001
+    assert args[5] is None
+
+
 def test_replace_single_slot_deletes_then_upserts(repo: MysqlDynamicTgRepository) -> None:
     repo.replace_single_slot(_entry())
     delete_sql = repo._pool.runOperation.call_args_list[0][0][0]  # noqa: SLF001

@@ -33,6 +33,7 @@ from adn_server.infrastructure.persistence.database_config import validate_datab
 logger = logging.getLogger(__name__)
 
 _PEER_DYNAMIC_TGS_MIGRATION = "004_peer_dynamic_tgs"
+_PEER_DYNAMIC_TGS_EXPIRES_NULL_MIGRATION = "005_peer_dynamic_tgs_expires_null"
 
 _MYSQL_HINTS: dict[int, str] = {
     1045: "check DATABASE.DB_USERNAME and DB_PASSWORD in adn-server.yaml",
@@ -60,6 +61,10 @@ _CREATE_PEER_DYNAMIC_TGS = """CREATE TABLE IF NOT EXISTS peer_dynamic_tgs (
     KEY idx_peer_system (int_id, system_name),
     KEY idx_expires (expires_at)
 ) DEFAULT CHARSET=utf8mb4"""
+
+_UPDATE_PEER_DYNAMIC_EXPIRES_NULL = """UPDATE peer_dynamic_tgs
+SET expires_at = NULL
+WHERE single_mode = 1 AND expires_at = 0"""
 
 
 def describe_mysql_error(err: Exception) -> str:
@@ -114,14 +119,40 @@ def _mark_migration(cursor: Any, migration_id: str) -> None:
     )
 
 
-def _ensure_peer_dynamic_tgs_on_cursor(cursor: Any) -> None:
-    """Server-owned table; same migration id/DLL as adn-monitor ``004_peer_dynamic_tgs``."""
+def _table_exists(cursor: Any, table: str) -> bool:
+    cursor.execute(
+        "SELECT 1 FROM information_schema.TABLES "
+        "WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = %s",
+        (table,),
+    )
+    return cursor.fetchone() is not None
+
+
+def apply_migrations_on_cursor(cursor: Any) -> None:
+    """Incremental migrations shared with adn-monitor ``schema_migrations`` ids."""
     cursor.execute(_CREATE_SCHEMA_MIGRATIONS)
-    if _migration_applied(cursor, _PEER_DYNAMIC_TGS_MIGRATION):
-        return
-    cursor.execute(_CREATE_PEER_DYNAMIC_TGS)
-    _mark_migration(cursor, _PEER_DYNAMIC_TGS_MIGRATION)
-    logger.info("(DATABASE) applied migration %s (peer_dynamic_tgs)", _PEER_DYNAMIC_TGS_MIGRATION)
+
+    if not _migration_applied(cursor, _PEER_DYNAMIC_TGS_MIGRATION):
+        cursor.execute(_CREATE_PEER_DYNAMIC_TGS)
+        _mark_migration(cursor, _PEER_DYNAMIC_TGS_MIGRATION)
+        logger.info(
+            "(DATABASE) applied migration %s (peer_dynamic_tgs)",
+            _PEER_DYNAMIC_TGS_MIGRATION,
+        )
+
+    if not _migration_applied(cursor, _PEER_DYNAMIC_TGS_EXPIRES_NULL_MIGRATION):
+        if _table_exists(cursor, "peer_dynamic_tgs"):
+            cursor.execute(_UPDATE_PEER_DYNAMIC_EXPIRES_NULL)
+        _mark_migration(cursor, _PEER_DYNAMIC_TGS_EXPIRES_NULL_MIGRATION)
+        logger.info(
+            "(DATABASE) applied migration %s (peer_dynamic_tgs expires_at cleanup)",
+            _PEER_DYNAMIC_TGS_EXPIRES_NULL_MIGRATION,
+        )
+
+
+def _ensure_peer_dynamic_tgs_on_cursor(cursor: Any) -> None:
+    """Server-owned table; same migration ids/DLL as adn-monitor."""
+    apply_migrations_on_cursor(cursor)
 
 
 def ensure_database_sync(

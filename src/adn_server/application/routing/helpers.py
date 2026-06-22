@@ -186,6 +186,29 @@ def slot_status_peer_owner(slot_st: dict[str, Any]) -> bytes | None:
     return None
 
 
+def inject_only_defer_obp_hbp_slot_contention(
+    config: dict[str, Any],
+    target_system: str,
+    target_system_cfg: dict[str, Any],
+    *,
+    source_is_obp: bool,
+) -> bool:
+    """Whether OBP→MASTER ``to_target`` should skip global slot STATUS contention.
+
+    Inject-only proxies defer slot checks to ``send_peer`` (same as REPEAT):
+    per-peer ``hbp_slot_blocks_group_voice_for_peer`` + OPTIONS/UA slot remap.
+    Global STATUS on the bridge wire TS would block cross-slot downlink while
+    another peer is active on that TS even though recipients listen on the other TS.
+    """
+    if not source_is_obp:
+        return False
+    if target_system_cfg.get("MODE") != "MASTER":
+        return False
+    from ..proxy.deployment import is_proxy_inject_only
+
+    return is_proxy_inject_only(config, target_system)
+
+
 def hbp_slot_blocks_group_voice_for_peer(
     slot_st: dict[str, Any],
     peer_id: bytes,
@@ -579,6 +602,9 @@ def register_peer_ua_session(
         expires_at = UA_SESSION_NEVER_EXPIRES_AT
     else:
         expires_at = pkt_time + float(timer_min) * 60.0
+    # One exclusive dynamic TG per hotspot (either RF slot); new local TX replaces all others.
+    other_slot = 2 if int(slot) == 1 else 1
+    clear_peer_ua_sessions(peer, sys_cfg, peer_id, slot=other_slot)
     _write_peer_ua_session(
         peer,
         peer_id,
@@ -668,6 +694,48 @@ def export_peer_ua_sessions(
     return out
 
 
+def export_peer_ua_multi_tgs(
+    sys_cfg: dict[str, Any],
+    peer_id: bytes | int,
+) -> dict[str, list[int]]:
+    """Active SINGLE=0 multi-dynamic TG sets for monitor snapshot."""
+    pk = bytes_4(int_id(peer_id))
+    store = sys_cfg.get("_PEER_UA_MULTI_TGS")
+    if not isinstance(store, dict):
+        return {}
+    per_peer = store.get(pk)
+    if not isinstance(per_peer, dict):
+        return {}
+    out: dict[str, list[int]] = {}
+    for slot in (1, 2):
+        tg_set = per_peer.get(slot)
+        if isinstance(tg_set, set) and tg_set:
+            tgids = sorted(
+                int(t) for t in tg_set if is_ua_session_tgid(int(t))
+            )
+            if tgids:
+                out[str(slot)] = tgids
+    return out
+
+
+def sync_peer_ua_memory_from_store(
+    peer: dict[str, Any],
+    peer_id: bytes,
+    sys_cfg: dict[str, Any],
+) -> None:
+    """Copy persisted UA rows from ``sys_cfg`` onto the live peer dict after DB restore."""
+    pk = bytes_4(int_id(peer_id))
+    store = sys_cfg.get("_PEER_UA_SESSIONS")
+    if isinstance(store, dict):
+        per_peer = store.get(pk)
+        if isinstance(per_peer, dict) and per_peer:
+            ua = peer.setdefault("_UA_SESSION", {})
+            ua.clear()
+            for slot, entry in per_peer.items():
+                if isinstance(entry, dict):
+                    ua[slot] = dict(entry)
+
+
 def restore_peer_ua_entries_to_memory(
     sys_cfg: dict[str, Any],
     peer_id: bytes,
@@ -685,13 +753,23 @@ def restore_peer_ua_entries_to_memory(
             continue
         slot = int(entry.slot)
         if entry.single_mode:
+            from adn_server.domain.ua_timer import UA_SESSION_NEVER_EXPIRES_AT, ua_session_never_expires
+
             expires = entry.expires_at
-            if expires is not None and float(expires) <= pkt_time:
+            if (
+                expires is not None
+                and not ua_session_never_expires(float(expires))
+                and float(expires) <= pkt_time
+            ):
                 continue
             per_peer = sys_cfg.setdefault("_PEER_UA_SESSIONS", {}).setdefault(pk, {})
+            if expires is None or ua_session_never_expires(float(expires)):
+                exp_mem = UA_SESSION_NEVER_EXPIRES_AT
+            else:
+                exp_mem = float(expires)
             per_peer[slot] = {
                 "tgid": tgid,
-                "expires": float(expires) if expires is not None else 0.0,
+                "expires": exp_mem,
             }
             restored.append(tgid)
         else:

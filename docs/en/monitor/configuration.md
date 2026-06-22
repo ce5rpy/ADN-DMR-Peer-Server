@@ -109,6 +109,7 @@ Obsolete **`WEBSOCKET_SERVER`** YAML (Twisted on a separate port) is ignored; us
 | Migration | Table / change |
 |-----------|----------------|
 | **`004_peer_dynamic_tgs`** | **`peer_dynamic_tgs`** — per-peer dynamic TG rows written by **adn-server 2.0.0-rc.3+** (shared schema). |
+| **`005_peer_dynamic_tgs_expires_null`** | Data fix: `expires_at = 0` → `NULL` for `single_mode = 1` (infinite UA timer rows). |
 
 **adn-server** also ensures **`peer_dynamic_tgs`** exists on startup (idempotent). Either path is sufficient; both can run against the same **`hbmon`** database.
 
