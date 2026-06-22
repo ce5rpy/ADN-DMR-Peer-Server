@@ -41,11 +41,14 @@ from twisted.internet import reactor, task
 from twisted.internet.protocol import DatagramProtocol
 
 from ...application.routing.helpers import (
+    apply_peer_rf_mode,
     clear_peer_rx_status_slots,
     clear_peer_ua_sessions,
+    hbp_slot_blocks_group_voice,
     is_special_tg,
     is_unit_data_ingress,
     parse_dmrd_route_fields,
+    peer_downlink_voice_slot,
     peer_matches_rf_source,
     peer_should_receive_group_voice,
     peer_single_exclusive_tgid,
@@ -578,6 +581,24 @@ class HBPProtocol(DatagramProtocol):
             if not self._peer_should_receive_dmrd(_peer, _packet):
                 return
             peer = self._peers.get(_peer)
+            parsed = parse_dmrd_route_fields(_packet)
+            if parsed is not None and peer is not None:
+                wire_slot, tgid, call_type = parsed
+                if call_type in ("group", "vcsbk"):
+                    voice_slot = peer_downlink_voice_slot(
+                        peer, wire_slot, tgid, self._config, peer_id=_peer,
+                    )
+                    if voice_slot in self.STATUS:
+                        stream_id = _packet[4:8] if len(_packet) >= 8 else b""
+                        hang = float(self._config.get("GROUP_HANGTIME", 0) or 0)
+                        if hbp_slot_blocks_group_voice(
+                            self.STATUS[voice_slot],
+                            bytes_3(tgid),
+                            stream_id,
+                            time.time(),
+                            hang,
+                        ):
+                            return
             if peer is not None:
                 _packet = remap_dmrd_to_peer_static_slot(
                     _packet, peer, self._config, peer_id=_peer,
@@ -1350,6 +1371,7 @@ class HBPProtocol(DatagramProtocol):
                     _this_peer["URL"] = _data[98:222]
                     _this_peer["SOFTWARE_ID"] = _data[222:262]
                     _this_peer["PACKAGE_ID"] = _data[262:302]
+                    _rf_mode = apply_peer_rf_mode(_this_peer)
                     if ("ALLOW_UNREG_ID" in self._config and not self._config["ALLOW_UNREG_ID"]) and _this_peer["CALLSIGN"].decode("utf8", errors="replace").rstrip() != self.validate_id(_peer_id):
                         self._remove_peer(_peer_id)
                         if self._config.get("PROXY_CONTROL"):
@@ -1360,6 +1382,19 @@ class HBPProtocol(DatagramProtocol):
                     else:
                         self.send_peer(_peer_id, b"".join([RPTACK, _peer_id]))
                         logger.info("(%s) Peer %s (%s) has sent repeater configuration, Package ID: %s, Software ID: %s, Desc: %s", self._system, _this_peer["CALLSIGN"], _this_peer["RADIO_ID"], self._peers[_peer_id]["PACKAGE_ID"].decode("utf8", errors="replace").rstrip(), self._peers[_peer_id]["SOFTWARE_ID"].decode("utf8", errors="replace").rstrip(), self._peers[_peer_id]["DESCRIPTION"].decode("utf8", errors="replace").rstrip())
+                        logger.info(
+                            "(%s) Peer %s RF mode: %s (SLOTS=%r RX=%r TX=%r)",
+                            self._system,
+                            _this_peer["CALLSIGN"],
+                            _rf_mode,
+                            _this_peer["SLOTS"],
+                            _this_peer["RX_FREQ"].decode("utf-8", errors="replace").strip()
+                            if isinstance(_this_peer["RX_FREQ"], bytes)
+                            else _this_peer["RX_FREQ"],
+                            _this_peer["TX_FREQ"].decode("utf-8", errors="replace").strip()
+                            if isinstance(_this_peer["TX_FREQ"], bytes)
+                            else _this_peer["TX_FREQ"],
+                        )
                         self._refresh_connected_peer_count()
                         self._mark_downlink_index_dirty()
                         self._config_push_throttle.note_peer_connected()

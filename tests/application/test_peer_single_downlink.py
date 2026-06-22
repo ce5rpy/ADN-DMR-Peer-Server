@@ -30,7 +30,6 @@ from adn_server.application.routing.helpers import (
     tg4000_reset_on_vhead,
     clear_peer_rx_status_slots,
     peer_options_static_tg_slot,
-    peer_downlink_voice_slot,
     peer_receives_group_tgid,
     peer_should_receive_group_voice,
     remap_dmrd_to_peer_static_slot,

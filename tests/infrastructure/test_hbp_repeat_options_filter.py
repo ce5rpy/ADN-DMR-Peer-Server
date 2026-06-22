@@ -81,8 +81,8 @@ def test_repeat_remaps_slot_to_peer_options_ts() -> None:
     duplex = bytes_4(730001)
     addr_simplex = ("10.0.0.31", 62031)
     addr_duplex = ("10.0.0.30", 62030)
-    stack.register_peer(simplex, addr_simplex, options="TS2=7144;")
-    stack.register_peer(duplex, addr_duplex, options="TS1=7144;TS2=714,71442;")
+    stack.register_peer(simplex, addr_simplex, options="TS2=7144;", simplex=True)
+    stack.register_peer(duplex, addr_duplex, options="TS1=7144;TS2=714,71442;", simplex=False)
 
     spec = PacketSpec(
         peer_id=int.from_bytes(simplex, "big"),
@@ -124,6 +124,31 @@ def test_repeat_cross_slot_static_tg_downlink() -> None:
     other_pkts = [p for p in stack.transport.for_addr(_ADDR_OTHER) if p[:4] == DMRD]
     assert len(match_pkts) == 1
     assert other_pkts == []
+
+
+def test_repeat_simplex_peer_receives_on_ts2_from_ts1_wire() -> None:
+    """Simplex hotspots always get downlink on TS2 even when the wire slot is TS1."""
+    stack = build_hbp_repeat_stack(talker_alias=False, system_name="MASTER-A")
+    stack.config["PROXY"] = {"TARGET_SYSTEM": "MASTER-A"}
+    stack.hbp._CONFIG = stack.config
+    simplex_rx = bytes_4(730003)
+    addr_rx = ("10.0.0.41", 62041)
+    stack.register_peer(_PEER_TX, _ADDR_TX, options=f"TS1={_TG};", simplex=False)
+    stack.register_peer(simplex_rx, addr_rx, options=f"TS2={_TG};", simplex=True)
+
+    spec = PacketSpec(
+        peer_id=int.from_bytes(_PEER_TX, "big"),
+        rf_src=7300444,
+        dst_id=_TG,
+        slot=1,
+        stream_id=0x33445566,
+        payload=b"\x00" * 33,
+    )
+    stack.inject(DeterministicScenario.voice_burst_spec(spec, seq=1, dtype_vseq=1).data(), _ADDR_TX)
+
+    rx_pkts = [p for p in stack.transport.for_addr(addr_rx) if p[:4] == DMRD]
+    assert len(rx_pkts) == 1
+    assert rx_pkts[0][15] & 0x80
 
 
 def test_repeat_cross_slot_emits_downlink_start_tx_report() -> None:

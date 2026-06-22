@@ -47,6 +47,131 @@ import time
 from typing import Any
 
 from ...domain import HBPF_DATA_SYNC, HBPF_SLT_VHEAD, bytes_3, bytes_4, int_id
+from ...domain.hbp_protocol import HBPF_SLT_VTERM, STREAM_TO
+
+RF_MODE_SIMPLEX = "simplex"
+RF_MODE_DUPLEX = "duplex"
+SIMPLEX_VOICE_SLOT = 2
+
+
+def _peer_freq_text(value: Any) -> str:
+    if isinstance(value, bytes):
+        return value.decode("utf-8", errors="replace").strip("\x00").strip()
+    return str(value or "").strip()
+
+
+def parse_peer_slots_code(slots: Any) -> int | None:
+    """MMDVM RPTC ``SLOTS`` byte: 4=simplex, 1–3=duplex (per MMDVMHost / Wireshark dissector)."""
+    if isinstance(slots, bytes):
+        raw = slots[:1]
+    elif slots is None:
+        return None
+    else:
+        text = str(slots).strip()
+        raw = text[:1].encode("ascii", errors="ignore") if text else b""
+    if not raw:
+        return None
+    try:
+        return int(raw.decode("ascii", errors="ignore"))
+    except ValueError:
+        return None
+
+
+def derive_peer_rf_mode(peer: dict[str, Any]) -> str:
+    """Classify hotspot RF from RPTC ``SLOTS`` and matching RX/TX frequencies."""
+    slots_i = parse_peer_slots_code(peer.get("SLOTS"))
+    if slots_i == 4:
+        return RF_MODE_SIMPLEX
+    rx = _peer_freq_text(peer.get("RX_FREQ"))
+    tx = _peer_freq_text(peer.get("TX_FREQ"))
+    if rx and tx and rx == tx:
+        return RF_MODE_SIMPLEX
+    return RF_MODE_DUPLEX
+
+
+def apply_peer_rf_mode(peer: dict[str, Any]) -> str:
+    """Store derived ``RF_MODE`` on the peer after RPTC (or test harness setup)."""
+    mode = derive_peer_rf_mode(peer)
+    peer["RF_MODE"] = mode
+    return mode
+
+
+def peer_rf_mode(peer: dict[str, Any]) -> str:
+    """Cached or derived simplex/duplex mode for downlink and monitor."""
+    cached = peer.get("RF_MODE")
+    if cached in (RF_MODE_SIMPLEX, RF_MODE_DUPLEX):
+        return str(cached)
+    return derive_peer_rf_mode(peer)
+
+
+def peer_is_simplex(peer: dict[str, Any]) -> bool:
+    return peer_rf_mode(peer) == RF_MODE_SIMPLEX
+
+
+def slot_has_active_voice(slot_st: dict[str, Any], pkt_time: float) -> bool:
+    """True when the slot has an active group-voice RX or TX leg (within STREAM_TO)."""
+    rx_type = slot_st.get("RX_TYPE")
+    if rx_type is not None and rx_type != HBPF_SLT_VTERM:
+        if (pkt_time - float(slot_st.get("RX_TIME", 0))) < STREAM_TO:
+            return True
+    tx_type = slot_st.get("TX_TYPE")
+    if tx_type is not None and tx_type != HBPF_SLT_VTERM:
+        if (pkt_time - float(slot_st.get("TX_TIME", 0))) < STREAM_TO:
+            return True
+    return False
+
+
+def _slot_last_voice_activity(slot_st: dict[str, Any]) -> tuple[bytes, float]:
+    """Most recent RX/TX TG and timestamp on this slot."""
+    rx_tg = slot_st.get("RX_TGID", b"\x00\x00\x00")
+    rx_t = float(slot_st.get("RX_TIME", 0))
+    tx_tg = slot_st.get("TX_TGID", b"\x00\x00\x00")
+    tx_t = float(slot_st.get("TX_TIME", 0))
+    if tx_t >= rx_t:
+        return tx_tg, tx_t
+    return rx_tg, rx_t
+
+
+def slot_in_group_hangtime(
+    slot_st: dict[str, Any],
+    incoming_tgid_b: bytes,
+    pkt_time: float,
+    group_hangtime: float,
+) -> bool:
+    """True when the slot is idle but other TGs are blocked for GROUP_HANGTIME seconds."""
+    hang = float(group_hangtime or 0)
+    if hang <= 0:
+        return False
+    if slot_has_active_voice(slot_st, pkt_time):
+        return False
+    last_tg, last_t = _slot_last_voice_activity(slot_st)
+    if last_t <= 0:
+        return False
+    if bytes_4(int_id(incoming_tgid_b)) == bytes_4(int_id(last_tg)):
+        return False
+    return (pkt_time - last_t) < hang
+
+
+def hbp_slot_blocks_group_voice(
+    slot_st: dict[str, Any],
+    incoming_tgid_b: bytes,
+    stream_id: bytes,
+    pkt_time: float,
+    group_hangtime: float,
+    *,
+    allow_same_stream: bool = True,
+) -> bool:
+    """True when group voice must not be routed or repeated to this slot.
+
+    Active QSO: any other stream is blocked (independent of GROUP_HANGTIME).
+    Post-VTERM: other TGs are blocked for ``group_hangtime`` seconds from config.
+    """
+    if allow_same_stream and stream_id:
+        if stream_id == slot_st.get("RX_STREAM_ID") or stream_id == slot_st.get("TX_STREAM_ID"):
+            return False
+    if slot_has_active_voice(slot_st, pkt_time):
+        return True
+    return slot_in_group_hangtime(slot_st, incoming_tgid_b, pkt_time, group_hangtime)
 
 
 def is_private_subscriber_dst(dst_id: bytes) -> bool:
@@ -625,6 +750,8 @@ def peer_options_static_tg_slot(peer: dict[str, Any], tgid: int) -> int | None:
     tg = str(tgid)
     in_ts1 = tg in ts1
     in_ts2 = tg in ts2
+    if peer_is_simplex(peer) and (in_ts1 or in_ts2):
+        return SIMPLEX_VOICE_SLOT
     if in_ts1 and not in_ts2:
         return 1
     if in_ts2 and not in_ts1:
@@ -647,6 +774,8 @@ def peer_downlink_voice_slot(
     peer_id: bytes | None = None,
 ) -> int:
     """Monitor/BRDG field 7: TS where this peer listens for ``tgid`` (OPTIONS or UA)."""
+    if peer_is_simplex(peer):
+        return SIMPLEX_VOICE_SLOT
     static = peer_options_static_tg_slot(peer, tgid)
     if static is not None:
         return static

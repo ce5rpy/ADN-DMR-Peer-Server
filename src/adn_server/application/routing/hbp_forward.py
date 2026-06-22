@@ -46,7 +46,8 @@ from __future__ import annotations
 import logging
 from hashlib import blake2b
 
-from ...domain import HBPF_SLT_VTERM, STREAM_TO, int_id
+from ...domain import int_id
+from .helpers import hbp_slot_blocks_group_voice
 
 logger = logging.getLogger(__name__)
 
@@ -86,11 +87,8 @@ class HbpForwardMixin:
             _slot_st.pop("_bcsq", None)
             _slot_st["lastSeq"] = False
             _slot_st["lastData"] = False
-            if (
-                _slot_st.get("RX_TYPE") != HBPF_SLT_VTERM
-                and pkt_time < (_slot_st.get("RX_TIME", 0) + STREAM_TO)
-                and rf_src != _slot_st.get("RX_RFS", b"\x00")
-            ):
+            _hangtime = float(systems_cfg.get(system_name, {}).get("GROUP_HANGTIME", 0) or 0)
+            if hbp_slot_blocks_group_voice(_slot_st, dst_id, stream_id, pkt_time, _hangtime):
                 logger.warning(
                     "(%s) Packet received with STREAM ID: %s <FROM> SUB: %s PEER: %s <TO> TGID %s, SLOT %s collided with existing call",
                     system_name, int_id(stream_id), int_id(rf_src), int_id(peer_id), int_id(dst_id), slot,
