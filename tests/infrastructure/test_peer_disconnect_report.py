@@ -81,3 +81,16 @@ def test_export_peer_ua_sessions_omits_expired() -> None:
     expired = export_peer_ua_sessions(sys_cfg, peer_id, now=9_999_999.0)
     assert active["2"]["tgid"] == 7305
     assert expired == {}
+
+
+def test_export_peer_ua_sessions_infinite_timer_omits_expires_at() -> None:
+    from adn_server.application.routing.helpers import peer_single_exclusive_tgid
+
+    peer_id = bytes_4(730039101)
+    peer = {"OPTIONS": b"SINGLE=1;TIMER=0;"}
+    sys_cfg: dict = {"_PEER_UA_SESSIONS": {}, "SINGLE_MODE": True, "DEFAULT_UA_TIMER": 60}
+    register_peer_ua_session(peer, peer_id, 2, 7305, sys_cfg, now=1_000_000.0)
+    exported = export_peer_ua_sessions(sys_cfg, peer_id, now=1_000_100.0)
+    assert exported["2"]["tgid"] == 7305
+    assert "expires_at" not in exported["2"]
+    assert peer_single_exclusive_tgid(peer, 2, sys_cfg, peer_id=peer_id, now=9_999_999.0) == 7305

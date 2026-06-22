@@ -175,6 +175,75 @@ def hbp_slot_blocks_group_voice(
     return slot_in_group_hangtime(slot_st, incoming_tgid_b, pkt_time, group_hangtime)
 
 
+def slot_status_peer_owner(slot_st: dict[str, Any]) -> bytes | None:
+    """Hotspot radio id that last owned this slot STATUS row (RX preferred, then TX)."""
+    rx = slot_st.get("RX_PEER")
+    if rx is not None and int_id(rx) != 0:
+        return bytes_4(int_id(rx))
+    tx = slot_st.get("TX_PEER")
+    if tx is not None and int_id(tx) != 0:
+        return bytes_4(int_id(tx))
+    return None
+
+
+def hbp_slot_blocks_group_voice_for_peer(
+    slot_st: dict[str, Any],
+    peer_id: bytes,
+    incoming_tgid_b: bytes,
+    stream_id: bytes,
+    pkt_time: float,
+    group_hangtime: float,
+    *,
+    per_peer: bool,
+) -> bool:
+    """Slot contention scoped to one hotspot when ``per_peer`` (inject-only multi-HS).
+
+    ``STATUS[slot]`` is shared at the MASTER, but each connected hotspot has an
+    independent RF timeslot. Another peer's active QSO must not block this peer.
+    """
+    if per_peer:
+        owner = slot_status_peer_owner(slot_st)
+        if owner is not None and bytes_4(int_id(owner)) != bytes_4(int_id(peer_id)):
+            return False
+    return hbp_slot_blocks_group_voice(
+        slot_st, incoming_tgid_b, stream_id, pkt_time, group_hangtime,
+    )
+
+
+def hbp_ingress_new_stream_collision(
+    slot_st: dict[str, Any],
+    peer_id: bytes,
+    rf_src: bytes,
+    stream_id: bytes,
+    pkt_time: float,
+    *,
+    per_peer: bool,
+) -> bool:
+    """True when a new group-voice stream must drop on ingress (legacy routerHBP).
+
+    Legacy blocks only when the prior stream is still open (STREAM_TO), the RF
+    source differs (another subscriber), and — in inject-only — the slot row
+    belongs to this hotspot. Same-subscriber rekey with a new stream id is allowed.
+    """
+    from ...domain.hbp_protocol import HBPF_SLT_VTERM, STREAM_TO
+
+    if stream_id and stream_id == slot_st.get("RX_STREAM_ID"):
+        return False
+    if slot_st.get("RX_TYPE") == HBPF_SLT_VTERM:
+        return False
+    rx_time = float(slot_st.get("RX_TIME", 0) or 0)
+    if pkt_time >= rx_time + STREAM_TO:
+        return False
+    prev_rfs = slot_st.get("RX_RFS", b"\x00\x00\x00")
+    if int_id(rf_src) != 0 and bytes_4(int_id(rf_src)) == bytes_4(int_id(prev_rfs)):
+        return False
+    if per_peer:
+        owner = slot_status_peer_owner(slot_st)
+        if owner is not None and bytes_4(int_id(owner)) != bytes_4(int_id(peer_id)):
+            return False
+    return True
+
+
 def is_private_subscriber_dst(dst_id: bytes) -> bool:
     """True for 7-digit private/unit destinations (legacy routerHBP pvt_call branch)."""
     return len(str(int_id(dst_id))) == 7
@@ -502,15 +571,20 @@ def register_peer_ua_session(
         register_peer_ua_multi_tg(peer, peer_id, slot, tgid, sys_cfg)
         return
     from adn_server.application.report.payloads import resolve_peer_single_and_timer
+    from adn_server.domain.ua_timer import UA_SESSION_NEVER_EXPIRES_AT, ua_timer_is_infinite
 
     _, timer_min = resolve_peer_single_and_timer(peer_options_fields(peer), sys_cfg)
     pkt_time = time.time() if now is None else now
+    if ua_timer_is_infinite(timer_min):
+        expires_at = UA_SESSION_NEVER_EXPIRES_AT
+    else:
+        expires_at = pkt_time + float(timer_min) * 60.0
     _write_peer_ua_session(
         peer,
         peer_id,
         slot,
         int(tgid),
-        pkt_time + float(timer_min) * 60.0,
+        expires_at,
         sys_cfg,
     )
 
@@ -586,8 +660,11 @@ def export_peer_ua_sessions(
             continue
         exp = float(entry.get("expires", 0) or 0)
         tgid = int(entry.get("tgid", 0) or 0)
-        if is_ua_session_tgid(tgid) and exp > pkt_time:
-            out[str(slot)] = {"tgid": tgid, "expires_at": exp}
+        if is_ua_session_tgid(tgid) and (exp == 0.0 or exp > pkt_time):
+            row: dict[str, float | int] = {"tgid": tgid}
+            if exp > pkt_time:
+                row["expires_at"] = exp
+            out[str(slot)] = row
     return out
 
 
@@ -697,7 +774,8 @@ def peer_single_exclusive_tgid(
             entry = sessions.get(slot)
     if not isinstance(entry, dict):
         return None
-    if pkt_time >= float(entry.get("expires", 0)):
+    exp = float(entry.get("expires", 0) or 0)
+    if exp > 0 and pkt_time >= exp:
         return None
     locked = entry.get("tgid")
     return int(locked) if locked is not None else None
