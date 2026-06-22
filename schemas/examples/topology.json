@@ -18,7 +18,8 @@
           "port": 62031,
           "single_mode": false,
           "ua_timer_min": 10,
-          "ua_sessions": {}
+          "ua_sessions": {},
+          "rf_mode": "duplex"
         }
       ]
     },

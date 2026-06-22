@@ -26,7 +26,7 @@ import re
 import time
 from typing import Any
 
-from adn_server.application.routing.helpers import export_peer_ua_sessions
+from adn_server.application.routing.helpers import export_peer_ua_sessions, peer_rf_mode
 from adn_server.domain import int_id
 
 REPORT_PROTOCOL = 2
@@ -70,6 +70,27 @@ def static_tg_list(value: Any) -> list[str]:
         return [str(x).strip() for x in value if str(x).strip()]
     text = str(value).strip()
     return [text] if text else []
+
+
+def dedupe_static_tg_list(parts: list[str]) -> list[str]:
+    """Collapse duplicate TG ids within one TS list (order preserved)."""
+    out: list[str] = []
+    seen: set[str] = set()
+    for tg in parts:
+        t = str(tg).strip()
+        if not t or t in seen:
+            continue
+        seen.add(t)
+        out.append(t)
+    return out
+
+
+def normalize_static_tg_slot_lists(
+    ts1: list[str],
+    ts2: list[str],
+) -> tuple[list[str], list[str]]:
+    """Dedupe within each slot list; same TG may appear on TS1 and TS2 (duplex)."""
+    return dedupe_static_tg_list(ts1), dedupe_static_tg_list(ts2)
 
 
 def _parse_options_kv(options: Any) -> dict[str, str]:
@@ -173,7 +194,7 @@ def parse_peer_options_static(options: Any) -> tuple[list[str], list[str]]:
                 ts2_parts.append(p)
     elif parsed.get("TS2_STATIC"):
         ts2_parts = [x.strip() for x in parsed["TS2_STATIC"].split(",") if x.strip()]
-    return ts1_parts, ts2_parts
+    return normalize_static_tg_slot_lists(ts1_parts, ts2_parts)
 
 
 def _peer_field_json(value: Any) -> str | None:
@@ -286,6 +307,7 @@ def _topology_peer_row(
     row["single_mode"] = single
     row["ua_timer_min"] = timer
     row["ua_sessions"] = export_peer_ua_sessions(yaml_cfg, peer_key)
+    row["rf_mode"] = peer_rf_mode(peer)
     return row
 
 
