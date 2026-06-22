@@ -4,6 +4,39 @@ All notable changes to **adn-server** are documented here.
 
 <!-- version list -->
 
+## v2.1.0 (2026-06-22)
+
+### Bug Fixes
+
+- Allow same static TG on TS1 and TS2 for duplex routing
+  ([`e7d3dab`](https://github.com/ce5rpy/ADN-DMR-Peer-Server/commit/e7d3dab4c07000fec92a384c87f892d2d22affa3))
+
+- Inject-only contention, dynamic TG restore, and UA timer parity
+  ([#24](https://github.com/ce5rpy/ADN-DMR-Peer-Server/pull/24),
+  [`c5cbdb2`](https://github.com/ce5rpy/ADN-DMR-Peer-Server/commit/c5cbdb233112841c547bbc2ac3b4dfe5ed26d51f))
+
+- Inject-only slot contention, monitor events, and UA timer display
+  ([#24](https://github.com/ce5rpy/ADN-DMR-Peer-Server/pull/24),
+  [`c5cbdb2`](https://github.com/ce5rpy/ADN-DMR-Peer-Server/commit/c5cbdb233112841c547bbc2ac3b4dfe5ed26d51f))
+
+- Reject malformed peer OPTIONS for monitor and downlink
+  ([`08c648f`](https://github.com/ce5rpy/ADN-DMR-Peer-Server/commit/08c648fdc208822274ce50d0f8d3a64447e2972a))
+
+- Slot contention, simplex RF mode, and static TG dedup
+  ([`1931682`](https://github.com/ce5rpy/ADN-DMR-Peer-Server/commit/1931682337da141bd342cf9a65bd79ae3e78fcd6))
+
+### Documentation
+
+- Document simplex downlink TS2 choice (MMDVMHost DMO parity)
+  ([`49a9605`](https://github.com/ce5rpy/ADN-DMR-Peer-Server/commit/49a96055e93579870c38f7c7f152e17293f39406))
+
+### Features
+
+- Dynamic TG restore, OBP cross-slot downlink, and DB migration 005
+  ([#24](https://github.com/ce5rpy/ADN-DMR-Peer-Server/pull/24),
+  [`c5cbdb2`](https://github.com/ce5rpy/ADN-DMR-Peer-Server/commit/c5cbdb233112841c547bbc2ac3b4dfe5ed26d51f))
+
+
 ## v2.0.6 (2026-06-22)
 
 ### Bug Fixes
