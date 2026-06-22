@@ -4,6 +4,14 @@ All notable changes to **adn-server** are documented here.
 
 <!-- version list -->
 
+## v2.1.1 (2026-06-22)
+
+### Bug Fixes
+
+- Block downlink DMRD to busy hotspot RF slot per peer
+  ([`ecca56f`](https://github.com/ce5rpy/ADN-DMR-Peer-Server/commit/ecca56febdb6698aee939099d0c37f1205ee941c))
+
+
 ## v2.1.0 (2026-06-22)
 
 ### Bug Fixes
