@@ -33,6 +33,22 @@ def test_defer_helper_requires_inject_only_obp_to_master() -> None:
     )
 
 
+def test_defer_helper_multi_peer_master_without_inject_proxy() -> None:
+    sys_cfg = {
+        "MODE": "MASTER",
+        "PEERS": {
+            bytes_4(1): {"CONNECTION": "YES"},
+            bytes_4(2): {"CONNECTION": "YES"},
+        },
+    }
+    assert inject_only_defer_obp_hbp_slot_contention(
+        {}, "MASTER-A", sys_cfg, source_is_obp=True, connected_count=2,
+    )
+    assert not inject_only_defer_obp_hbp_slot_contention(
+        {}, "MASTER-A", sys_cfg, source_is_obp=True, connected_count=1,
+    )
+
+
 def _seed_busy_slot_2(scenario: DeterministicScenario, peer_id: int) -> None:
     proto = scenario.protocols["MASTER-A"]
     t = scenario.clock.time()

@@ -47,8 +47,8 @@ import logging
 from hashlib import blake2b
 
 from ...domain import int_id
-from ..proxy.deployment import is_proxy_inject_only
-from .helpers import hbp_ingress_new_stream_collision
+from .helpers import hbp_ingress_new_stream_collision, master_per_peer_slot_contention
+from .peer_downlink_index import count_connected_peers
 
 logger = logging.getLogger(__name__)
 
@@ -88,7 +88,12 @@ class HbpForwardMixin:
             _slot_st.pop("_bcsq", None)
             _slot_st["lastSeq"] = False
             _slot_st["lastData"] = False
-            per_peer = is_proxy_inject_only(self._config, system_name)
+            sys_cfg = systems_cfg.get(system_name, {})
+            peers = getattr(src_proto, "_peers", None) or sys_cfg.get("PEERS", {})
+            connected = count_connected_peers(peers) if isinstance(peers, dict) else 0
+            per_peer = master_per_peer_slot_contention(
+                self._config, system_name, sys_cfg, connected_count=connected,
+            )
             if hbp_ingress_new_stream_collision(
                 _slot_st, peer_id, rf_src, stream_id, pkt_time, per_peer=per_peer,
             ):

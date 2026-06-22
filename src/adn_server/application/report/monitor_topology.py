@@ -35,6 +35,7 @@ from typing import Any
 from adn_server.application.proxy.deployment import is_proxy_inject_only, proxy_target_system
 from adn_server.application.routing.helpers import (
     hbp_slot_blocks_group_voice_for_peer,
+    master_per_peer_slot_contention,
     is_special_tg,
     peer_downlink_voice_slot,
     peer_should_receive_group_voice,
@@ -396,7 +397,9 @@ def remap_inject_proxy_voice_events(
     connected = _connected_peers(peers)
     slot_map = _resolve_slot_map(connected, peer_slots, max_slots=max_slots)
     trx = parts[2].strip() if len(parts) > 2 else ""
-    per_peer = is_proxy_inject_only(config, target)
+    per_peer = master_per_peer_slot_contention(
+        config, target, sys_cfg, connected_count=len(connected),
+    )
     stream_id = _voice_event_stream_id(parts)
 
     if trx == "TX":
@@ -405,6 +408,22 @@ def remap_inject_proxy_voice_events(
         if echo_peer is not None:
             slot = slot_map.get(echo_peer)
             if slot is not None:
+                peer = peers.get(echo_peer)
+                if (
+                    peer is not None
+                    and tgid_slot is not None
+                    and monitor_downlink_blocked_by_slot_contention(
+                        _peer_key_from_int(echo_peer),
+                        peer,
+                        tgid_slot[1],
+                        tgid_slot[0],
+                        stream_id,
+                        master_status,
+                        sys_cfg,
+                        per_peer=per_peer,
+                    )
+                ):
+                    return []
                 tx_parts = list(parts)
                 if tgid_slot is not None:
                     tgid, _ = tgid_slot
@@ -464,7 +483,7 @@ def remap_inject_proxy_voice_events(
                     peer_parts, target=target, slot=mapped_slot, peer_key=peer_key
                 )
             )
-        return remapped if remapped else [event]
+        return remapped
 
     peer_key = _peer_key_from_voice_csv(parts, peers)
     if peer_key is None:
