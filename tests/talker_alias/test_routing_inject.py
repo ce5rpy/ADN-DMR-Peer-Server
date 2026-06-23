@@ -28,7 +28,7 @@ from tests.harness.deterministic import (
     active_routing_table,
     add_openbridge_system,
 )
-from tests.harness.scenarios import talker_alias_config
+from tests.harness.scenarios import obp_bridge_scenario, talker_alias_config
 
 from adn_server.domain.talker_alias import DMRA_BLOCK_COUNT, DMRA_OPCODE
 
@@ -112,3 +112,33 @@ def test_both_mode_without_ta_still_rewrites_group_embedded_lc() -> None:
     emb = bits[116:148]
     assert emb == ts_st["TX_EMB_LC"][1]  # rewritten to destination group LC...
     assert emb.any()  # ...not the preserved all-zero source embedded LC
+
+
+def test_talker_alias_not_embedded_on_obp_bridge() -> None:
+    """OpenBridge mesh legs get destination group LC only — no embedded Talker Alias."""
+    from bitarray import bitarray
+
+    from adn_server.domain import bytes_4
+
+    scenario = obp_bridge_scenario("OBP-CL", tg=7305)
+    scenario.config["GLOBAL"]["TALKER_ALIAS"] = True
+    scenario.config["GLOBAL"]["TALKER_ALIAS_MODE"] = "inject"
+    stream = 0x3DEADBE1
+    base = PacketSpec(peer_id=7300392, rf_src=7300392, dst_id=7305, slot=2, stream_id=stream)
+
+    scenario.inject_hbp("MASTER-A", DeterministicScenario.voice_head_spec(base))
+    scenario.inject_hbp(
+        "MASTER-A", DeterministicScenario.voice_burst_spec(base, seq=1, dtype_vseq=1)
+    )
+
+    obp_st = scenario.protocols["OBP-CL"].STATUS[bytes_4(stream)]
+    assert obp_st.get("TX_TA_EMB") is None
+    assert not any(c.target_system == "OBP-CL" for c in scenario.dmra_capture)
+
+    bursts = [p for p in scenario.capture.for_system("OBP-CL") if p.fields["dtype_vseq"] == 1]
+    assert bursts, "voice burst B should be forwarded to OBP-CL"
+    bits = bitarray(endian="big")
+    bits.frombytes(bursts[-1].fields["dmr_payload"])
+    emb = bits[116:148]
+    assert emb == obp_st["EMB_LC"][1]
+    assert emb.any()

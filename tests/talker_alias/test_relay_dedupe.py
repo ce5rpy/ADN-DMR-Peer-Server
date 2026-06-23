@@ -50,11 +50,30 @@ def test_on_dmra_fragment_stored_relays_passthrough_once() -> None:
     config["GLOBAL"]["TALKER_ALIAS_MODE"] = "both"
     config["SYSTEMS"]["MASTER-A"]["REPEAT"] = True
     blocks = mmdvm_wire_blocks("CE5RPY")
+    peer = bytes_4(1001)
+    rf_src = bytes_3(3120001)
+    stream_id = bytes_4(0xB1B2B3B4)
     sent: list[str] = []
 
-    def _send_dmra(target_system: str, packets: list[bytes], exclude_peer: bytes | None = None) -> int:
-        sent.append(target_system)
+    def _send_dmra(
+        target_system: str,
+        packets: list[bytes],
+        exclude_peer: bytes | None = None,
+        *,
+        slot: int | None = None,
+        tgid: int | None = None,
+    ) -> int:
+        sent.append(f"{target_system}:{slot}:{tgid}")
         return 1
+
+    class _Proto:
+        STATUS = {
+            2: {
+                "REP_STREAM_ID": stream_id,
+                "REP_TGID": bytes_3(730444),
+                "RX_RFS": rf_src,
+            }
+        }
 
     bridge = RoutingUseCases(
         InMemoryAclRouter(),
@@ -62,12 +81,10 @@ def test_on_dmra_fragment_stored_relays_passthrough_once() -> None:
         InMemorySubscriptionStore(),
         send_dmra_to_system=_send_dmra,
         get_dmra_blocks=lambda _sys, _sid: blocks,
+        get_protocols=lambda: {"MASTER-A": _Proto()},
         encode_emblc=encode_emblc,
         ta_emblc_encoder=default_ta_emblc_encoder,
     )
-    peer = bytes_4(1001)
-    rf_src = bytes_3(3120001)
-    stream_id = bytes_4(0xB1B2B3B4)
 
     bridge.on_dmra_fragment_stored("MASTER-A", peer, rf_src, stream_id)
     first_count = len(sent)

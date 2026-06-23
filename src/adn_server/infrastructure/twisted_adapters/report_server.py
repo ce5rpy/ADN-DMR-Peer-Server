@@ -35,8 +35,10 @@ from twisted.protocols.basic import NetstringReceiver
 from adn_server.application.ports import ReportMqttPublisher, ReportWireEncoder
 from adn_server.application.report.monitor_topology import (
     expand_inject_proxy_systems,
+    remap_inject_proxy_voice_event_for_peer,
     remap_inject_proxy_voice_events,
 )
+from adn_server.application.routing.downlink import DownlinkContext
 
 from .report import REPORT_OPCODES, create_report_wire
 
@@ -89,6 +91,7 @@ class ReportServerFactory(Factory):
         self._systems: dict[str, Any] = {}
         self._bridges: dict[str, Any] = {}
         self._peer_slot_map: Callable[[], dict[bytes, int]] | None = None
+        self._downlink_ctx_for_system: Callable[[str], DownlinkContext | None] | None = None
 
     def buildProtocol(self, addr: Any) -> ReportProtocol | None:
         allowed = self._config.get("REPORTS", {}).get("REPORT_CLIENTS", ["127.0.0.1"])
@@ -113,6 +116,13 @@ class ReportServerFactory(Factory):
     def set_peer_slot_map(self, provider: Callable[[], dict[bytes, int]] | None) -> None:
         """Provide proxy upstream slot indices for monitor topology expansion."""
         self._peer_slot_map = provider
+
+    def set_downlink_ctx_for_system(
+        self,
+        provider: Callable[[str], DownlinkContext | None] | None,
+    ) -> None:
+        """Provide per-MASTER downlink state for monitor voice-event gating."""
+        self._downlink_ctx_for_system = provider
 
     def _systems_for_report(self) -> dict[str, Any]:
         systems = self._systems
@@ -160,11 +170,45 @@ class ReportServerFactory(Factory):
 
     def send_routing_event(self, event: str) -> None:
         peer_slots = self._peer_slot_map() if self._peer_slot_map is not None else None
+        downlink_ctx = None
+        if self._downlink_ctx_for_system is not None:
+            target = self._config.get("PROXY", {}).get("TARGET_SYSTEM")
+            if isinstance(target, str) and target:
+                downlink_ctx = self._downlink_ctx_for_system(target)
         events = remap_inject_proxy_voice_events(
-            event, self._config, self._systems, peer_slots, self._bridges
+            event,
+            self._config,
+            self._systems,
+            peer_slots,
+            self._bridges,
+            downlink_ctx,
         )
         for mapped in events:
             frames = self._wire.bridge_event_frames(mapped)
             self._broadcast_frames(frames)
             if self._mqtt is not None:
                 self._mqtt.publish_frames(frames)
+
+    def send_routing_event_for_peer(self, event: str, peer_key: bytes) -> None:
+        """Send one remapped voice event for a single hotspot (no fan-out)."""
+        peer_slots = self._peer_slot_map() if self._peer_slot_map is not None else None
+        downlink_ctx = None
+        if self._downlink_ctx_for_system is not None:
+            target = self._config.get("PROXY", {}).get("TARGET_SYSTEM")
+            if isinstance(target, str) and target:
+                downlink_ctx = self._downlink_ctx_for_system(target)
+        mapped = remap_inject_proxy_voice_event_for_peer(
+            event,
+            self._config,
+            self._systems,
+            peer_key,
+            peer_slots,
+            self._bridges,
+            downlink_ctx,
+        )
+        if not mapped:
+            return
+        frames = self._wire.bridge_event_frames(mapped)
+        self._broadcast_frames(frames)
+        if self._mqtt is not None:
+            self._mqtt.publish_frames(frames)

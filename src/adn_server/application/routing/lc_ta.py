@@ -94,6 +94,8 @@ class LcTaMixin:
         rf_src: bytes,
         stream_id: bytes,
         source_peer: bytes,
+        wire_slot: int,
+        tgid: int,
     ) -> None:
         """Defer DMRA UDP + embed inject until MMDVM fragments arrive (both mode)."""
         if not self._call_later:
@@ -105,6 +107,8 @@ class LcTaMixin:
         )
         wait["rf_src"] = rf_src
         wait["peer"] = source_peer
+        wait["wire_slot"] = int(wire_slot)
+        wait["tgid"] = int(tgid)
         wait["targets"].add(target_system)
         if wait.get("timer"):
             return
@@ -122,11 +126,14 @@ class LcTaMixin:
         blocks = self._get_stream_dmra_blocks(source_system, stream_id)
         # No source TA within the window: fall back to inject (template).
         fallback_inject = not (blocks and passthrough_complete(blocks))
+        wire_slot = int(wait.get("wire_slot", 2))
+        tgid = int(wait.get("tgid", 0))
         for target_system in wait["targets"]:
             if not self._talker_alias.should_send_on_vhead(target_system, stream_id):
                 continue
             self._send_talker_alias_to_target(
                 source_system, target_system, rf_src, stream_id, peer,
+                wire_slot=wire_slot, tgid=tgid,
                 force=True, fallback_inject=fallback_inject,
             )
         self._apply_both_ta_embed(source_system, rf_src, stream_id, force_inject=fallback_inject)
@@ -189,7 +196,10 @@ class LcTaMixin:
             self._cancel_both_ta_wait(source_system, stream_id)
             for target_system in wait["targets"]:
                 self._send_talker_alias_to_target(
-                    source_system, target_system, rf_src, stream_id, peer_id, force=True,
+                    source_system, target_system, rf_src, stream_id, peer_id,
+                    wire_slot=int(wait.get("wire_slot", 2)),
+                    tgid=int(wait.get("tgid", 0)),
+                    force=True,
                 )
         self._apply_both_ta_embed(source_system, rf_src, stream_id)
         if not already_relayed:
@@ -212,7 +222,7 @@ class LcTaMixin:
                 status = getattr(proto, "STATUS", None)
                 if not isinstance(status, dict):
                     continue
-                for st in status.values():
+                for slot_key, st in status.items():
                     if not isinstance(st, dict):
                         continue
                     if st.get("TX_STREAM_ID") != stream_id or st.get("TX_RFS") != rf_src:
@@ -221,12 +231,48 @@ class LcTaMixin:
                     if not isinstance(target, str) or not target:
                         continue
                     tx_peer = st.get("TX_PEER", peer_id)
+                    try:
+                        wire_slot = int(slot_key)
+                    except (TypeError, ValueError):
+                        wire_slot = 2
+                    tgid = int_id(st.get("TX_TGID", b"\x00\x00\x00"))
+                    if tgid <= 0:
+                        continue
                     self._send_talker_alias_to_target(
-                        source_system, target, rf_src, stream_id, tx_peer, force=True,
+                        source_system, target, rf_src, stream_id, tx_peer,
+                        wire_slot=wire_slot, tgid=tgid, force=True,
                     )
         src_cfg = self._config.get("SYSTEMS", {}).get(source_system, {})
         if src_cfg.get("MODE") == "MASTER" and src_cfg.get("REPEAT", True):
-            self.send_talker_alias_local_repeat(source_system, peer_id, rf_src, stream_id)
+            wire_slot, tgid = self._local_repeat_route(source_system, stream_id, rf_src)
+            if tgid > 0:
+                self.send_talker_alias_local_repeat(
+                    source_system, peer_id, rf_src, stream_id, wire_slot, tgid,
+                )
+
+    def _local_repeat_route(
+        self, system_name: str, stream_id: bytes, rf_src: bytes,
+    ) -> tuple[int, int]:
+        if not self._get_protocols:
+            return 2, 0
+        proto = self._get_protocols().get(system_name)
+        status = getattr(proto, "STATUS", None) if proto else None
+        if not isinstance(status, dict):
+            return 2, 0
+        for slot_key, st in status.items():
+            if not isinstance(st, dict):
+                continue
+            if st.get("REP_STREAM_ID") == stream_id or (
+                st.get("RX_STREAM_ID") == stream_id and st.get("RX_RFS") == rf_src
+            ):
+                try:
+                    wire_slot = int(slot_key)
+                except (TypeError, ValueError):
+                    wire_slot = 2
+                tgid = int_id(st.get("REP_TGID") or st.get("RX_TGID") or st.get("TX_TGID") or b"\x00\x00\x00")
+                if tgid > 0:
+                    return wire_slot, tgid
+        return 2, 0
 
     def _dispatch_talker_alias_on_bridge_open(
         self,
@@ -236,6 +282,8 @@ class LcTaMixin:
         rf_src: bytes,
         stream_id: bytes,
         source_peer: bytes,
+        wire_slot: int,
+        tgid: int,
     ) -> None:
         """Prepare TA on a new bridged HBP leg (VHEAD or first burst after hangtime)."""
         settings = talker_alias_settings(self._config, source_system)
@@ -246,6 +294,7 @@ class LcTaMixin:
         if settings["mode"] == "both" and self._master_ta_wait_source(source_system) and not have_source_ta:
             self._register_both_ta_wait(
                 source_system, target_system, rf_src, stream_id, source_peer,
+                wire_slot, tgid,
             )
             return
         self._init_talker_alias_embed(
@@ -257,6 +306,7 @@ class LcTaMixin:
         )
         self._send_talker_alias_to_target(
             source_system, target_system, rf_src, stream_id, source_peer,
+            wire_slot=wire_slot, tgid=tgid,
         )
 
     def _send_talker_alias_to_target(
@@ -267,6 +317,8 @@ class LcTaMixin:
         stream_id: bytes,
         source_peer: bytes,
         *,
+        wire_slot: int | None = None,
+        tgid: int | None = None,
         force: bool = False,
         fallback_inject: bool = False,
     ) -> None:
@@ -299,9 +351,22 @@ class LcTaMixin:
         )
         if not packets:
             return
+        if wire_slot is None or tgid is None:
+            logger.warning(
+                "(%s) *TALKER ALIAS* stream %s DMRA not sent: missing slot/tgid",
+                target_system,
+                int_id(stream_id),
+            )
+            return
         exclude = source_peer if target_system == source_system else None
         try:
-            peer_count = self._send_dmra_to_system(target_system, packets, exclude_peer=exclude)
+            peer_count = self._send_dmra_to_system(
+                target_system,
+                packets,
+                exclude_peer=exclude,
+                slot=wire_slot,
+                tgid=tgid,
+            )
         except Exception as e:
             logger.warning("(ROUTER) send_dmra_to_system %s failed: %s", target_system, e)
             return
@@ -313,8 +378,8 @@ class LcTaMixin:
         sid = int_id(stream_id)
         if peer_count:
             logger.debug(
-                "(%s) *TALKER ALIAS* stream %s sent %d DMRA block(s) to %d peer(s)",
-                target_system, sid, len(packets), peer_count,
+                "(%s) *TALKER ALIAS* stream %s sent %d DMRA block(s) to %d peer(s) TG %s slot %s",
+                target_system, sid, len(packets), peer_count, tgid, wire_slot,
             )
         elif exclude:
             logger.debug(
@@ -328,10 +393,13 @@ class LcTaMixin:
         source_peer: bytes,
         rf_src: bytes,
         stream_id: bytes,
+        wire_slot: int,
+        tgid: int,
     ) -> None:
         """Inject/pass-through TA to other peers on this MASTER (REPEAT path)."""
         self._send_talker_alias_to_target(
             system_name, system_name, rf_src, stream_id, source_peer,
+            wire_slot=wire_slot, tgid=tgid,
         )
 
     def prepare_talker_alias_local_repeat(
@@ -364,7 +432,9 @@ class LcTaMixin:
                     self._init_talker_alias_embed(
                         st, system_name, system_name, rf_src, stream_id,
                     )
-        self.send_talker_alias_local_repeat(system_name, source_peer, rf_src, stream_id)
+        self.send_talker_alias_local_repeat(
+            system_name, source_peer, rf_src, stream_id, slot, int_id(dst_id),
+        )
 
     def rewrite_repeat_voice_burst(
         self,
@@ -419,6 +489,10 @@ class LcTaMixin:
                 st.pop("REP_EMB_LC", None)
                 self._clear_talker_alias_embed(st)
 
+    def _obp_talker_alias_target(self, target_system: str) -> bool:
+        """OpenBridge mesh legs carry group LC only — no DMRA or embedded Talker Alias."""
+        return self._config.get("SYSTEMS", {}).get(target_system, {}).get("MODE") == "OPENBRIDGE"
+
     def _init_talker_alias_embed(
         self,
         st: dict[str, Any],
@@ -437,7 +511,11 @@ class LcTaMixin:
         arrive; the template is used for ``inject`` and the ``both`` fallback. If no TA is
         available yet (e.g. at VHEAD, before the source TA has been decoded), TX_TA_EMB is
         left unset and only the destination group LC is emitted until it becomes available.
+
+        OpenBridge targets never receive embedded TA (mesh peers do not decode it).
         """
+        if self._obp_talker_alias_target(target_system):
+            return
         st["_ta_source_system"] = source_system
         st["_ta_target_system"] = target_system
         settings = talker_alias_settings(self._config, source_system)

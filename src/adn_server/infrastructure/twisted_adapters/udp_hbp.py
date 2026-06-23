@@ -40,12 +40,23 @@ from ...domain.dmr.const import LC_OPT
 from twisted.internet import reactor, task
 from twisted.internet.protocol import DatagramProtocol
 
+from ...application.routing.downlink import (
+    DownlinkContext,
+    build_dmra_route_packet,
+    iter_downlink_voice_slots,
+    normalize_ua_voice_slot,
+    peer_accepts_dmra,
+    peer_slot_blocks_downlink,
+    remap_dmrd_for_peer,
+    track_peer_group_dmrd,
+)
 from ...application.routing.helpers import (
     clear_peer_rx_status_slots,
     clear_peer_ua_sessions,
     is_special_tg,
     is_unit_data_ingress,
     parse_dmrd_route_fields,
+    peer_downlink_voice_slot,
     peer_matches_rf_source,
     peer_should_receive_group_voice,
     peer_single_exclusive_tgid,
@@ -231,6 +242,9 @@ class HBPProtocol(DatagramProtocol):
             self._downlink_index_dirty = True
             self._downlink_index = None
             self._connected_peer_count = 0
+            self._peer_voice_slots: dict[bytes, dict[int, dict[str, Any]]] = {}
+            self._peer_voice_hangtime: dict[bytes, dict[int, tuple[int, float]]] = {}
+            self._downlink_drop_logged: set[tuple[bytes, bytes]] = set()
             self._config_push_delayed = None
             self._config_push_throttle = ConfigPushThrottle()
             self._refresh_connected_peer_count()
@@ -294,11 +308,52 @@ class HBPProtocol(DatagramProtocol):
 
     # ── Exact port of hblink.py send_peers / send_peer / send_master / send_system ──
 
+    def _downlink_ctx(self) -> DownlinkContext:
+        store = self._get_subscription_store() if self._get_subscription_store else None
+        return DownlinkContext(
+            config=self._CONFIG,
+            system_name=self._system,
+            sys_cfg=self._config,
+            peers=self._peers,
+            status=self.STATUS,
+            connected_count=self._cached_connected_peer_count(),
+            peer_voice_slots=self._peer_voice_slots,
+            peer_voice_hangtime=self._peer_voice_hangtime,
+            subscription_store=store,
+        )
+
+    def downlink_context_for_monitor(self) -> DownlinkContext:
+        """Live downlink gate state for monitor voice-event fan-out."""
+        return self._downlink_ctx()
+
     def send_peers(self, _packet: bytes, _hops: bytes = b"", _ber: bytes = b"\x00", _rssi: bytes = b"\x00", _source_server: bytes = b"\x00\x00\x00\x00", _source_rptr: bytes = b"\x00\x00\x00\x00") -> None:
         if len(_packet) < 54:
             _packet = b"".join([_packet, _ber, _rssi])
+        parsed = parse_dmrd_route_fields(_packet)
         for _peer in self._iter_downlink_peers(_packet):
-            self.send_peer(_peer, _packet)
+            if parsed is None:
+                self.send_peer(_peer, _packet)
+                continue
+            wire_slot, tgid, call_type = parsed
+            peer = self._peers.get(_peer)
+            if not isinstance(peer, dict) or call_type not in ("group", "vcsbk"):
+                self.send_peer(_peer, _packet)
+                continue
+            voice_slots = iter_downlink_voice_slots(peer, wire_slot, tgid)
+            if not voice_slots:
+                voice_slots = [
+                    peer_downlink_voice_slot(
+                        peer, wire_slot, tgid, self._config, peer_id=_peer,
+                    )
+                ]
+            if len(voice_slots) <= 1:
+                self.send_peer(_peer, _packet)
+                continue
+            for voice_slot in voice_slots:
+                remapped = remap_dmrd_for_peer(
+                    _packet, peer, self._config, peer_id=_peer, voice_slot=voice_slot,
+                )
+                self.send_peer(_peer, remapped, _skip_dual_expand=True)
 
     def _inject_multi_peer_options_filter(self) -> bool:
         """Inject-only proxy: always filter downlink by each peer's own OPTIONS."""
@@ -518,11 +573,91 @@ class HBPProtocol(DatagramProtocol):
             sys_cfg=self._config,
         )
 
-    def send_peer(self, _peer: bytes, _packet: bytes) -> None:
+    def _sync_peer_voice_from_ingress(
+        self,
+        peer_id: bytes,
+        wire_slot: int,
+        dst_id: bytes,
+        stream_id: bytes,
+        *,
+        call_type: str,
+        frame_type: int,
+        dtype_vseq: int,
+        pkt_time: float,
+    ) -> None:
+        if call_type not in ("group", "vcsbk"):
+            return
+        ctx = self._downlink_ctx()
+        if not ctx.per_peer_contention():
+            return
+        peer = self._peers.get(peer_id)
+        if peer is None:
+            return
+        from ...application.routing.downlink import normalize_ua_voice_slot
+
+        # Track transmit hangtime on the RF timeslot keyed, not OPTIONS remap slot.
+        voice_slot = normalize_ua_voice_slot(peer, wire_slot)
+        if frame_type == HBPF_DATA_SYNC and dtype_vseq == HBPF_SLT_VTERM:
+            from ...application.routing.downlink import end_peer_voice_slot
+
+            end_peer_voice_slot(
+                ctx, peer_id, voice_slot, stream_id, dst_id, pkt_time=pkt_time,
+            )
+        else:
+            from ...application.routing.downlink import touch_peer_voice_slot
+
+            touch_peer_voice_slot(
+                ctx, peer_id, voice_slot, stream_id, dst_id, pkt_time=pkt_time,
+            )
+
+    def _peer_would_accept_group_dmrd(self, peer_id: bytes, packet: bytes) -> bool:
+        """True when group/vcsbk DMRD passes OPTIONS filter and per-hotspot slot gate."""
+        if packet[:4] != DMRD or not self._peer_should_receive_dmrd(peer_id, packet):
+            return False
+        peer = self._peers.get(peer_id)
+        if peer is None:
+            return True
+        ctx = self._downlink_ctx()
+        if not ctx.per_peer_contention():
+            return True
+        route_pkt = remap_dmrd_for_peer(packet, peer, self._config, peer_id=peer_id)
+        return not peer_slot_blocks_downlink(ctx, peer_id, peer, route_pkt)
+
+    def _downlink_drop_key(self, peer_id: bytes, route_pkt: bytes) -> tuple[bytes, bytes]:
+        pk = bytes_4(int_id(peer_id))
+        stream_id = route_pkt[16:20] if len(route_pkt) >= 20 else b""
+        return pk, stream_id
+
+    def _log_downlink_drop_once(self, peer_id: bytes, route_pkt: bytes) -> None:
+        key = self._downlink_drop_key(peer_id, route_pkt)
+        if key in self._downlink_drop_logged:
+            return
+        self._downlink_drop_logged.add(key)
+        logger.info(
+            "(%s) Downlink dropped for peer %s TG %s (OPTIONS filter, slot busy, or GROUP_HANGTIME)",
+            self._system,
+            int_id(peer_id),
+            int_id(route_pkt[8:11]),
+        )
+
+    def send_peer(self, _peer: bytes, _packet: bytes, *, _skip_dual_expand: bool = False) -> None:
         if _packet[:4] == DMRD:
             if not self._peer_should_receive_dmrd(_peer, _packet):
                 return
-            _packet = b"".join([_packet[:11], _peer, _packet[15:]])
+            peer = self._peers.get(_peer)
+            route_pkt = _packet
+            if peer is not None:
+                route_pkt = remap_dmrd_for_peer(
+                    _packet, peer, self._config, peer_id=_peer,
+                )
+            if not self._peer_would_accept_group_dmrd(_peer, route_pkt):
+                self._log_downlink_drop_once(_peer, route_pkt)
+                return
+            self._downlink_drop_logged.discard(self._downlink_drop_key(_peer, route_pkt))
+            _packet = b"".join([route_pkt[:11], _peer, route_pkt[15:]])
+            ctx = self._downlink_ctx()
+            if ctx.per_peer_contention() and isinstance(peer, dict):
+                track_peer_group_dmrd(ctx, _peer, _packet, peer, from_ingress=False)
         self.transport.write(_packet, self._peers[_peer]["SOCKADDR"])
 
     def _ta_buffer_enabled(self) -> bool:
@@ -650,23 +785,50 @@ class HBPProtocol(DatagramProtocol):
                 self._ta_voice_acc.pop(stream_id, None)
                 self._ta_decoded_logged.discard(stream_id)
 
-    def send_dmra_to_peers(self, packets: list[bytes], exclude_peer: bytes | None = None) -> int:
-        """Send DMRA packets to logged-in peers (MASTER downlink). Returns peer count."""
+    def send_dmra_to_peers(
+        self,
+        packets: list[bytes],
+        exclude_peer: bytes | None = None,
+        *,
+        slot: int | None = None,
+        tgid: int | None = None,
+    ) -> int:
+        """Send DMRA to peers that would receive group voice on ``(slot, tgid)``."""
         if self._config.get("MODE") != "MASTER":
             return 0
+        if slot is None or tgid is None:
+            logger.warning(
+                "(%s) *TALKER ALIAS* DMRA not sent: missing slot/tgid (stream filter)",
+                self._system,
+            )
+            return 0
+        ctx = self._downlink_ctx()
+
+        route_pkt = build_dmra_route_packet(slot, tgid)
         sent = 0
-        for peer in self._peers:
-            if exclude_peer and peer == exclude_peer:
+        for peer_id in self._iter_downlink_peers(route_pkt):
+            if exclude_peer and peer_id == exclude_peer:
+                continue
+            if not peer_accepts_dmra(ctx, peer_id, slot, tgid):
                 continue
             for pkt in packets:
-                self.send_peer(peer, pkt)
+                self.send_peer(peer_id, pkt)
             sent += 1
         return sent
 
-    def send_dmra_system(self, packets: list[bytes], exclude_peer: bytes | None = None) -> int:
+    def send_dmra_system(
+        self,
+        packets: list[bytes],
+        exclude_peer: bytes | None = None,
+        *,
+        slot: int | None = None,
+        tgid: int | None = None,
+    ) -> int:
         """Send DMRA on this system link (MASTER → peers, PEER → upstream master)."""
         if self._config.get("MODE") == "MASTER":
-            return self.send_dmra_to_peers(packets, exclude_peer=exclude_peer)
+            return self.send_dmra_to_peers(
+                packets, exclude_peer=exclude_peer, slot=slot, tgid=tgid,
+            )
         if self._config.get("MODE") == "PEER":
             for pkt in packets:
                 self.send_master(pkt)
@@ -944,14 +1106,25 @@ class HBPProtocol(DatagramProtocol):
                 if sub_map is not None:
                     sub_map[_rf_src] = (self._system, _slot, pkt_time)
                 self.note_dmrd_stream(_peer_id, _rf_src, _stream_id)
+                self._sync_peer_voice_from_ingress(
+                    _peer_id,
+                    _slot,
+                    _dst_id,
+                    _stream_id,
+                    call_type=_call_type,
+                    frame_type=_frame_type,
+                    dtype_vseq=_dtype_vseq,
+                    pkt_time=pkt_time,
+                )
                 if (
                     _call_type in ("group", "vcsbk")
                     and _frame_type == HBPF_DATA_SYNC
                     and _dtype_vseq == HBPF_SLT_VHEAD
                 ):
+                    _ua_slot = normalize_ua_voice_slot(self._peers[_peer_id], _slot)
                     _prev_single_tg = peer_single_exclusive_tgid(
                         self._peers[_peer_id],
-                        _slot,
+                        _ua_slot,
                         self._config,
                         peer_id=_peer_id,
                         now=pkt_time,
@@ -960,7 +1133,7 @@ class HBPProtocol(DatagramProtocol):
                         register_peer_ua_session(
                             self._peers[_peer_id],
                             _peer_id,
-                            _slot,
+                            _ua_slot,
                             _int_dst_id,
                             self._config,
                             now=pkt_time,
@@ -969,7 +1142,7 @@ class HBPProtocol(DatagramProtocol):
                             self._dynamic_tg_uc.persist_after_register(
                                 self._peers[_peer_id],
                                 _peer_id,
-                                _slot,
+                                _ua_slot,
                                 _int_dst_id,
                                 self._config,
                                 system_name=self._system,

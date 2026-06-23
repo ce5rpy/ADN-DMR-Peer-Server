@@ -447,11 +447,16 @@ class DeterministicScenario:
         target_system: str,
         packets: list[bytes],
         exclude_peer: bytes | None = None,
+        *,
+        slot: int | None = None,
+        tgid: int | None = None,
     ) -> int:
+        if slot is None or tgid is None:
+            return 0
         self.dmra_capture.append(
             CapturedDmra(target_system, list(packets), exclude_peer=exclude_peer)
         )
-        return 0 if exclude_peer else len(packets)
+        return 0 if exclude_peer else 1
 
     def seed_obp_stream(
         self,

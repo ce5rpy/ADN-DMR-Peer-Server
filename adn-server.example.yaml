@@ -101,7 +101,7 @@ SYSTEMS:
     MAX_PEERS: 102
     EXPORT_AMBE: false
     PASSPHRASE: "<set-in-adn-server.yaml>"
-    GROUP_HANGTIME: 5
+    GROUP_HANGTIME: 15
     USE_ACL: true
     REG_ACL: DENY:1
     SUB_ACL: DENY:1

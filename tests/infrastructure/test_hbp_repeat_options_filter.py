@@ -24,7 +24,8 @@ from __future__ import annotations
 
 import pytest
 
-from adn_server.domain import bytes_4
+from adn_server.domain import bytes_3, bytes_4
+from adn_server.domain.hbp_protocol import HBPF_SLT_VHEAD, HBPF_SLT_VTERM
 from adn_server.infrastructure.hbp_constants import DMRD
 from tests.harness.deterministic import DeterministicScenario, PacketSpec
 from tests.support.hbp_repeat_stack import build_hbp_repeat_stack
@@ -70,6 +71,61 @@ def test_repeat_only_reaches_peers_with_matching_options() -> None:
     other_pkts = [p for p in stack.transport.for_addr(_ADDR_OTHER) if p[:4] == DMRD]
     assert len(match_pkts) == 1
     assert other_pkts == []
+
+
+def test_bridge_downlink_after_obp_tx_stamp_reaches_matching_peer() -> None:
+    """OBP→MASTER send_peers must deliver when bridge leg stamped TX on STATUS."""
+    stack = _inject_proxy_stack()
+    burst = _voice_burst()
+    now = 1_000_000.0
+    stack.hbp.STATUS[2] = {
+        "TX_PEER": bytes_4(73010),
+        "TX_STREAM_ID": burst[16:20],
+        "TX_TYPE": HBPF_SLT_VHEAD,
+        "TX_TIME": now,
+        "TX_TGID": burst[8:11],
+        "RX_TYPE": HBPF_SLT_VTERM,
+    }
+    stack.hbp.send_peers(burst)
+
+    match_pkts = [p for p in stack.transport.for_addr(_ADDR_MATCH) if p[:4] == DMRD]
+    assert len(match_pkts) == 1
+
+
+def test_obp_bridge_superframe_after_stale_peer_slot() -> None:
+    """OBP downlink must replace stale per-peer session (v2.1.1 burst-track parity)."""
+    stack = _inject_proxy_stack()
+    ce5rpy = bytes_4(0x2B83833D)
+    addr = ("186.67.218.183", 42767)
+    stack.register_peer(ce5rpy, addr, options="TS2=730,7305;SINGLE=1;TIMER=5;")
+    stream_obp = 0x26B00141
+    now = 1_000_000.0
+    stack.hbp._peer_voice_slots[ce5rpy] = {
+        2: {"stream_id": bytes_4(0x179A0FBC), "tgid": 7305, "time": now - 5.0},
+    }
+    stack.hbp.STATUS[2] = {
+        "TX_PEER": bytes_4(73010),
+        "TX_STREAM_ID": bytes_4(stream_obp),
+        "TX_TYPE": HBPF_SLT_VHEAD,
+        "TX_TIME": now,
+        "TX_TGID": bytes_3(7305),
+        "RX_TYPE": HBPF_SLT_VTERM,
+    }
+    base = PacketSpec(
+        peer_id=73010,
+        rf_src=0x1C892B,
+        dst_id=7305,
+        slot=2,
+        stream_id=stream_obp,
+    )
+    packets = [DeterministicScenario.voice_head_spec(base).data()]
+    for seq, dv in [(1, 1), (2, 2), (3, 3), (4, 4)]:
+        packets.append(DeterministicScenario.voice_burst_spec(base, seq=seq, dtype_vseq=dv).data())
+    packets.append(DeterministicScenario.voice_term_spec(base).data())
+    for pkt in packets:
+        stack.hbp.send_peers(pkt)
+    rx = [p for p in stack.transport.for_addr(addr) if p[:4] == DMRD]
+    assert len(rx) == len(packets)
 
 
 def test_bridge_downlink_send_peers_filters_by_options() -> None:

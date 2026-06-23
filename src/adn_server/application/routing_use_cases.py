@@ -42,7 +42,11 @@ from ..domain.dmr import bptc
 from ..domain import HBPF_DATA_SYNC, HBPF_SLT_VHEAD, HBPF_SLT_VTERM, STREAM_TO, bytes_3, bytes_4, int_id
 from .ports import AclRouter, DmrEmbeddedLcEncoder, SubscriptionStore, TalkerAliasEmblcEncoder
 from .talker_alias_use_cases import TalkerAliasUseCases
+from .routing.peer_downlink_index import count_connected_peers
 from .routing.helpers import (
+    hbp_slot_blocks_group_voice,
+    inject_only_defer_obp_hbp_slot_contention,
+    slot_has_active_voice,
     is_private_subscriber_dst,
     is_unit_data_ingress,
     obp_target_bcsq_quenches_stream,
@@ -268,48 +272,37 @@ class RoutingUseCases(
             # legs; re-arm OPTIONS static destinations before forward (inject-only merged lists).
             if frame_type == HBPF_DATA_SYNC and dtype_vseq == HBPF_SLT_VHEAD:
                 self.apply_static_tg_to_bridge(dst_int)
-        has_source = bool(
-            self._voice_relay_tables_with_active_source(system_name, bridge_match_slot, dst_int)
-        )
-        if not has_source and systems_cfg.get(system_name, {}).get("MODE") == "MASTER":
-            self.options_config_for_system(system_name)
-            has_source = bool(
-                self._voice_relay_tables_with_active_source(system_name, bridge_match_slot, dst_int)
-            )
-        # Do not call ensure_dynamic_relay here for 9990–9999 when BRIDGES["9990"] already exists:
-        # ensure_dynamic_relay replaces the whole table and only sets the source MASTER ACTIVE; every
-        # other system (including ECHO with TO_TYPE NONE) becomes ACTIVE False — to_target then has
-        # no active target for the echo path (legacy _seed_echo_routing_table / make_bridges keeps ECHO
-        # ACTIVE True; activation of the source row is via in-band ON on VTERM, bridge_master ~3465).
-        if not has_source:
-            logger.debug(
-                "(ROUTER) No matching source rule for TG %s from %s slot %s (ACTIVE), not forwarding",
-                relay_table_key, system_name, bridge_match_slot,
-            )
-            return True
-
-        # Legacy bridge.py: BRDG_EVENT (OBP group/vcsbk START/END handled in _obp_group_voice_router_obp / post-forward VTERM)
+        # Legacy bridge_master routerHBP: BRDG_EVENT on VHEAD/VTERM before bridge source scan.
         _obp_grp = source_is_obp and call_type in ("group", "vcsbk")
         if frame_type == HBPF_DATA_SYNC and dtype_vseq == HBPF_SLT_VHEAD:
             if not _obp_grp:
-                _rx_report_peer = peer_id
+                _is_new_rx_stream = True
                 if not source_is_obp:
-                    _rx_report_peer = resolve_voice_peer_id(
-                        peer_id,
-                        rf_src,
-                        system_name,
-                        systems_cfg,
+                    protocols = self._get_protocols() if self._get_protocols else {}
+                    src_proto = protocols.get(system_name) if protocols else None
+                    if src_proto and getattr(src_proto, "STATUS", None):
+                        slot_st = src_proto.STATUS.get(slot, {})
+                        if isinstance(slot_st, dict):
+                            _is_new_rx_stream = stream_id != slot_st.get("RX_STREAM_ID")
+                if _is_new_rx_stream:
+                    _rx_report_peer = peer_id
+                    if not source_is_obp:
+                        _rx_report_peer = resolve_voice_peer_id(
+                            peer_id,
+                            rf_src,
+                            system_name,
+                            systems_cfg,
+                        )
+                    self._send_routing_event(
+                        "GROUP VOICE,START,RX,{},{},{},{},{},{}".format(
+                            system_name,
+                            int_id(stream_id),
+                            int_id(_rx_report_peer),
+                            int_id(rf_src),
+                            slot,
+                            int_id(dst_id),
+                        )
                     )
-                self._send_routing_event(
-                    "GROUP VOICE,START,RX,{},{},{},{},{},{}".format(
-                        system_name,
-                        int_id(stream_id),
-                        int_id(_rx_report_peer),
-                        int_id(rf_src),
-                        slot,
-                        int_id(dst_id),
-                    )
-                )
         elif frame_type == HBPF_DATA_SYNC and dtype_vseq == HBPF_SLT_VTERM:
             if not _obp_grp:
                 duration = 0.0
@@ -342,6 +335,26 @@ class RoutingUseCases(
                         duration,
                     )
                 )
+        has_source = bool(
+            self._voice_relay_tables_with_active_source(system_name, bridge_match_slot, dst_int)
+        )
+        if not has_source and systems_cfg.get(system_name, {}).get("MODE") == "MASTER":
+            self.options_config_for_system(system_name)
+            has_source = bool(
+                self._voice_relay_tables_with_active_source(system_name, bridge_match_slot, dst_int)
+            )
+        # Do not call ensure_dynamic_relay here for 9990–9999 when BRIDGES["9990"] already exists:
+        # ensure_dynamic_relay replaces the whole table and only sets the source MASTER ACTIVE; every
+        # other system (including ECHO with TO_TYPE NONE) becomes ACTIVE False — to_target then has
+        # no active target for the echo path (legacy _seed_echo_routing_table / make_bridges keeps ECHO
+        # ACTIVE True; activation of the source row is via in-band ON on VTERM, bridge_master ~3465).
+        if not has_source:
+            logger.debug(
+                "(ROUTER) No matching source rule for TG %s from %s slot %s (ACTIVE), not forwarding",
+                relay_table_key, system_name, bridge_match_slot,
+            )
+            return True
+
         # ── Exact port of legacy bridge.py routerOBP/routerHBP forwarding to targets ──
         pkt_time = time.time()
         dmrpkt = data[20:53] if len(data) >= 53 else b""
@@ -468,6 +481,11 @@ class RoutingUseCases(
                         if not self.acl_check(target_tgid, _target_system.get("TG1_ACL", (True, []))):
                             continue
                     if _target_status is not None:
+                        _prev_obp_st = _target_status.get(stream_id)
+                        # Legacy routerOBP: only replace a finished stream; ingress rows keep 1ST/loop fields.
+                        if isinstance(_prev_obp_st, dict) and _prev_obp_st.get("_fin"):
+                            del _target_status[stream_id]
+                            self.clear_talker_alias_stream(system_name, stream_id)
                         if stream_id not in _target_status:
                             _target_status[stream_id] = {
                                 "START": pkt_time,
@@ -576,26 +594,80 @@ class RoutingUseCases(
                         _src_stream_st = getattr(src_proto, "STATUS", {}).get(stream_id, {}) if src_proto else {}
                     else:
                         _src_stream_st = getattr(src_proto, "STATUS", {}).get(slot, {}) if src_proto else {}
-                    # Contention handling (exact port of legacy bridge_master.py ~2056-2075)
-                    if (entry_tgid_b != _ts_st.get("RX_TGID", b"\x00\x00\x00")) and ((pkt_time - _ts_st.get("RX_TIME", 0)) < float(_target_system.get("GROUP_HANGTIME", 0))):
+                    _closing_bridge_leg = (
+                        frame_type == HBPF_DATA_SYNC
+                        and dtype_vseq == HBPF_SLT_VTERM
+                        and _ts_st.get("TX_STREAM_ID") == stream_id
+                        and _ts_st.get("TX_TYPE") != HBPF_SLT_VTERM
+                    )
+                    if _closing_bridge_leg:
+                        call_duration = pkt_time - _ts_st.get("TX_START", pkt_time)
+                        _end_peer = _ts_st.get("TX_PEER", peer_id)
+                        _end_report_peer = int_id(_end_peer)
+                        if not source_is_obp:
+                            _end_report_peer = int_id(
+                                resolve_voice_peer_id(
+                                    _end_peer, rf_src, system_name, systems_cfg
+                                )
+                            )
+                        self._send_routing_event(
+                            "GROUP VOICE,END,TX,{},{},{},{},{},{},{:.2f}".format(
+                                entry["SYSTEM"],
+                                int_id(stream_id),
+                                _end_report_peer,
+                                int_id(rf_src),
+                                entry_ts,
+                                int_id(entry_tgid_b),
+                                call_duration,
+                            )
+                        )
+                        _ts_st["TX_TYPE"] = HBPF_SLT_VTERM
+                    # Slot contention: active QSO blocks any other stream; post-VTERM uses GROUP_HANGTIME.
+                    _group_hangtime = float(_target_system.get("GROUP_HANGTIME", 0) or 0)
+                    _tgt_peers = getattr(tgt_proto, "_peers", None) if tgt_proto else None
+                    if _tgt_peers is None:
+                        _tgt_peers = _target_system.get("PEERS", {})
+                    _target_connected = (
+                        count_connected_peers(_tgt_peers) if isinstance(_tgt_peers, dict) else 0
+                    )
+                    _defer_slot_contention = inject_only_defer_obp_hbp_slot_contention(
+                        self._config,
+                        entry["SYSTEM"],
+                        _target_system,
+                        source_is_obp=source_is_obp,
+                        connected_count=_target_connected,
+                    )
+                    if (
+                        not _closing_bridge_leg
+                        and not _defer_slot_contention
+                        and hbp_slot_blocks_group_voice(
+                            _ts_st,
+                            entry_tgid_b,
+                            stream_id,
+                            pkt_time,
+                            _group_hangtime,
+                        )
+                    ):
                         if not _src_stream_st.get("CONTENTION"):
                             _src_stream_st["CONTENTION"] = True
-                            logger.info("(%s) Call not routed to TGID %s, target active or in group hangtime: HBSystem: %s, TS: %s, TGID: %s", system_name, int_id(entry_tgid_b), entry.get("SYSTEM"), entry_ts, int_id(_ts_st.get("RX_TGID", b"")))
-                        continue
-                    if (entry_tgid_b != _ts_st.get("TX_TGID", b"\x00\x00\x00")) and ((pkt_time - _ts_st.get("TX_TIME", 0)) < float(_target_system.get("GROUP_HANGTIME", 0))):
-                        if not _src_stream_st.get("CONTENTION"):
-                            _src_stream_st["CONTENTION"] = True
-                            logger.info("(%s) Call not routed to TGID %s, target in group hangtime: HBSystem: %s, TS: %s, TGID: %s", system_name, int_id(entry_tgid_b), entry.get("SYSTEM"), entry_ts, int_id(_ts_st.get("TX_TGID", b"")))
-                        continue
-                    if (entry_tgid_b == _ts_st.get("RX_TGID", b"\x00\x00\x00")) and ((pkt_time - _ts_st.get("RX_TIME", 0)) < STREAM_TO):
-                        if not _src_stream_st.get("CONTENTION"):
-                            _src_stream_st["CONTENTION"] = True
-                            logger.info("(%s) Call not routed to TGID %s, matching call already active on target: HBSystem: %s, TS: %s, TGID: %s", system_name, int_id(entry_tgid_b), entry.get("SYSTEM"), entry_ts, int_id(_ts_st.get("RX_TGID", b"")))
-                        continue
-                    if (entry_tgid_b == _ts_st.get("TX_TGID", b"\x00\x00\x00")) and (rf_src != _ts_st.get("TX_RFS", b"")) and ((pkt_time - _ts_st.get("TX_TIME", 0)) < STREAM_TO):
-                        if not _src_stream_st.get("CONTENTION"):
-                            _src_stream_st["CONTENTION"] = True
-                            logger.info("(%s) Call not routed for subscriber %s, call route in progress on target: HBSystem: %s, TS: %s, TGID: %s, SUB: %s", system_name, int_id(rf_src), entry.get("SYSTEM"), entry_ts, int_id(_ts_st.get("TX_TGID", b"")), int_id(_ts_st.get("TX_RFS", b"")))
+                            if slot_has_active_voice(_ts_st, pkt_time):
+                                logger.info(
+                                    "(%s) Call not routed to TGID %s, target slot busy: HBSystem: %s, TS: %s, TGID: %s",
+                                    system_name,
+                                    int_id(entry_tgid_b),
+                                    entry.get("SYSTEM"),
+                                    entry_ts,
+                                    int_id(_ts_st.get("RX_TGID", b"") or _ts_st.get("TX_TGID", b"")),
+                                )
+                            else:
+                                logger.info(
+                                    "(%s) Call not routed to TGID %s, target in group hangtime: HBSystem: %s, TS: %s, TGID: %s",
+                                    system_name,
+                                    int_id(entry_tgid_b),
+                                    entry.get("SYSTEM"),
+                                    entry_ts,
+                                    int_id(_ts_st.get("RX_TGID", b"") or _ts_st.get("TX_TGID", b"")),
+                                )
                         continue
                     # New stream detection — legacy OBP uses _target_status[TS]['TX_STREAM_ID'], legacy HBP uses self.STATUS[_slot]['RX_STREAM_ID']
                     if source_is_obp:
@@ -620,6 +692,8 @@ class RoutingUseCases(
                             rf_src,
                             stream_id,
                             peer_id,
+                            int(entry_ts),
+                            int_id(entry_tgid_b),
                         )
                         logger.info(
                             "(%s) Conference Bridge: %s, Call Bridged to HBP System: %s TS: %s, TGID: %s",
@@ -651,26 +725,28 @@ class RoutingUseCases(
                         dmrbits = _ts_st["TX_H_LC"][0:98] + dmrbits[98:166] + _ts_st["TX_H_LC"][98:197]
                     elif frame_type == HBPF_DATA_SYNC and dtype_vseq == HBPF_SLT_VTERM:
                         dmrbits = _ts_st["TX_T_LC"][0:98] + dmrbits[98:166] + _ts_st["TX_T_LC"][98:197]
-                        call_duration = pkt_time - _ts_st.get("TX_START", pkt_time)
-                        _end_peer = _ts_st.get("TX_PEER", peer_id)
-                        _end_report_peer = int_id(_end_peer)
-                        if not source_is_obp:
-                            _end_report_peer = int_id(
-                                resolve_voice_peer_id(
-                                    _end_peer, rf_src, system_name, systems_cfg
+                        if not _closing_bridge_leg:
+                            call_duration = pkt_time - _ts_st.get("TX_START", pkt_time)
+                            _end_peer = _ts_st.get("TX_PEER", peer_id)
+                            _end_report_peer = int_id(_end_peer)
+                            if not source_is_obp:
+                                _end_report_peer = int_id(
+                                    resolve_voice_peer_id(
+                                        _end_peer, rf_src, system_name, systems_cfg
+                                    )
+                                )
+                            self._send_routing_event(
+                                "GROUP VOICE,END,TX,{},{},{},{},{},{},{:.2f}".format(
+                                    entry["SYSTEM"],
+                                    int_id(stream_id),
+                                    _end_report_peer,
+                                    int_id(rf_src),
+                                    entry_ts,
+                                    int_id(entry_tgid_b),
+                                    call_duration,
                                 )
                             )
-                        self._send_routing_event(
-                            "GROUP VOICE,END,TX,{},{},{},{},{},{},{:.2f}".format(
-                                entry["SYSTEM"],
-                                int_id(stream_id),
-                                _end_report_peer,
-                                int_id(rf_src),
-                                entry_ts,
-                                int_id(entry_tgid_b),
-                                call_duration,
-                            )
-                        )
+                        _ts_st["TX_TYPE"] = HBPF_SLT_VTERM
                     elif dtype_vseq in (1, 2, 3, 4):
                         self._rewrite_embed_lc(
                             dmrbits, _ts_st, dtype_vseq, "TX_EMB_LC",

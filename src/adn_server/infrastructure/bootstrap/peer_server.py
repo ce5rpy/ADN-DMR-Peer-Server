@@ -141,6 +141,27 @@ def _wire_proxy_report_slots(
     report_factory.set_peer_slot_map(_slot_map)
 
 
+def _wire_monitor_downlink_ctx(
+    report_factory: ReportServerFactory,
+    protocols: dict[str, Any],
+) -> None:
+    """Bind live MASTER downlink state into monitor voice-event fan-out."""
+
+    def _ctx_for(system_name: str) -> Any:
+        protocol = protocols.get(system_name)
+        if protocol is None:
+            return None
+        provider = getattr(protocol, "downlink_context_for_monitor", None)
+        if callable(provider):
+            return provider()
+        legacy = getattr(protocol, "_downlink_ctx", None)
+        if callable(legacy):
+            return legacy()
+        return None
+
+    report_factory.set_downlink_ctx_for_system(_ctx_for)
+
+
 def _seed_echo_routing_table(config: dict) -> dict:
     """Initial BRIDGES for ECHO system (legacy make_bridges 9990 + MASTER expansion)."""
     now = time.time()
@@ -282,10 +303,21 @@ def run_peer_server(
         system_name: str,
         packets: list[bytes],
         exclude_peer: bytes | None = None,
+        *,
+        slot: int | None = None,
+        tgid: int | None = None,
     ) -> int:
         p = protocols.get(system_name)
         if p is not None and hasattr(p, "send_dmra_system"):
-            return int(p.send_dmra_system(packets, exclude_peer=exclude_peer) or 0)
+            return int(
+                p.send_dmra_system(
+                    packets,
+                    exclude_peer=exclude_peer,
+                    slot=slot,
+                    tgid=tgid,
+                )
+                or 0
+            )
         return 0
 
     def get_dmra_blocks(system_name: str, stream_id: bytes) -> dict[int, bytes] | None:
@@ -685,6 +717,8 @@ def run_peer_server(
             system_name,
             protocol,
         )
+
+    _wire_monitor_downlink_ctx(report_factory, protocols)
 
     if proxy_enabled:
         try:

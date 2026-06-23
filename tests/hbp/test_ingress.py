@@ -28,7 +28,11 @@ from tests.harness.deterministic import (
     PacketSpec,
     active_routing_table,
     add_openbridge_system,
+    patch_routing_wall_time,
 )
+from tests.harness.scenarios import obp_bridge_scenario
+
+from adn_server.domain import bytes_3, bytes_4
 
 
 def test_hbp_ingress_sets_rx_start_on_new_stream() -> None:
@@ -83,6 +87,35 @@ def test_hbp_rate_drop_prevents_bridge_forward() -> None:
     assert len(scenario.capture.for_system("MASTER-B")) == forwarded_before
 
 
+def test_hbp_same_subscriber_rekey_after_downlink_forwards_to_obp() -> None:
+    """Same RF source may start a new stream after downlink (3- vs 4-byte RX_RFS parity)."""
+    scenario = obp_bridge_scenario("OBP-CL", tg=7305)
+    peer_id = bytes_4(7300392)
+    new_stream = 0xFD23D0B3
+    slot_st = scenario.protocols["MASTER-A"].STATUS[2]
+    slot_st.update(
+        {
+            "RX_STREAM_ID": bytes_4(158707278),
+            "RX_RFS": bytes_4(7300392),
+            "RX_PEER": peer_id,
+            "RX_TYPE": 2,
+            "RX_TIME": scenario.clock.time(),
+            "RX_TGID": bytes_3(7305),
+        }
+    )
+    base = PacketSpec(
+        peer_id=7300392,
+        rf_src=7300392,
+        dst_id=7305,
+        slot=2,
+        stream_id=new_stream,
+    )
+    n_before = len(scenario.capture.for_system("OBP-CL"))
+    ok = scenario.inject_hbp("MASTER-A", DeterministicScenario.voice_head_spec(base))
+    assert ok is not False
+    assert len(scenario.capture.for_system("OBP-CL")) - n_before == 1
+
+
 def test_hbp_loop_loser_when_obp_already_has_stream() -> None:
     """Regression: HBP loses loop when OBP already owns stream_id; no bridge forward."""
     bridges = active_routing_table(52090, (("OBP-CL", 1), ("MASTER-A", 2)))
@@ -104,3 +137,27 @@ def test_hbp_loop_loser_when_obp_already_has_stream() -> None:
         DeterministicScenario.voice_burst_spec(base, seq=1, dtype_vseq=1),
     )
     assert_inject_ok(ok, expected=False)
+
+
+def test_hbp_obp_reply_reuses_stream_id_after_obp_fin() -> None:
+    """After OBP inbound VTERM (_fin), hotspot reply may reuse stream_id without garbled leg."""
+    scenario = obp_bridge_scenario("OBP-CL", tg=730444)
+    stream = 0xAABBCCDD
+    base_obp = PacketSpec(peer_id=73010, rf_src=3340062, dst_id=730444, slot=1, stream_id=stream)
+    base_hbp = PacketSpec(peer_id=730002301, rf_src=7300023, dst_id=730444, slot=2, stream_id=stream)
+
+    with patch_routing_wall_time(scenario.clock):
+        scenario.inject_obp("OBP-CL", DeterministicScenario.voice_head_spec(base_obp))
+        scenario.inject_obp("OBP-CL", DeterministicScenario.voice_term_spec(base_obp))
+        assert scenario.protocols["OBP-CL"].STATUS[bytes_4(stream)]["_fin"] is True
+        n_before = len(scenario.capture.for_system("OBP-CL"))
+        for spec in [
+            DeterministicScenario.voice_head_spec(base_hbp),
+            DeterministicScenario.voice_burst_spec(base_hbp, 1, 1),
+            DeterministicScenario.voice_burst_spec(base_hbp, 2, 2),
+            DeterministicScenario.voice_term_spec(base_hbp),
+        ]:
+            scenario.clock.advance(0.06)
+            ok = scenario.inject_hbp("MASTER-A", spec)
+            assert ok is not False
+        assert len(scenario.capture.for_system("OBP-CL")) - n_before == 4

@@ -31,6 +31,10 @@ from __future__ import annotations
 import copy
 from typing import Any
 
+from adn_server.application.routing.downlink import (
+    DownlinkContext,
+    peer_would_show_group_voice_on_monitor,
+)
 from adn_server.application.routing.helpers import is_special_tg, peer_should_receive_group_voice
 from adn_server.application.proxy.deployment import is_proxy_inject_only, proxy_target_system
 from adn_server.domain.value_objects import bytes_4, int_id
@@ -216,6 +220,18 @@ def _voice_event_tgid_slot(parts: list[str]) -> tuple[int, int] | None:
         return None
 
 
+def _voice_event_stream_id(parts: list[str]) -> bytes | None:
+    if len(parts) <= 4:
+        return None
+    raw = parts[4].strip()
+    if not raw:
+        return None
+    try:
+        return bytes_4(int(raw))
+    except ValueError:
+        return None
+
+
 def _peers_receiving_tgid(
     connected: list[tuple[Any, dict[str, Any]]],
     *,
@@ -225,21 +241,33 @@ def _peers_receiving_tgid(
     system: str | None = None,
     bridges: dict[str, Any] | None = None,
     sys_cfg: dict[str, Any] | None = None,
+    downlink_ctx: DownlinkContext | None = None,
+    stream_id: bytes | None = None,
 ) -> list[tuple[Any, dict[str, Any]]]:
     out: list[tuple[Any, dict[str, Any]]] = []
     n_connected = len(connected)
     for peer_key, peer in connected:
-        if exclude is not None and _peer_key_from_int(peer_key) == exclude:
+        pk = _peer_key_from_int(peer_key)
+        if exclude is not None and pk == exclude:
             continue
-        if peer_should_receive_group_voice(
+        options_ok = peer_should_receive_group_voice(
             peer,
             slot,
             tgid,
-            peer_id=_peer_key_from_int(peer_key),
+            peer_id=pk,
             system=system,
             bridges=bridges,
             connected_count=n_connected,
             sys_cfg=sys_cfg,
+        )
+        if peer_would_show_group_voice_on_monitor(
+            downlink_ctx,
+            pk,
+            peer,
+            slot,
+            tgid,
+            options_eligible=options_ok,
+            stream_id=stream_id,
         ):
             out.append((peer_key, peer))
     return out
@@ -296,6 +324,7 @@ def remap_inject_proxy_voice_events(
     systems: dict[str, Any],
     peer_slots: dict[bytes, int] | None = None,
     bridges: dict[str, Any] | None = None,
+    downlink_ctx: DownlinkContext | None = None,
 ) -> list[str]:
     """Map inject-only ``SYSTEM`` voice events to one or more ``SYSTEM-N`` rows.
 
@@ -323,6 +352,7 @@ def remap_inject_proxy_voice_events(
     connected = _connected_peers(peers)
     slot_map = _resolve_slot_map(connected, peer_slots, max_slots=max_slots)
     trx = parts[2].strip() if len(parts) > 2 else ""
+    stream_id = _voice_event_stream_id(parts)
 
     if trx == "TX":
         tgid_slot = _voice_event_tgid_slot(parts)
@@ -357,6 +387,8 @@ def remap_inject_proxy_voice_events(
             system=target,
             bridges=bridges,
             sys_cfg=sys_cfg,
+            downlink_ctx=downlink_ctx,
+            stream_id=stream_id,
         )
         if not receivers:
             return [event]
@@ -398,6 +430,8 @@ def remap_inject_proxy_voice_events(
             system=target,
             bridges=bridges,
             sys_cfg=sys_cfg,
+            downlink_ctx=downlink_ctx,
+            stream_id=stream_id,
         ):
             other_slot = slot_map.get(other_key)
             if other_slot is None:
@@ -419,8 +453,69 @@ def remap_inject_proxy_voice_event(
     systems: dict[str, Any],
     peer_slots: dict[bytes, int] | None = None,
     bridges: dict[str, Any] | None = None,
+    downlink_ctx: DownlinkContext | None = None,
 ) -> str:
     """Single-event view of :func:`remap_inject_proxy_voice_events` (first mapping)."""
     return remap_inject_proxy_voice_events(
-        event, config, systems, peer_slots, bridges
+        event, config, systems, peer_slots, bridges, downlink_ctx
     )[0]
+
+
+def remap_inject_proxy_voice_event_for_peer(
+    event: str,
+    config: dict[str, Any],
+    systems: dict[str, Any],
+    peer_key: bytes,
+    peer_slots: dict[bytes, int] | None = None,
+    bridges: dict[str, Any] | None = None,
+    downlink_ctx: DownlinkContext | None = None,
+) -> str | None:
+    """Map one ``SYSTEM`` voice event to ``SYSTEM-N`` for a single peer when eligible."""
+    target = proxy_target_system(config)
+    if not target or not is_proxy_inject_only(config, target):
+        return None
+    parts = event.split(",")
+    if len(parts) < 6 or parts[3].strip() != target:
+        return None
+    sys_cfg = systems.get(target, {})
+    if not isinstance(sys_cfg, dict):
+        return None
+    peers = sys_cfg.get("PEERS", {})
+    if not isinstance(peers, dict):
+        return None
+    pk = _peer_key_from_int(peer_key)
+    peer = peers.get(pk)
+    if not isinstance(peer, dict):
+        return None
+    tgid_slot = _voice_event_tgid_slot(parts)
+    if tgid_slot is None:
+        return None
+    tgid, voice_slot = tgid_slot
+    stream_id = _voice_event_stream_id(parts)
+    if not peer_would_show_group_voice_on_monitor(
+        downlink_ctx,
+        pk,
+        peer,
+        voice_slot,
+        tgid,
+        options_eligible=peer_should_receive_group_voice(
+            peer,
+            voice_slot,
+            tgid,
+            peer_id=pk,
+            system=target,
+            bridges=bridges,
+            connected_count=len(_connected_peers(peers)),
+            sys_cfg=sys_cfg,
+        ),
+        stream_id=stream_id,
+    ):
+        return None
+    max_slots = int(sys_cfg.get("MAX_PEERS", 1))
+    slot_map = _resolve_slot_map(_connected_peers(peers), peer_slots, max_slots=max_slots)
+    mapped_slot = slot_map.get(pk)
+    if mapped_slot is None:
+        return None
+    return _remap_voice_event_to_slot(
+        parts, target=target, slot=mapped_slot, peer_key=pk
+    )

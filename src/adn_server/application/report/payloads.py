@@ -26,7 +26,13 @@ import re
 import time
 from typing import Any
 
-from adn_server.application.routing.helpers import export_peer_ua_sessions
+from adn_server.domain.ua_timer import normalize_ua_timer_minutes, ua_timer_is_infinite
+
+from adn_server.application.routing.helpers import (
+    export_peer_ua_multi_tgs,
+    export_peer_ua_sessions,
+    peer_rf_mode,
+)
 from adn_server.domain import int_id
 
 REPORT_PROTOCOL = 2
@@ -60,18 +66,6 @@ def _peer_connected(peer: dict[str, Any]) -> bool:
     return peer.get("CONNECTION") == "YES"
 
 
-def static_tg_list(value: Any) -> list[str]:
-    """Normalize legacy TS1_STATIC / TS2_STATIC (comma string or list) to string TG ids."""
-    if value is None:
-        return []
-    if isinstance(value, str):
-        return [x.strip() for x in value.split(",") if x.strip()]
-    if isinstance(value, list):
-        return [str(x).strip() for x in value if str(x).strip()]
-    text = str(value).strip()
-    return [text] if text else []
-
-
 def _parse_options_kv(options: Any) -> dict[str, str]:
     """Parse RPTO OPTIONS string into upper-case keys (legacy normalisation)."""
     if options is None:
@@ -97,8 +91,97 @@ def _parse_options_kv(options: Any) -> dict[str, str]:
     return parsed
 
 
+_STATIC_TG_TOKEN_RE = re.compile(r"^\d+$")
+
+
+def static_tg_list(value: Any) -> list[str]:
+    """Normalize legacy TS1_STATIC / TS2_STATIC (comma string or list) to string TG ids."""
+    if value is None:
+        return []
+    if isinstance(value, str):
+        return [x.strip() for x in value.split(",") if x.strip()]
+    if isinstance(value, list):
+        return [str(x).strip() for x in value if str(x).strip()]
+    text = str(value).strip()
+    return [text] if text else []
+
+
+def dedupe_static_tg_list(parts: list[str]) -> list[str]:
+    """Collapse duplicate TG ids within one TS list (order preserved)."""
+    out: list[str] = []
+    seen: set[str] = set()
+    for tg in parts:
+        t = str(tg).strip()
+        if not t or t in seen:
+            continue
+        seen.add(t)
+        out.append(t)
+    return out
+
+
+def normalize_static_tg_slot_lists(
+    ts1: list[str],
+    ts2: list[str],
+) -> tuple[list[str], list[str]]:
+    """Dedupe within each slot list; same TG may appear on TS1 and TS2 (duplex)."""
+    return dedupe_static_tg_list(ts1), dedupe_static_tg_list(ts2)
+
+
+def _static_slot_csv_valid(raw: str) -> bool:
+    """True when every comma-separated token in TS1/TS2 is a numeric talkgroup id."""
+    val = raw.strip()
+    if not val:
+        return True
+    if re.search(r"[^\d,]", val):
+        return False
+    for token in val.split(","):
+        token = token.strip()
+        if not token:
+            continue
+        if not _STATIC_TG_TOKEN_RE.match(token):
+            return False
+    return True
+
+
+def peer_options_pass_only(options: Any) -> bool:
+    """True when OPTIONS is exclusively ``PASS=password`` (self-service RPTO)."""
+    parsed = _parse_options_kv(options)
+    return list(parsed.keys()) == ["PASS"] and bool(parsed["PASS"].strip())
+
+
+def peer_options_pass_valid(options: Any) -> bool:
+    """True when ``PASS=`` is absent or is the only key with a non-empty value."""
+    parsed = _parse_options_kv(options)
+    if "PASS" not in parsed:
+        return True
+    return peer_options_pass_only(options)
+
+
+def peer_options_static_valid(options: Any) -> bool:
+    """False when TS1/TS2 static lists contain non-numeric tokens (legacy bridge_master parity).
+
+    ``PASS=`` must be sent alone (self-service); combined PASS+OPTIONS is rejected here.
+    """
+    parsed = _parse_options_kv(options)
+    if not parsed:
+        return True
+    if "PASS" in parsed:
+        return False
+    for slot in (1, 2):
+        for i in range(1, 10):
+            key = f"TS{slot}_{i}"
+            if key in parsed and not _STATIC_TG_TOKEN_RE.match(parsed[key].strip()):
+                return False
+    for key in ("TS1_STATIC", "TS2_STATIC"):
+        if key in parsed and not _static_slot_csv_valid(parsed[key]):
+            return False
+    return True
+
+
 def parse_peer_options_fields(options: Any) -> dict[str, Any]:
     """Parse OPTIONS into static lists plus optional ``SINGLE`` / ``TIMER`` when present."""
+    if not peer_options_static_valid(options):
+        return {}
     parsed = _parse_options_kv(options)
     if not parsed:
         return {}
@@ -124,24 +207,40 @@ def resolve_peer_single_and_timer(
     sys_cfg: dict[str, Any],
 ) -> tuple[bool, float]:
     """Use OPTIONS ``SINGLE``/``TIMER`` when present; else YAML ``SINGLE_MODE``/``DEFAULT_UA_TIMER``."""
+    from adn_server.domain.config_coerce import coerce_bool, parse_options_single
+
     if "SINGLE" in fields:
-        single = str(fields["SINGLE"]).strip() == "1"
+        parsed_single = parse_options_single(fields["SINGLE"])
+        single = (
+            parsed_single
+            if parsed_single is not None
+            else coerce_bool(sys_cfg.get("SINGLE_MODE", False))
+        )
     else:
-        single = bool(sys_cfg.get("SINGLE_MODE", False))
+        single = coerce_bool(sys_cfg.get("SINGLE_MODE", False))
     if "TIMER" in fields:
         try:
-            timer = float(fields["TIMER"])
+            timer = normalize_ua_timer_minutes(
+                float(fields["TIMER"]),
+                default_minutes=float(sys_cfg.get("DEFAULT_UA_TIMER", 10)),
+            )
         except (TypeError, ValueError):
-            timer = float(sys_cfg.get("DEFAULT_UA_TIMER", 10))
+            timer = normalize_ua_timer_minutes(
+                float(sys_cfg.get("DEFAULT_UA_TIMER", 10)),
+                default_minutes=10.0,
+            )
     else:
-        timer = float(sys_cfg.get("DEFAULT_UA_TIMER", 10))
-    if timer <= 0:
-        timer = 35_791_394.0
+        timer = normalize_ua_timer_minutes(
+            float(sys_cfg.get("DEFAULT_UA_TIMER", 10)),
+            default_minutes=10.0,
+        )
     return single, timer
 
 
 def parse_peer_options_static(options: Any) -> tuple[list[str], list[str]]:
     """Parse hotspot RPTO OPTIONS (``TS1=…;TS2=…;``) into static TG id lists."""
+    if not peer_options_static_valid(options):
+        return [], []
     parsed = _parse_options_kv(options)
     if not parsed:
         return [], []
@@ -166,7 +265,7 @@ def parse_peer_options_static(options: Any) -> tuple[list[str], list[str]]:
                 ts2_parts.append(p)
     elif parsed.get("TS2_STATIC"):
         ts2_parts = [x.strip() for x in parsed["TS2_STATIC"].split(",") if x.strip()]
-    return ts1_parts, ts2_parts
+    return normalize_static_tg_slot_lists(ts1_parts, ts2_parts)
 
 
 def _peer_field_json(value: Any) -> str | None:
@@ -256,7 +355,7 @@ def _topology_peer_row(
         if text is not None:
             row[json_key] = text
     yaml_cfg = sys_cfg if isinstance(sys_cfg, dict) else {}
-    if "OPTIONS" in peer:
+    if "OPTIONS" in peer and peer_options_static_valid(peer.get("OPTIONS")):
         opt_text = _sanitized_peer_options_text(peer.get("OPTIONS"))
         if opt_text:
             row["options"] = opt_text
@@ -277,8 +376,11 @@ def _topology_peer_row(
         if ts2:
             row["ts2_static"] = ts2
     row["single_mode"] = single
-    row["ua_timer_min"] = timer
+    if not ua_timer_is_infinite(timer):
+        row["ua_timer_min"] = timer
     row["ua_sessions"] = export_peer_ua_sessions(yaml_cfg, peer_key)
+    row["ua_multi_tgs"] = export_peer_ua_multi_tgs(yaml_cfg, peer_key)
+    row["rf_mode"] = peer_rf_mode(peer)
     return row
 
 

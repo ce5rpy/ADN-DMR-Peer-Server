@@ -46,7 +46,9 @@ from __future__ import annotations
 import logging
 from hashlib import blake2b
 
-from ...domain import HBPF_SLT_VTERM, STREAM_TO, int_id
+from ...domain import int_id
+from .helpers import hbp_ingress_new_stream_collision, master_per_peer_slot_contention
+from .peer_downlink_index import count_connected_peers
 
 logger = logging.getLogger(__name__)
 
@@ -86,10 +88,14 @@ class HbpForwardMixin:
             _slot_st.pop("_bcsq", None)
             _slot_st["lastSeq"] = False
             _slot_st["lastData"] = False
-            if (
-                _slot_st.get("RX_TYPE") != HBPF_SLT_VTERM
-                and pkt_time < (_slot_st.get("RX_TIME", 0) + STREAM_TO)
-                and rf_src != _slot_st.get("RX_RFS", b"\x00")
+            sys_cfg = systems_cfg.get(system_name, {})
+            peers = getattr(src_proto, "_peers", None) or sys_cfg.get("PEERS", {})
+            connected = count_connected_peers(peers) if isinstance(peers, dict) else 0
+            per_peer = master_per_peer_slot_contention(
+                self._config, system_name, sys_cfg, connected_count=connected,
+            )
+            if hbp_ingress_new_stream_collision(
+                _slot_st, peer_id, rf_src, stream_id, pkt_time, per_peer=per_peer,
             ):
                 logger.warning(
                     "(%s) Packet received with STREAM ID: %s <FROM> SUB: %s PEER: %s <TO> TGID %s, SLOT %s collided with existing call",
@@ -138,10 +144,12 @@ class HbpForwardMixin:
                         _slot_st["LAST"] = pkt_time
                         return False
             else:
+                obp_st = ostatus.get(stream_id)
                 if (
-                    stream_id in ostatus
-                    and "1ST" in ostatus[stream_id]
-                    and ostatus[stream_id].get("TGID") == dst_id
+                    isinstance(obp_st, dict)
+                    and "1ST" in obp_st
+                    and obp_st.get("TGID") == dst_id
+                    and not obp_st.get("_fin")
                 ):
                     if not _slot_st.get("LOOPLOG"):
                         logger.debug(

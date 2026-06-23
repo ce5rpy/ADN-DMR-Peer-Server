@@ -121,8 +121,7 @@ def test_build_topology_omits_pass_from_peer_options() -> None:
     }
     doc = build_topology(systems, seq=1)
     peer = doc["systems"][0]["peers"][0]
-    assert peer["options"] == "TS2=730;SINGLE=1;"
-    assert "PASS" not in peer["options"]
+    assert "options" not in peer
 
 
 def test_build_topology_exports_master_static_tgs() -> None:

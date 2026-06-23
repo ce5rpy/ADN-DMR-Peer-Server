@@ -59,8 +59,8 @@ def _base_spec() -> PacketSpec:
 def test_repeat_downlink_embeds_group_lc_when_talker_alias_enabled() -> None:
     """Regression: raw REPEAT copy left embed LC all-zero; MMDVM never saw TA."""
     stack = build_hbp_repeat_stack(talker_alias=True)
-    stack.register_peer(_PEER_TX, _ADDR_TX)
-    stack.register_peer(_PEER_RX, _ADDR_RX)
+    stack.register_peer(_PEER_TX, _ADDR_TX, options="TS2=7304;")
+    stack.register_peer(_PEER_RX, _ADDR_RX, options="TS2=7304;")
     base = _base_spec()
     uplink_burst = DeterministicScenario.voice_burst_spec(base, seq=1, dtype_vseq=1)
 
@@ -83,8 +83,8 @@ def test_repeat_downlink_embeds_group_lc_when_talker_alias_enabled() -> None:
 def test_repeat_sends_dmra_and_embed_on_vhead() -> None:
     """MMDVM may ignore DMRA UDP; embed in DMRD must still be prepared on VHEAD."""
     stack = build_hbp_repeat_stack(talker_alias=True)
-    stack.register_peer(_PEER_TX, _ADDR_TX)
-    stack.register_peer(_PEER_RX, _ADDR_RX)
+    stack.register_peer(_PEER_TX, _ADDR_TX, options="TS2=7304;")
+    stack.register_peer(_PEER_RX, _ADDR_RX, options="TS2=7304;")
     base = _base_spec()
 
     stack.inject_spec(DeterministicScenario.voice_head_spec(base), _ADDR_TX)
@@ -100,8 +100,8 @@ def test_repeat_sends_dmra_and_embed_on_vhead() -> None:
 
 def test_repeat_leaves_burst_payload_unchanged_when_talker_alias_disabled() -> None:
     stack = build_hbp_repeat_stack(talker_alias=False)
-    stack.register_peer(_PEER_TX, _ADDR_TX)
-    stack.register_peer(_PEER_RX, _ADDR_RX)
+    stack.register_peer(_PEER_TX, _ADDR_TX, options="TS2=7304;")
+    stack.register_peer(_PEER_RX, _ADDR_RX, options="TS2=7304;")
     base = _base_spec()
     stack.inject_spec(DeterministicScenario.voice_head_spec(base), _ADDR_TX)
     stack.transport.clear()
@@ -117,8 +117,8 @@ def test_repeat_leaves_burst_payload_unchanged_when_talker_alias_disabled() -> N
 def test_repeat_overlays_ta_on_second_superframe_cycle() -> None:
     """After bursts B–E, the next B should carry TA embed (alternate superframes)."""
     stack = build_hbp_repeat_stack(talker_alias=True)
-    stack.register_peer(_PEER_TX, _ADDR_TX)
-    stack.register_peer(_PEER_RX, _ADDR_RX)
+    stack.register_peer(_PEER_TX, _ADDR_TX, options="TS2=7304;")
+    stack.register_peer(_PEER_RX, _ADDR_RX, options="TS2=7304;")
     base = _base_spec()
     stack.inject_spec(DeterministicScenario.voice_head_spec(base), _ADDR_TX)
 

@@ -41,8 +41,8 @@ def test_dmra_before_vhead_passthrough_on_repeat() -> None:
     """Regression: early DMRA was dropped when stream_id mapping did not exist yet."""
     stack = build_hbp_repeat_stack(talker_alias=True)
     stack.config["GLOBAL"]["TALKER_ALIAS_MODE"] = "passthrough"
-    stack.register_peer(_PEER_TX, _ADDR_TX)
-    stack.register_peer(_PEER_RX, _ADDR_RX)
+    stack.register_peer(_PEER_TX, _ADDR_TX, options="TS2=7304;")
+    stack.register_peer(_PEER_RX, _ADDR_RX, options="TS2=7304;")
 
     rf_src = bytes_3(3120001)
     text = "CE5RPY Radio"

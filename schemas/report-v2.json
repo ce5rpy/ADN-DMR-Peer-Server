@@ -143,6 +143,19 @@
                     "expires_at": { "type": "number" }
                   }
                 }
+              },
+              "ua_multi_tgs": {
+                "type": "object",
+                "description": "SINGLE=0 dynamic TGs keyed by slot (empty when none).",
+                "additionalProperties": {
+                  "type": "array",
+                  "items": { "type": "string" }
+                }
+              },
+              "rf_mode": {
+                "type": "string",
+                "enum": ["simplex", "duplex"],
+                "description": "Hotspot RF mode derived from RPTC SLOTS / RX-TX frequencies."
               }
             }
           }

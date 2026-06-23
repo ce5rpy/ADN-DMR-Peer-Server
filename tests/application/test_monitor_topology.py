@@ -27,6 +27,7 @@ import pytest
 from adn_server.application.report.monitor_topology import (
     expand_inject_proxy_systems,
     remap_inject_proxy_voice_event,
+    remap_inject_proxy_voice_event_for_peer,
     remap_inject_proxy_voice_events,
 )
 from adn_server.application.report.payloads import build_topology
@@ -284,6 +285,85 @@ def test_obp_bridge_tx_fans_out_only_to_peers_with_matching_static_tg() -> None:
 def test_remap_voice_event_passes_through_non_proxy_systems() -> None:
     raw = "GROUP VOICE,START,RX,ECHO,1,9990,730039101,2,9990"
     assert remap_inject_proxy_voice_event(raw, {}, {}) == raw
+
+
+def test_hangtime_blocks_monitor_tx_fanout_to_blocked_peer() -> None:
+    """Companion TX / OBP fan-out must not light peers blocked by GROUP_HANGTIME."""
+    from adn_server.application.routing.downlink import (
+        DownlinkContext,
+        end_peer_voice_slot,
+        touch_peer_voice_slot,
+    )
+    from adn_server.domain import HBPF_SLT_VTERM, bytes_3, bytes_4
+    import time
+
+    def _empty_slot() -> dict:
+        return {
+            "RX_TIME": 0.0,
+            "TX_TIME": 0.0,
+            "RX_TYPE": HBPF_SLT_VTERM,
+            "TX_TYPE": HBPF_SLT_VTERM,
+            "RX_TGID": b"\x00\x00\x00",
+            "TX_TGID": b"\x00\x00\x00",
+            "RX_STREAM_ID": b"",
+            "TX_STREAM_ID": b"",
+            "RX_PEER": b"\x00\x00\x00\x00",
+            "TX_PEER": b"\x00\x00\x00\x00",
+        }
+
+    peer_hs_a = bytes_4(730039101)
+    peer_hs_b = bytes_4(730039210)
+    peers = {
+        peer_hs_a: _peer(options=b"TS2=730,7305;SINGLE=0;"),
+        peer_hs_b: _peer(options=b"TS2=7305;"),
+    }
+    config = _proxy_config(peers)
+    config["SYSTEMS"]["SYSTEM"]["GROUP_HANGTIME"] = 10
+    peer_slots = {peer_hs_a: 7, peer_hs_b: 8}
+    sys_cfg = config["SYSTEMS"]["SYSTEM"]
+    ctx = DownlinkContext(
+        config=config,
+        system_name="SYSTEM",
+        sys_cfg=sys_cfg,
+        peers=peers,
+        status={1: _empty_slot(), 2: _empty_slot()},
+        connected_count=2,
+    )
+    now = time.time()
+    touch_peer_voice_slot(
+        ctx, peer_hs_a, 2, bytes_4(0x1111), bytes_3(7306), pkt_time=now,
+    )
+    end_peer_voice_slot(
+        ctx, peer_hs_a, 2, bytes_4(0x1111), bytes_3(7306), pkt_time=now + 0.5,
+    )
+
+    rx_raw = "GROUP VOICE,START,RX,SYSTEM,3262598598,730039210,730039210,2,7305"
+    rx_events = remap_inject_proxy_voice_events(
+        rx_raw, config, config["SYSTEMS"], peer_slots, downlink_ctx=ctx,
+    )
+    rx_systems = {ev.split(",")[3] for ev in rx_events}
+    assert "SYSTEM-8" in rx_systems
+    assert "SYSTEM-7" not in rx_systems
+
+    tx_raw = "GROUP VOICE,START,TX,SYSTEM,4100887026,73010,7000002,2,7305"
+    tx_events = remap_inject_proxy_voice_events(
+        tx_raw, config, config["SYSTEMS"], peer_slots, downlink_ctx=ctx,
+    )
+    tx_systems = {ev.split(",")[3] for ev in tx_events}
+    assert tx_systems == {"SYSTEM-8"}
+
+
+def test_remap_voice_event_for_single_peer() -> None:
+    peer = bytes_4(730039101)
+    peers = {peer: _peer(options=b"TS2=7305;")}
+    config = _proxy_config(peers)
+    peer_slots = {peer: 7}
+    raw = "GROUP VOICE,START,TX,SYSTEM,4100887026,73010,7000002,2,7305"
+    mapped = remap_inject_proxy_voice_event_for_peer(
+        raw, config, config["SYSTEMS"], peer, peer_slots,
+    )
+    assert mapped is not None
+    assert mapped.startswith("GROUP VOICE,START,TX,SYSTEM-7,")
 
 
 def test_non_proxy_systems_pass_through_unchanged() -> None:

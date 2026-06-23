@@ -17,8 +17,10 @@
           "ip": "10.0.0.50",
           "port": 62031,
           "single_mode": false,
-          "ua_timer_min": 10,
-          "ua_sessions": {}
+          "ua_timer_min": 10.0,
+          "ua_sessions": {},
+          "ua_multi_tgs": {},
+          "rf_mode": "duplex"
         }
       ]
     },
