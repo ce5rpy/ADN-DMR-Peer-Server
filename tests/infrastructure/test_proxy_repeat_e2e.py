@@ -50,8 +50,10 @@ _EMB_SLICE = slice(116, 148)
 
 def _proxy_fanin_stack() -> tuple[ProxyFanInProtocol, HbpRepeatStack]:
     stack = build_hbp_repeat_stack(talker_alias=True, system_name="MASTER-A")
-    stack.register_peer(_PEER_TX, _ADDR_TX)
-    stack.register_peer(_PEER_RX, _ADDR_RX)
+    stack.config["PROXY"] = {"TARGET_SYSTEM": "MASTER-A"}
+    stack.hbp._CONFIG = stack.config
+    stack.register_peer(_PEER_TX, _ADDR_TX, options="TS2=7304;")
+    stack.register_peer(_PEER_RX, _ADDR_RX, options="TS2=7304;")
 
     proxy = ProxyUseCases(
         InMemoryProxySlotStore(),
@@ -98,7 +100,7 @@ def test_proxy_attach_binds_sockaddr_used_for_master_ingress() -> None:
     fanin, stack = _proxy_fanin_stack()
     ensure_system_runtime_config(stack.config)
     packet = DeterministicScenario.voice_head_spec(
-        PacketSpec(peer_id=730039210, stream_id=0x55667788)
+        PacketSpec(peer_id=730039210, dst_id=7304, stream_id=0x55667788)
     ).data()
 
     fanin.datagramReceived(packet, _ADDR_TX)

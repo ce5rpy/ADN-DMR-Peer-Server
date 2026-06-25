@@ -549,13 +549,13 @@ class HBPProtocol(DatagramProtocol):
         return True
 
     def _peer_should_receive_dmrd(self, peer_id: bytes, packet: bytes) -> bool:
-        if not self._inject_multi_peer_options_filter():
-            return True
         if peer_id not in self._peers:
             return False
         parsed = parse_dmrd_route_fields(packet)
         if parsed is None:
-            return self._cached_connected_peer_count() <= 1
+            if self._inject_multi_peer_options_filter():
+                return self._cached_connected_peer_count() <= 1
+            return True
         slot, tgid, call_type = parsed
         if call_type not in ("group", "vcsbk"):
             return True

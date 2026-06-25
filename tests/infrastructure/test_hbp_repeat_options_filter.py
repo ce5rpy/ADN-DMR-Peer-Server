@@ -73,6 +73,26 @@ def test_repeat_only_reaches_peers_with_matching_options() -> None:
     assert other_pkts == []
 
 
+def test_standalone_master_blocks_empty_options_witness() -> None:
+    """Bridge MASTER without inject-only index still filters by OPTIONS (silent witness)."""
+    stack = build_hbp_repeat_stack(talker_alias=False, system_name="MASTER-A")
+    silent = bytes_4(730039263)
+    addr_silent = ("10.0.0.13", 62013)
+    stack.register_peer(_PEER_TX, _ADDR_TX, options=f"TS2={_TG};")
+    stack.register_peer(_PEER_RX_MATCH, _ADDR_MATCH, options=f"TS2={_TG};")
+    stack.register_peer(silent, addr_silent, options="SINGLE=0;")
+    stack.hbp._refresh_connected_peer_count()
+    assert not stack.hbp._inject_multi_peer_options_filter()
+
+    stack.transport.clear()
+    stack.hbp.send_peers(_voice_burst())
+
+    match_pkts = [p for p in stack.transport.for_addr(_ADDR_MATCH) if p[:4] == DMRD]
+    silent_pkts = [p for p in stack.transport.for_addr(addr_silent) if p[:4] == DMRD]
+    assert len(match_pkts) == 1
+    assert silent_pkts == []
+
+
 def test_bridge_downlink_after_obp_tx_stamp_reaches_matching_peer() -> None:
     """OBP→MASTER send_peers must deliver when bridge leg stamped TX on STATUS."""
     stack = _inject_proxy_stack()

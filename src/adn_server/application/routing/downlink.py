@@ -90,9 +90,15 @@ def peer_listen_slots(peer: dict[str, Any], tgid: int) -> list[int]:
     """Voice slots where this peer listens for ``tgid`` (static OPTIONS or wire fallback)."""
     from adn_server.application.report.payloads import parse_peer_options_static
 
-    if peer_is_simplex(peer):
-        return [SIMPLEX_VOICE_SLOT]
     ts1, ts2 = parse_peer_options_static(peer.get("OPTIONS"))
+    if peer_is_simplex(peer):
+        tg = str(tgid)
+        if tg in ts1 or tg in ts2:
+            return [SIMPLEX_VOICE_SLOT]
+        static = peer_options_static_tg_slot(peer, tgid)
+        if static is not None:
+            return [static]
+        return []
     tg = str(tgid)
     in_ts1 = tg in ts1
     in_ts2 = tg in ts2
