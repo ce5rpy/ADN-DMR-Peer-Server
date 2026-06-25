@@ -22,10 +22,11 @@
 
 from __future__ import annotations
 
-from adn_server.infrastructure.bootstrap.peer_server import _seed_echo_routing_table
-from tests.routing.test_echo_subscription_reset import _echo_scenario_config
 from tests.harness.assertions import assert_forwarded
 from tests.harness.deterministic import DeterministicScenario, PacketSpec
+from tests.routing.test_echo_subscription_reset import _echo_scenario_config
+
+from adn_server.infrastructure.bootstrap.peer_server import _seed_echo_routing_table
 
 
 def _prod_like_config() -> dict:

@@ -22,14 +22,13 @@
 
 from __future__ import annotations
 
+from tests.harness.deterministic import DeterministicScenario, PacketSpec
+from tests.support.hbp_repeat_stack import build_hbp_repeat_stack
+from tests.talker_alias.test_mmdvm_wire import mmdvm_wire_blocks
+
 from adn_server.domain import bytes_3, bytes_4
 from adn_server.domain.talker_alias import build_dmra_packet, decode_ta_from_blocks
 from adn_server.infrastructure.hbp_constants import DMRA
-
-from tests.support.hbp_repeat_stack import build_hbp_repeat_stack
-from tests.harness.deterministic import DeterministicScenario, PacketSpec
-from tests.talker_alias.test_mmdvm_wire import mmdvm_wire_blocks
-
 
 _PEER_TX = bytes_4(730039210)
 _PEER_RX = bytes_4(730039101)

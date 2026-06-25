@@ -27,9 +27,9 @@ from adn_server.infrastructure.hbp_constants import BCKA, BCSQ, BCST, BCVE, DMRD
 from adn_server.infrastructure.mesh.obp_v1 import (
     DMRD_V1_WIRE_LEN,
     build_bcka,
+    build_bcsq,
     build_bcst,
     build_bcve,
-    build_bcsq,
     build_dmrd_v1,
     verify_bcka,
     verify_bcsq,

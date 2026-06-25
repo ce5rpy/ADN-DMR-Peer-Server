@@ -289,13 +289,14 @@ def test_remap_voice_event_passes_through_non_proxy_systems() -> None:
 
 def test_hangtime_blocks_monitor_tx_fanout_to_blocked_peer() -> None:
     """Companion TX / OBP fan-out must not light peers blocked by GROUP_HANGTIME."""
+    import time
+
     from adn_server.application.routing.downlink import (
         DownlinkContext,
         end_peer_voice_slot,
         touch_peer_voice_slot,
     )
     from adn_server.domain import HBPF_SLT_VTERM, bytes_3, bytes_4
-    import time
 
     def _empty_slot() -> dict:
         return {

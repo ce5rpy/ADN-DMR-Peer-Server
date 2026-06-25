@@ -48,9 +48,9 @@ from typing import Any
 
 from bitarray import bitarray
 
+from ...domain import int_id
 from ...domain.dmr.const import LC_OPT
 from ...domain.talker_alias import DMRA_BLOCK_COUNT
-from ...domain import int_id
 from ..talker_alias_use_cases import passthrough_complete, talker_alias_settings
 from .helpers import EMB_LC_SLICE
 

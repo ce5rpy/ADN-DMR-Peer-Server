@@ -22,17 +22,18 @@
 
 from __future__ import annotations
 
+from tests.harness.deterministic import active_routing_table
+
+from adn_server.application.subscription.stat_trimmer_ops import apply_stat_trimmer_store
+from adn_server.application.subscription.store_sync import replace_store_from_routing_table
 from adn_server.application.subscription.subscription_debug_ops import apply_subscription_debug_store
 from adn_server.application.subscription.subscription_reset_ops import (
     deactivate_system_legs_store,
     restore_prohibited_static_legs_store,
 )
-from adn_server.application.subscription.stat_trimmer_ops import apply_stat_trimmer_store
-from adn_server.application.subscription.store_sync import replace_store_from_routing_table
 from adn_server.domain import bytes_3
 from adn_server.domain.subscription import SubscriptionPhase
 from adn_server.infrastructure.subscription_store import InMemorySubscriptionStore
-from tests.harness.deterministic import active_routing_table
 
 
 def _store(bridges: dict) -> InMemorySubscriptionStore:

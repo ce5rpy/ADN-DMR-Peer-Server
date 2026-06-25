@@ -23,8 +23,6 @@
 from __future__ import annotations
 
 import pytest
-
-from adn_server.application.subscription.store_sync import replace_store_from_routing_table
 from tests.harness.assertions import assert_forwarded
 from tests.harness.deterministic import (
     DeterministicScenario,
@@ -33,6 +31,8 @@ from tests.harness.deterministic import (
     add_openbridge_system,
     minimal_config,
 )
+
+from adn_server.application.subscription.store_sync import replace_store_from_routing_table
 
 
 @pytest.mark.behavior

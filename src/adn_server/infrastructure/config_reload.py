@@ -29,6 +29,8 @@ from typing import Any, Callable
 
 from twisted.internet import defer
 
+from adn_server.application.proxy.deployment import normalize_proxy_target
+
 from ..domain.errors import ConfigError
 from .config_loader import YamlConfigLoader
 from .config_normalizer import (
@@ -38,7 +40,6 @@ from .config_normalizer import (
     normalize_obp_config,
     normalize_peer_config,
 )
-from adn_server.application.proxy.deployment import normalize_proxy_target
 from .logging_config import reapply_log_level
 
 logger = logging.getLogger(__name__)

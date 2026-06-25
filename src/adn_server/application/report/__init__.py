@@ -1,4 +1,4 @@
-# ADN DMR Peer Server - application report   init  
+# ADN DMR Peer Server - application report   init
 #
 # Copyright (C) 2026  Rodrigo Pérez, CE5RPY <ce5rpy@qmd.cl>
 #
@@ -20,12 +20,6 @@
 
 """Report application layer: payload mapping and protocol mode (no Twisted / wire bytes)."""
 
-from .queue import (
-    DEFAULT_MAX_DRAIN_PER_TICK,
-    DEFAULT_MAX_EVENTS,
-    BoundedReportQueue,
-    QueuedReportSender,
-)
 from .dashboard_state import build_dashboard_state
 from .payloads import (
     REPORT_FEATURES,
@@ -36,6 +30,12 @@ from .payloads import (
     parse_bridge_event_csv,
     routing_table_delta,
     topology_delta,
+)
+from .queue import (
+    DEFAULT_MAX_DRAIN_PER_TICK,
+    DEFAULT_MAX_EVENTS,
+    BoundedReportQueue,
+    QueuedReportSender,
 )
 
 __all__ = [

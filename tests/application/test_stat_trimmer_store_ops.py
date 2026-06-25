@@ -22,9 +22,9 @@
 
 from __future__ import annotations
 
-from adn_server.application.subscription.subscription_table_ops import ensure_stat_relay_store
 from adn_server.application.subscription.stat_trimmer_ops import apply_stat_trimmer_store
 from adn_server.application.subscription.subscription_queries import store_has_table
+from adn_server.application.subscription.subscription_table_ops import ensure_stat_relay_store
 from adn_server.domain import bytes_3
 from adn_server.infrastructure.subscription_store import InMemorySubscriptionStore
 

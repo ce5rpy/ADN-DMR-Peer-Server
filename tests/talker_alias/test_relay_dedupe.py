@@ -22,15 +22,15 @@
 
 from __future__ import annotations
 
+from tests.harness.scenarios import make_talker_alias_use_cases, talker_alias_config
+from tests.talker_alias.test_mmdvm_wire import mmdvm_wire_blocks
+
 from adn_server.application.routing_use_cases import RoutingUseCases
 from adn_server.domain import bytes_3, bytes_4
+from adn_server.domain.dmr.bptc import encode_emblc
 from adn_server.infrastructure.acl_router import InMemoryAclRouter
 from adn_server.infrastructure.subscription_store import InMemorySubscriptionStore
 from adn_server.infrastructure.talker_alias_emblc import default_ta_emblc_encoder
-from adn_server.domain.dmr.bptc import encode_emblc
-
-from tests.harness.scenarios import make_talker_alias_use_cases, talker_alias_config
-from tests.talker_alias.test_mmdvm_wire import mmdvm_wire_blocks
 
 
 def test_should_resend_passthrough_only_after_inject() -> None:

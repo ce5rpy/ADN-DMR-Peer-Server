@@ -24,6 +24,7 @@ from __future__ import annotations
 
 from tests.harness.scenarios import make_talker_alias_use_cases, talker_alias_config
 from tests.talker_alias.test_passthrough import _complete_blocks, _passthrough_config
+
 from adn_server.domain import bytes_3, bytes_4
 
 

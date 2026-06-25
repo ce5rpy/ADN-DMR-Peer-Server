@@ -26,7 +26,6 @@ import pickle
 
 from adn_server.application.subscription.routing_table_export import export_routing_table
 from adn_server.application.subscription.routing_table_legacy_view import RoutingTableLegacyView
-from adn_server.infrastructure.twisted_adapters.report.pickle_legacy import encode_bridge_snd_frame
 from adn_server.domain import bytes_3
 from adn_server.domain.subscription import (
     ActivationPolicy,
@@ -40,6 +39,7 @@ from adn_server.domain.subscription import (
 )
 from adn_server.infrastructure.subscription_store import InMemorySubscriptionStore
 from adn_server.infrastructure.twisted_adapters.report.opcodes import REPORT_OPCODES
+from adn_server.infrastructure.twisted_adapters.report.pickle_legacy import encode_bridge_snd_frame
 
 
 def _sample_store() -> InMemorySubscriptionStore:

@@ -31,12 +31,13 @@ from __future__ import annotations
 import copy
 from typing import Any
 
+from adn_server.application.proxy.deployment import is_proxy_inject_only, proxy_target_system
 from adn_server.application.routing.downlink import (
     DownlinkContext,
+    peer_monitor_end_tx_conflicts_with_session,
     peer_would_show_group_voice_on_monitor,
 )
 from adn_server.application.routing.helpers import is_special_tg, peer_should_receive_group_voice
-from adn_server.application.proxy.deployment import is_proxy_inject_only, proxy_target_system
 from adn_server.domain.value_objects import bytes_4, int_id
 
 DEFAULT_REPORT_BASE_PORT = 56400
@@ -243,6 +244,7 @@ def _peers_receiving_tgid(
     sys_cfg: dict[str, Any] | None = None,
     downlink_ctx: DownlinkContext | None = None,
     stream_id: bytes | None = None,
+    for_end_tx: bool = False,
 ) -> list[tuple[Any, dict[str, Any]]]:
     out: list[tuple[Any, dict[str, Any]]] = []
     n_connected = len(connected)
@@ -269,6 +271,10 @@ def _peers_receiving_tgid(
             options_eligible=options_ok,
             stream_id=stream_id,
         ):
+            if for_end_tx and peer_monitor_end_tx_conflicts_with_session(
+                downlink_ctx, pk, peer, slot, tgid, stream_id,
+            ):
+                continue
             out.append((peer_key, peer))
     return out
 
@@ -380,6 +386,7 @@ def remap_inject_proxy_voice_events(
         if tgid_slot is None:
             return [event]
         tgid, voice_slot = tgid_slot
+        action = parts[1].strip() if len(parts) > 1 else ""
         receivers = _peers_receiving_tgid(
             connected,
             slot=voice_slot,
@@ -389,9 +396,10 @@ def remap_inject_proxy_voice_events(
             sys_cfg=sys_cfg,
             downlink_ctx=downlink_ctx,
             stream_id=stream_id,
+            for_end_tx=(action == "END"),
         )
         if not receivers:
-            return [event]
+            return []
         remapped: list[str] = []
         for peer_key, _peer in receivers:
             mapped_slot = slot_map.get(peer_key)
@@ -402,7 +410,7 @@ def remap_inject_proxy_voice_events(
                     parts, target=target, slot=mapped_slot, peer_key=peer_key
                 )
             )
-        return remapped if remapped else [event]
+        return remapped
 
     peer_key = _peer_key_from_voice_csv(parts, peers)
     if peer_key is None:
@@ -492,6 +500,7 @@ def remap_inject_proxy_voice_event_for_peer(
         return None
     tgid, voice_slot = tgid_slot
     stream_id = _voice_event_stream_id(parts)
+    action = parts[1].strip() if len(parts) > 1 else ""
     if not peer_would_show_group_voice_on_monitor(
         downlink_ctx,
         pk,
@@ -509,6 +518,10 @@ def remap_inject_proxy_voice_event_for_peer(
             sys_cfg=sys_cfg,
         ),
         stream_id=stream_id,
+    ):
+        return None
+    if action == "END" and peer_monitor_end_tx_conflicts_with_session(
+        downlink_ctx, pk, peer, voice_slot, tgid, stream_id,
     ):
         return None
     max_slots = int(sys_cfg.get("MAX_PEERS", 1))

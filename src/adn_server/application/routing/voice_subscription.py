@@ -45,10 +45,10 @@ from __future__ import annotations
 
 import logging
 
+from ...domain.voice_routing import ForwardLeg, VoiceIngress
 from ..ports import SubscriptionStore
 from ..subscription.ingress import build_voice_ingress
 from ..subscription.router import SubscriptionRouter
-from ...domain.voice_routing import ForwardLeg, VoiceIngress
 
 logger = logging.getLogger(__name__)
 

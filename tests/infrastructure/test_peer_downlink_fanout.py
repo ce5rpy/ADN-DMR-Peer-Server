@@ -23,11 +23,11 @@
 from __future__ import annotations
 
 import pytest
+from tests.harness.deterministic import DeterministicScenario, PacketSpec
+from tests.support.hbp_repeat_stack import build_hbp_repeat_stack
 
 from adn_server.domain import bytes_4
 from adn_server.infrastructure.hbp_constants import DMRD
-from tests.harness.deterministic import DeterministicScenario, PacketSpec
-from tests.support.hbp_repeat_stack import build_hbp_repeat_stack
 
 pytestmark = pytest.mark.integration
 

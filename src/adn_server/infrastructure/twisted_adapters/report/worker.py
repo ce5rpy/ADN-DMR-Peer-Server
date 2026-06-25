@@ -27,8 +27,8 @@ from typing import Any, Callable
 
 from twisted.internet import task
 
-from adn_server.application.report.queue import BoundedReportQueue
 from adn_server.application.ports import ReportSender
+from adn_server.application.report.queue import BoundedReportQueue
 
 logger = logging.getLogger(__name__)
 

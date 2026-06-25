@@ -26,7 +26,7 @@ import time
 
 from adn_server.application.ports import PeerTransport
 from adn_server.domain.mesh_routing import MeshEgress, MeshIngress, PeerMeshConfig
-from adn_server.infrastructure.hbp_constants import DMRE, DMRD
+from adn_server.infrastructure.hbp_constants import DMRD, DMRE
 from adn_server.infrastructure.mesh.dmre_v5 import build_dmre, parse_dmre_trailer, verify_dmre_mac
 from adn_server.infrastructure.mesh.obp_v1 import build_dmrd_v1, verify_dmrd_v1
 

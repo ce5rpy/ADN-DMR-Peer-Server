@@ -24,10 +24,14 @@ from __future__ import annotations
 
 from unittest.mock import MagicMock
 
-from adn_server.application.proxy.session_teardown import CLIENT_TEARDOWN_REPEAT, client_teardown_packet, master_teardown_packet
+from adn_server.application.proxy.session_teardown import (
+    CLIENT_TEARDOWN_REPEAT,
+    client_teardown_packet,
+    master_teardown_packet,
+)
 from adn_server.domain.proxy import ClientEndpoint, SessionTeardown
-from adn_server.infrastructure.proxy.session_executor import apply_session_teardown
 from adn_server.domain.value_objects import bytes_4
+from adn_server.infrastructure.proxy.session_executor import apply_session_teardown
 
 _PEER = bytes_4(1234567)
 _CLIENT = ClientEndpoint(host="10.0.0.8", port=5000)

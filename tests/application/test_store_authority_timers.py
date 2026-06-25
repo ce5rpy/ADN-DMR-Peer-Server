@@ -22,8 +22,9 @@
 
 from __future__ import annotations
 
-from adn_server.domain.subscription import SubscriptionPhase
 from tests.harness.deterministic import DeterministicScenario, active_routing_table, patch_routing_wall_time
+
+from adn_server.domain.subscription import SubscriptionPhase
 
 
 def test_rule_timer_syncs_subscription_store() -> None:

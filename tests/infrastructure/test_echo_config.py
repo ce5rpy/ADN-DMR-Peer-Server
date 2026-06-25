@@ -24,7 +24,6 @@ from __future__ import annotations
 
 from adn_server.infrastructure.config_validator import validate_config
 
-
 MINIMAL_ECHO = {
     "GLOBAL": {"SERVER_ID": 9990},
     "LOGGER": {"LOG_FILE": "/var/log/adn-server/echo.log"},

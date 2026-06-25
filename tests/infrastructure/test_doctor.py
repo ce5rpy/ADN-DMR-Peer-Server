@@ -24,7 +24,6 @@ from __future__ import annotations
 
 import textwrap
 
-
 from adn_server.infrastructure.doctor import collect_findings, run_doctor
 
 

@@ -25,7 +25,6 @@ from __future__ import annotations
 from unittest.mock import patch
 
 import pytest
-
 from tests.harness.deterministic import DeterministicScenario, PacketSpec
 from tests.harness.playback_helpers import FakePlaybackProtocol, install_reactor_capture, send_playback
 

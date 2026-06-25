@@ -55,7 +55,7 @@ __email__      = 'n0mjs@me.com'
 def csum5(_data):
     accum = 0
     assert len(_data) == 9, 'csum5 expected 9 bytes of data and got something else'
-    
+
     for i in range(9):
         accum += _data[i]
     accum = bytes([accum % 31])
@@ -67,8 +67,8 @@ def csum5(_data):
 
 
 if __name__ == '__main__':
-    
+
     message = b'\x00\x10\x20\x00\x0c\x30\x2f\x9b\xe5'
-    
+
     result = csum5(message)
     print(result, type(result))

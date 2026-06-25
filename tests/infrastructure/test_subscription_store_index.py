@@ -26,8 +26,8 @@ from adn_server.application.subscription.router import SubscriptionRouter
 from adn_server.application.subscription.routing_table_import import subscriptions_from_routing_table
 from adn_server.domain import bytes_3
 from adn_server.domain.subscription import SubscriptionPhase
-from adn_server.domain.voice_routing import VoiceIngress
 from adn_server.domain.value_objects import TgId
+from adn_server.domain.voice_routing import VoiceIngress
 from adn_server.infrastructure.subscription_store import InMemorySubscriptionStore
 
 

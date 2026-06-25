@@ -22,17 +22,18 @@
 
 from __future__ import annotations
 
+from tests.application.test_subscription_router import _row
+from tests.harness.deterministic import minimal_config
+
 from adn_server.application.routing_use_cases import RoutingUseCases
 from adn_server.application.subscription.store_sync import replace_store_from_routing_table
 from adn_server.domain import bytes_3
+from adn_server.domain.dmr.bptc import encode_emblc
 from adn_server.domain.subscription import TgId
 from adn_server.domain.voice_routing import ForwardLeg
-from adn_server.domain.dmr.bptc import encode_emblc
 from adn_server.infrastructure.acl_router import InMemoryAclRouter
 from adn_server.infrastructure.subscription_store import InMemorySubscriptionStore
 from adn_server.infrastructure.talker_alias_emblc import default_ta_emblc_encoder
-from tests.application.test_subscription_router import _row
-from tests.harness.deterministic import minimal_config
 
 
 def _routing(routing_table: dict) -> RoutingUseCases:

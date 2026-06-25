@@ -29,10 +29,11 @@ from random import randint
 from typing import Any, Iterator
 
 from bitarray import bitarray
+
+from ...domain import bytes_4
 from ...domain.dmr import bptc
 from ...domain.dmr.bptc import encode_emblc
 from ...domain.dmr.const import BS_DATA_SYNC, BS_VOICE_SYNC, EMB, LC_OPT, SLOT_TYPE
-from ...domain import bytes_4
 
 # Precalculated DMRD byte 15 (slot << 7 | this)
 HEADBITS = 0b00100001

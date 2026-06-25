@@ -23,8 +23,8 @@
 from __future__ import annotations
 
 from adn_server.domain import int_id
-from adn_server.domain.voice_routing import VoiceIngress
 from adn_server.domain.value_objects import DmrId, TgId
+from adn_server.domain.voice_routing import VoiceIngress
 
 _BRIDGE_CALL_TYPES = frozenset({"group", "vcsbk"})
 

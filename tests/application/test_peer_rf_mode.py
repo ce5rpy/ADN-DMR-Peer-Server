@@ -4,6 +4,8 @@
 
 from __future__ import annotations
 
+from tests.harness.deterministic import DeterministicScenario, PacketSpec
+
 from adn_server.application.report.payloads import _topology_peer_row
 from adn_server.application.routing.helpers import (
     RF_MODE_DUPLEX,
@@ -16,7 +18,6 @@ from adn_server.application.routing.helpers import (
     peer_options_static_tg_slot,
     remap_dmrd_to_peer_static_slot,
 )
-from tests.harness.deterministic import DeterministicScenario, PacketSpec
 
 
 def _simplex_peer() -> dict:

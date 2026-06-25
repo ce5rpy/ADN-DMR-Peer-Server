@@ -24,6 +24,8 @@ from __future__ import annotations
 
 import pytest
 from bitarray import bitarray
+from tests.harness.deterministic import DeterministicScenario, PacketSpec
+from tests.support.hbp_repeat_stack import HbpRepeatStack, build_hbp_repeat_stack
 
 from adn_server.application.proxy import ProxyUseCases
 from adn_server.domain import bytes_4
@@ -36,8 +38,6 @@ from adn_server.infrastructure.proxy import (
     ProxyFanInProtocol,
     ProxyReplyTransport,
 )
-from tests.harness.deterministic import DeterministicScenario, PacketSpec
-from tests.support.hbp_repeat_stack import HbpRepeatStack, build_hbp_repeat_stack
 
 pytestmark = pytest.mark.integration
 

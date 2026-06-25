@@ -43,7 +43,6 @@
 
 from bitarray import bitarray
 
-
 __author__     = 'Cortney T. Buffington, N0MJS'
 __copyright__  = 'Copyright (c) 2016-2018 Cortney T. Buffington, N0MJS and the K0USY Group'
 __credits__    = ''
@@ -145,9 +144,9 @@ Slot Type: CC(4b), DataType(4), Slot Type Parity(12b - )
 #------------------------------------------------------------------------------
 
 if __name__ == '__main__':
-    
+
     from pprint import pprint
-    
+
     pprint(SYNC)
     pprint(EMB)
     pprint(SLOT_TYPE)

@@ -1,4 +1,4 @@
-# ADN DMR Peer Server - infrastructure proxy   init  
+# ADN DMR Peer Server - infrastructure proxy   init
 #
 # Copyright (C) 2026  Rodrigo Pérez, CE5RPY <ce5rpy@qmd.cl>
 #
@@ -21,12 +21,12 @@
 """Proxy infrastructure adapters (Phase 3)."""
 
 from .config import apply_proxy_env_overrides, proxy_settings
-from .self_service_config import self_service_settings
 from .hbp_adapters import FanInClientSender, HbpMasterPeerRegistry, InProcessHbpSink
 from .ip_blacklist import InMemoryProxyIpBlacklist
 from .reply_transport import ProxyReplyTransport
-from .runtime import ProxyServiceState, apply_proxy_config_reload, start_proxy_service
 from .rpto_queue import InMemoryPendingRptoQueue
+from .runtime import ProxyServiceState, apply_proxy_config_reload, start_proxy_service
+from .self_service_config import self_service_settings
 from .session_executor import apply_session_teardown
 from .slot_store import InMemoryProxySlotStore
 from .udp_fanin import ProxyFanInProtocol, listen_proxy_fanin

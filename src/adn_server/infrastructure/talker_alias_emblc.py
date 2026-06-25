@@ -25,6 +25,7 @@ from __future__ import annotations
 from collections.abc import Sequence
 from typing import TYPE_CHECKING
 
+from ..domain.dmr.bptc import encode_emblc
 from ..domain.talker_alias import (
     blocks_from_buffer,
     buffer_from_blocks,
@@ -35,7 +36,6 @@ from ..domain.talker_alias import (
     talker_alias_decode_complete,
     talker_alias_lc_bytes,
 )
-from ..domain.dmr.bptc import encode_emblc
 
 if TYPE_CHECKING:
     from bitarray import bitarray

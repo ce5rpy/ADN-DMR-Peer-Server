@@ -22,13 +22,13 @@
 
 from __future__ import annotations
 
+from tests.conftest import minimal_valid_config
+
 from adn_server.infrastructure.config_validator import validate_config
 from adn_server.infrastructure.twisted_adapters.report.mqtt_config import (
     mqtt_settings_from_config,
     parse_mqtt_broker,
 )
-
-from tests.conftest import minimal_valid_config
 
 
 def test_mqtt_disabled_by_default():

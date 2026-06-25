@@ -49,9 +49,9 @@ from hashlib import blake2b
 from time import perf_counter
 from typing import Any
 
+from ...domain import HBPF_DATA_SYNC, HBPF_SLT_VHEAD, int_id
 from ...domain.dmr import decode
 from ...domain.dmr.const import LC_OPT
-from ...domain import HBPF_DATA_SYNC, HBPF_SLT_VHEAD, int_id
 
 logger = logging.getLogger(__name__)
 

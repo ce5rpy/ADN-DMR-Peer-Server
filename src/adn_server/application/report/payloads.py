@@ -26,14 +26,13 @@ import re
 import time
 from typing import Any
 
-from adn_server.domain.ua_timer import normalize_ua_timer_minutes, ua_timer_is_infinite
-
 from adn_server.application.routing.helpers import (
     export_peer_ua_multi_tgs,
     export_peer_ua_sessions,
     peer_rf_mode,
 )
 from adn_server.domain import int_id
+from adn_server.domain.ua_timer import normalize_ua_timer_minutes, ua_timer_is_infinite
 
 REPORT_PROTOCOL = 2
 REPORT_FEATURES = (

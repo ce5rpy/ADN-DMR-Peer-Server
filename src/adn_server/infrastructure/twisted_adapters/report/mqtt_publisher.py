@@ -27,8 +27,8 @@ import logging
 from collections.abc import Callable
 from typing import Any
 
-from adn_server.application.report.dashboard_state import build_dashboard_state
 from adn_server.application.ports import ReportMqttPublisher, ReportWireEncoder
+from adn_server.application.report.dashboard_state import build_dashboard_state
 
 from .mqtt_config import MQTT_PUBLISH_VOICE_EVENT, MqttSettings, mqtt_settings_from_config
 from .mqtt_topics import frame_message_type, mqtt_shared_state_topic, topic_for_frame

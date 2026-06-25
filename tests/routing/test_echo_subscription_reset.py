@@ -27,8 +27,8 @@ from tests.harness.assertions import assert_forwarded
 from tests.harness.deterministic import DeterministicScenario, PacketSpec, minimal_config
 
 from adn_server.domain import ID_MAX, PEER_MAX
-from adn_server.infrastructure.config_loader import acl_build
 from adn_server.infrastructure.bootstrap.peer_server import _seed_echo_routing_table
+from adn_server.infrastructure.config_loader import acl_build
 
 
 def _echo_scenario_config() -> dict:

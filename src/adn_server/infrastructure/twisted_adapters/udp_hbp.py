@@ -35,11 +35,10 @@ from hashlib import sha256
 from random import randint
 from typing import Any, Callable
 
-from ...domain.dmr import decode
-from ...domain.dmr.const import LC_OPT
 from twisted.internet import reactor, task
 from twisted.internet.protocol import DatagramProtocol
 
+from ...application.proxy.deployment import is_proxy_inject_only
 from ...application.routing.downlink import (
     DownlinkContext,
     build_dmra_route_packet,
@@ -53,6 +52,8 @@ from ...application.routing.downlink import (
 from ...application.routing.helpers import (
     clear_peer_rx_status_slots,
     clear_peer_ua_sessions,
+    is_on_demand_service_dst,
+    is_server_originated_voice,
     is_special_tg,
     is_unit_data_ingress,
     parse_dmrd_route_fields,
@@ -70,8 +71,10 @@ from ...application.routing.peer_downlink_index import (
     count_connected_peers,
     invalidate_peer_options_cache,
 )
-from ...application.proxy.deployment import is_proxy_inject_only
 from ...domain import bytes_3, bytes_4, int_id
+from ...domain.dmr import decode
+from ...domain.dmr.const import LC_OPT
+from ...domain.mesh_routing import MeshEgress, MeshIngress, PeerMeshConfig
 from ...domain.talker_alias import (
     DMRA_PACKET_LEN,
     decode_ta_from_blocks,
@@ -79,19 +82,7 @@ from ...domain.talker_alias import (
     store_ta_block,
     try_buffer_ta_from_voice_fragments,
 )
-from ...domain.mesh_routing import MeshEgress, MeshIngress, PeerMeshConfig
-from ..mesh.dmre_v5 import parse_dmre_trailer
-from ..mesh.registry import MeshCodecRegistry
 from ..config_push_throttle import ConfigPushThrottle
-from ..mesh.obp_v1 import (
-    build_bcka,
-    build_bcve,
-    build_bcsq,
-    verify_bcka,
-    verify_bcsq,
-    verify_bcst,
-    verify_bcve,
-)
 from ..hbp_constants import (
     BC,
     BCKA,
@@ -125,6 +116,17 @@ from ..hbp_constants import (
     RPTPING,
     VER,
 )
+from ..mesh.dmre_v5 import parse_dmre_trailer
+from ..mesh.obp_v1 import (
+    build_bcka,
+    build_bcsq,
+    build_bcve,
+    verify_bcka,
+    verify_bcsq,
+    verify_bcst,
+    verify_bcve,
+)
+from ..mesh.registry import MeshCodecRegistry
 
 logger = logging.getLogger(__name__)
 
@@ -390,11 +392,19 @@ class HBPProtocol(DatagramProtocol):
         slot, tgid, call_type = parsed
         if call_type not in ("group", "vcsbk"):
             return self._peers.keys()
-        if is_special_tg(str(tgid)):
-            return self._peers.keys()
         connected = self._cached_connected_peer_count()
         if connected <= 0:
             return ()
+        if is_server_originated_voice(packet):
+            slot_st = self.STATUS.get(2, {})
+            rx_peer = slot_st.get("RX_PEER", b"")
+            if rx_peer and rx_peer in self._peers:
+                return (rx_peer,)
+            if connected == 1:
+                return self._peers.keys()
+            return ()
+        if is_special_tg(str(tgid)):
+            return self._peers.keys()
         index = self._ensure_downlink_index()
         return index.candidates(slot, tgid, connected_count=connected)
 
@@ -549,6 +559,13 @@ class HBPProtocol(DatagramProtocol):
         slot, tgid, call_type = parsed
         if call_type not in ("group", "vcsbk"):
             return True
+        # Server playback (5000 -> TG 9): not in OPTIONS; deliver to requesting RX peer on TS2.
+        if is_server_originated_voice(packet):
+            slot_st = self.STATUS.get(2, {})
+            rx_peer = slot_st.get("RX_PEER", b"")
+            if rx_peer and rx_peer != b"\x00\x00\x00\x00":
+                return bytes_4(int_id(peer_id)) == bytes_4(int_id(rx_peer))
+            return self._cached_connected_peer_count() == 1
         # Parrot / echo (9990–9999): not in per-hotspot OPTIONS; deliver to last RX peer on slot.
         if is_special_tg(str(tgid)):
             slot_st = self.STATUS.get(slot, {})
@@ -587,16 +604,15 @@ class HBPProtocol(DatagramProtocol):
     ) -> None:
         if call_type not in ("group", "vcsbk"):
             return
-        ctx = self._downlink_ctx()
-        if not ctx.per_peer_contention():
-            return
         peer = self._peers.get(peer_id)
         if peer is None:
             return
         from ...application.routing.downlink import normalize_ua_voice_slot
 
-        # Track transmit hangtime on the RF timeslot keyed, not OPTIONS remap slot.
         voice_slot = normalize_ua_voice_slot(peer, wire_slot)
+        ctx = self._downlink_ctx()
+        if not ctx.per_peer_contention():
+            return
         if frame_type == HBPF_DATA_SYNC and dtype_vseq == HBPF_SLT_VTERM:
             from ...application.routing.downlink import end_peer_voice_slot
 
@@ -607,7 +623,7 @@ class HBPProtocol(DatagramProtocol):
             from ...application.routing.downlink import touch_peer_voice_slot
 
             touch_peer_voice_slot(
-                ctx, peer_id, voice_slot, stream_id, dst_id, pkt_time=pkt_time,
+                ctx, peer_id, voice_slot, stream_id, dst_id, pkt_time=pkt_time, ingress=True,
             )
 
     def _peer_would_accept_group_dmrd(self, peer_id: bytes, packet: bytes) -> bool:
@@ -656,7 +672,7 @@ class HBPProtocol(DatagramProtocol):
             self._downlink_drop_logged.discard(self._downlink_drop_key(_peer, route_pkt))
             _packet = b"".join([route_pkt[:11], _peer, route_pkt[15:]])
             ctx = self._downlink_ctx()
-            if ctx.per_peer_contention() and isinstance(peer, dict):
+            if isinstance(peer, dict):
                 track_peer_group_dmrd(ctx, _peer, _packet, peer, from_ingress=False)
         self.transport.write(_packet, self._peers[_peer]["SOCKADDR"])
 
@@ -1068,6 +1084,7 @@ class HBPProtocol(DatagramProtocol):
                     return
                 pkt_time = time.time()
                 _int_dst_id = int_id(_dst_id)
+                _unit_service_dst = _call_type == "unit" and is_on_demand_service_dst(_int_dst_id)
                 # ACL (legacy order and _laststrid)
                 if self._router and _global.get("USE_ACL"):
                     if not self._router.acl_check(_rf_src, _global.get("SUB_ACL", (True, []))):
@@ -1075,12 +1092,12 @@ class HBPProtocol(DatagramProtocol):
                             logger.info("(%s) CALL DROPPED WITH STREAM ID %s FROM SUBSCRIBER %s BY GLOBAL ACL", self._system, int_id(_stream_id), int_id(_rf_src))
                             self._laststrid[_slot] = _stream_id
                         return
-                    if _slot == 1 and not self._router.acl_check(_dst_id, _global.get("TG1_ACL", (True, []))):
+                    if not _unit_service_dst and _slot == 1 and not self._router.acl_check(_dst_id, _global.get("TG1_ACL", (True, []))):
                         if self._laststrid[_slot] != _stream_id:
                             logger.info("(%s) CALL DROPPED WITH STREAM ID %s ON TGID %s BY GLOBAL TS1 ACL", self._system, int_id(_stream_id), int_id(_dst_id))
                             self._laststrid[_slot] = _stream_id
                         return
-                    if _slot == 2 and not self._router.acl_check(_dst_id, _global.get("TG2_ACL", (True, []))):
+                    if not _unit_service_dst and _slot == 2 and not self._router.acl_check(_dst_id, _global.get("TG2_ACL", (True, []))):
                         if self._laststrid[_slot] != _stream_id:
                             logger.info("(%s) CALL DROPPED WITH STREAM ID %s ON TGID %s BY GLOBAL TS2 ACL", self._system, int_id(_stream_id), int_id(_dst_id))
                             self._laststrid[_slot] = _stream_id
@@ -1091,12 +1108,12 @@ class HBPProtocol(DatagramProtocol):
                             logger.info("(%s) CALL DROPPED WITH STREAM ID %s FROM SUBSCRIBER %s BY SYSTEM ACL", self._system, int_id(_stream_id), int_id(_rf_src))
                             self._laststrid[_slot] = _stream_id
                         return
-                    if _slot == 1 and not self._router.acl_check(_dst_id, self._config.get("TG1_ACL", (True, []))):
+                    if not _unit_service_dst and _slot == 1 and not self._router.acl_check(_dst_id, self._config.get("TG1_ACL", (True, []))):
                         if self._laststrid[_slot] != _stream_id:
                             logger.info("(%s) CALL DROPPED WITH STREAM ID %s ON TGID %s BY SYSTEM TS1 ACL", self._system, int_id(_stream_id), int_id(_dst_id))
                             self._laststrid[_slot] = _stream_id
                         return
-                    if _slot == 2 and not self._router.acl_check(_dst_id, self._config.get("TG2_ACL", (True, []))):
+                    if not _unit_service_dst and _slot == 2 and not self._router.acl_check(_dst_id, self._config.get("TG2_ACL", (True, []))):
                         if self._laststrid[_slot] != _stream_id:
                             logger.info("(%s) CALL DROPPED WITH STREAM ID %s ON TGID %s BY SYSTEM TS2 ACL", self._system, int_id(_stream_id), int_id(_dst_id))
                             self._laststrid[_slot] = _stream_id
@@ -1233,8 +1250,11 @@ class HBPProtocol(DatagramProtocol):
                     self._on_handle_recording(dmrpkt, _frame_type, _dtype_vseq, _stream_id, pkt_time, _rf_src, _int_dst_id, _slot)
                 if (
                     _call_type == "unit"
+                    and not _unit_data
                     and _frame_type == HBPF_DATA_SYNC
                     and _dtype_vseq == HBPF_SLT_VTERM
+                    and _slot in self.STATUS
+                    and self.STATUS[_slot].get("RX_TYPE") != HBPF_SLT_VTERM
                     and 9991 <= _int_dst_id <= 9999
                     and self._on_play_file_request
                 ):
@@ -1553,18 +1573,19 @@ class HBPProtocol(DatagramProtocol):
                 pkt_time = time.time()
                 _int_dst_id = int_id(_dst_id)
                 _global = self._CONFIG.get("GLOBAL", {})
+                _unit_service_dst = _call_type == "unit" and is_on_demand_service_dst(_int_dst_id)
                 if self._router and _global.get("USE_ACL"):
                     if not self._router.acl_check(_rf_src, _global.get("SUB_ACL", (True, []))):
                         if self._laststrid[_slot] != _stream_id:
                             logger.info("(%s) CALL DROPPED WITH STREAM ID %s FROM SUBSCRIBER %s BY GLOBAL ACL", self._system, int_id(_stream_id), int_id(_rf_src))
                             self._laststrid[_slot] = _stream_id
                         return
-                    if _slot == 1 and not self._router.acl_check(_dst_id, _global.get("TG1_ACL", (True, []))):
+                    if not _unit_service_dst and _slot == 1 and not self._router.acl_check(_dst_id, _global.get("TG1_ACL", (True, []))):
                         if self._laststrid[_slot] != _stream_id:
                             logger.info("(%s) CALL DROPPED WITH STREAM ID %s ON TGID %s BY GLOBAL TS1 ACL", self._system, int_id(_stream_id), int_id(_dst_id))
                             self._laststrid[_slot] = _stream_id
                         return
-                    if _slot == 2 and not self._router.acl_check(_dst_id, _global.get("TG2_ACL", (True, []))):
+                    if not _unit_service_dst and _slot == 2 and not self._router.acl_check(_dst_id, _global.get("TG2_ACL", (True, []))):
                         if self._laststrid[_slot] != _stream_id:
                             logger.info("(%s) CALL DROPPED WITH STREAM ID %s ON TGID %s BY GLOBAL TS2 ACL", self._system, int_id(_stream_id), int_id(_dst_id))
                             self._laststrid[_slot] = _stream_id
@@ -1575,12 +1596,12 @@ class HBPProtocol(DatagramProtocol):
                             logger.info("(%s) CALL DROPPED WITH STREAM ID %s FROM SUBSCRIBER %s BY SYSTEM ACL", self._system, int_id(_stream_id), int_id(_rf_src))
                             self._laststrid[_slot] = _stream_id
                         return
-                    if _slot == 1 and not self._router.acl_check(_dst_id, self._config.get("TG1_ACL", (True, []))):
+                    if not _unit_service_dst and _slot == 1 and not self._router.acl_check(_dst_id, self._config.get("TG1_ACL", (True, []))):
                         if self._laststrid[_slot] != _stream_id:
                             logger.info("(%s) CALL DROPPED WITH STREAM ID %s ON TGID %s BY SYSTEM TS1 ACL", self._system, int_id(_stream_id), int_id(_dst_id))
                             self._laststrid[_slot] = _stream_id
                         return
-                    if _slot == 2 and not self._router.acl_check(_dst_id, self._config.get("TG2_ACL", (True, []))):
+                    if not _unit_service_dst and _slot == 2 and not self._router.acl_check(_dst_id, self._config.get("TG2_ACL", (True, []))):
                         if self._laststrid[_slot] != _stream_id:
                             logger.info("(%s) CALL DROPPED WITH STREAM ID %s ON TGID %s BY SYSTEM TS2 ACL", self._system, int_id(_stream_id), int_id(_dst_id))
                             self._laststrid[_slot] = _stream_id
@@ -1634,8 +1655,11 @@ class HBPProtocol(DatagramProtocol):
                     self._on_handle_recording(dmrpkt, _frame_type, _dtype_vseq, _stream_id, pkt_time, _rf_src, _int_dst_id, _slot)
                 if (
                     _call_type == "unit"
+                    and not _unit_data
                     and _frame_type == HBPF_DATA_SYNC
                     and _dtype_vseq == HBPF_SLT_VTERM
+                    and _slot in self.STATUS
+                    and self.STATUS[_slot].get("RX_TYPE") != HBPF_SLT_VTERM
                     and 9991 <= _int_dst_id <= 9999
                     and self._on_play_file_request
                 ):

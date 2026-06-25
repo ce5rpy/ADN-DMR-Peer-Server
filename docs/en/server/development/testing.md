@@ -84,3 +84,5 @@ Do not chase coverage percentage; chase regressions operators would notice on RF
 ## v2 policy
 
 Each v2 feature branch should include or extend regression tests in the same PR. Baseline task **V2-TST-001** tracks bringing `tests/` into the repo on `develop`.
+
+On-air manual QA (three hotspots, OBP, cross-slot, monitor): maintainer playbook in **`docs-priv/es/manual-qa-playbook.md`** (not in the public docs tree).

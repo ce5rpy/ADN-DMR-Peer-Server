@@ -28,8 +28,8 @@ from collections.abc import Callable
 from typing import Any
 
 from adn_server.application.ports import SubscriptionStore
-from adn_server.application.subscription.routing_table_export import _legacy_to_type
 from adn_server.application.routing.helpers import is_special_tg
+from adn_server.application.subscription.routing_table_export import _legacy_to_type
 from adn_server.domain.subscription import Subscription, SubscriptionPhase
 
 logger = logging.getLogger(__name__)

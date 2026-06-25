@@ -24,11 +24,11 @@ from __future__ import annotations
 
 from unittest.mock import MagicMock
 
+from adn_server.infrastructure.persistence.database_config import validate_database_settings
 from adn_server.infrastructure.persistence.mysql_pool import (
     _ensure_peer_dynamic_tgs_on_cursor,
     describe_mysql_error,
 )
-from adn_server.infrastructure.persistence.database_config import validate_database_settings
 
 
 def test_validate_database_settings_requires_db_name() -> None:

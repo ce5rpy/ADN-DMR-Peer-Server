@@ -50,7 +50,6 @@ from adn_server.domain.hbp_protocol import (
     HBPF_SLT_VTERM,
     HBPF_VOICE,
 )
-
 from tests.harness.assertions import assert_forwarded
 from tests.harness.deterministic import (
     DeterministicScenario,

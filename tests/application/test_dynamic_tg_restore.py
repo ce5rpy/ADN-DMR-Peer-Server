@@ -23,6 +23,7 @@
 from __future__ import annotations
 
 import pytest
+from tests.application.test_peer_single_downlink import _peer_id, _sys_cfg
 
 from adn_server.application.routing.helpers import (
     peer_should_receive_group_voice,
@@ -30,7 +31,6 @@ from adn_server.application.routing.helpers import (
     restore_peer_ua_entries_to_memory,
 )
 from adn_server.domain.dynamic_tg import DynamicTgEntry
-from tests.application.test_peer_single_downlink import _peer_id, _sys_cfg
 
 
 def test_restore_single_mode_respects_expiry() -> None:

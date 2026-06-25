@@ -22,11 +22,6 @@
 
 from __future__ import annotations
 
-
-from adn_server.application.subscription.router import SubscriptionRouter
-from adn_server.application.subscription.store_sync import replace_store_from_routing_table
-from adn_server.domain.value_objects import TgId
-from adn_server.domain.voice_routing import VoiceIngress
 from tests.harness.deterministic import (
     DeterministicScenario,
     FakeHbpProtocol,
@@ -34,7 +29,11 @@ from tests.harness.deterministic import (
     active_routing_table,
 )
 
+from adn_server.application.subscription.router import SubscriptionRouter
+from adn_server.application.subscription.store_sync import replace_store_from_routing_table
 from adn_server.domain import bytes_3, bytes_4
+from adn_server.domain.value_objects import TgId
+from adn_server.domain.voice_routing import VoiceIngress
 
 
 def _proxy_system_scenario(

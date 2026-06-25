@@ -43,6 +43,7 @@
 
 
 from bitarray import bitarray
+
 from . import crc, hamming, rs129
 
 # Does anybody read this stuff? There's a PEP somewhere that says I should do this.
@@ -77,7 +78,7 @@ INDEX_181 = (
 #------------------------------------------------------------------------------
 
 def decode_full_lc(_data):
-    binlc = bitarray(endian='big')   
+    binlc = bitarray(endian='big')
     binlc.extend([_data[136],_data[121],_data[106],_data[91], _data[76], _data[61], _data[46], _data[31]])
     binlc.extend([_data[152],_data[137],_data[122],_data[107],_data[92], _data[77], _data[62], _data[47], _data[32], _data[17], _data[2]  ])
     binlc.extend([_data[123],_data[108],_data[93], _data[78], _data[63], _data[48], _data[33], _data[18], _data[3],  _data[184],_data[169]])
@@ -108,11 +109,11 @@ def encode_19696(_data):
     # Create a bitarray from the 4 bytes of LC data (includes RS1293 ECC)
     _bdata = bitarray(endian='big')
     _bdata.frombytes(_data)
-    
+
     # Insert R0-R3 bits
     for i in range(4):
         _bdata.insert(0, 0)
-    
+
     # Get row hamming 15,11,3 and append. +1 is to account for R3 that makes an even 196bit string
     for index in range(9):
         spos = (index*15) + 1
@@ -120,12 +121,12 @@ def encode_19696(_data):
         _rowp = hamming.enc_15113(_bdata[spos:epos])
         for pbit in range(4):
             _bdata.insert(epos+pbit,_rowp[pbit])
-    
+
     # Get column hamming 13,9,3 and append. +1 is to account for R3 that makes an even 196bit string
     # Pad out the bitarray to a full 196 bits. Can't insert into 'columns'
     for i in range(60):
         _bdata.append(0)
-    
+
     column = bitarray(9, endian='big')  # Temporary bitarray to hold column data
     for col in range(15):
         spos = col + 1
@@ -133,7 +134,7 @@ def encode_19696(_data):
             column[index] = _bdata[spos]
             spos += 15
         _colp = hamming.enc_1393(column)
-        
+
         # Insert bits into matrix...
         cpar = 136 + col                # Starting location in the matrix for column bits
         for pbit in range(4):
@@ -147,19 +148,19 @@ def encode_header_lc(_lc):
     full_lc = encode_19696(full_lc)
     full_lc = interleave_19696(full_lc)
     return full_lc
-    
+
 def encode_terminator_lc(_lc):
     full_lc = _lc + rs129.lc_terminator_encode(_lc)
     full_lc = encode_19696(full_lc)
     full_lc = interleave_19696(full_lc)
     return full_lc
-    
+
 #------------------------------------------------------------------------------
 # BPTC Embedded LC Decoding Routines
 #------------------------------------------------------------------------------
 
 def decode_emblc(_elc):
-    
+
     _binlc = bitarray(endian='big')
     _binlc.extend([_elc[0],_elc[8], _elc[16],_elc[24],_elc[32],_elc[40],_elc[48],_elc[56],_elc[64],_elc[72] ,_elc[80]])
     _binlc.extend([_elc[1],_elc[9], _elc[17],_elc[25],_elc[33],_elc[41],_elc[49],_elc[57],_elc[65],_elc[73] ,_elc[81]])
@@ -168,7 +169,7 @@ def decode_emblc(_elc):
     _binlc.extend([_elc[4],_elc[12],_elc[20],_elc[28],_elc[36],_elc[44],_elc[52],_elc[60],_elc[68],_elc[76]])
     _binlc.extend([_elc[5],_elc[13],_elc[21],_elc[29],_elc[37],_elc[45],_elc[53],_elc[61],_elc[69],_elc[77]])
     _binlc.extend([_elc[6],_elc[14],_elc[22],_elc[30],_elc[38],_elc[46],_elc[54],_elc[62],_elc[70],_elc[78]])
-    
+
     return(_binlc.tobytes())
 
 #------------------------------------------------------------------------------
@@ -179,14 +180,14 @@ def decode_emblc(_elc):
 # Accepts 12 byte LC header + 5-bit checksum, converts to binary and builts out the BPTC
 # encoded result with hamming(16,11,4) and parity.
 def encode_emblc(_lc):
-    
+
     # Get the 5-bit checksum for the Embedded LC
     _csum = crc.csum5(_lc)
-    
+
     # Create a bitarray from the 4 bytes of LC data (includes 5-bit checksum).
     _binlc = bitarray(endian='big')
     _binlc.frombytes(_lc)
-    
+
     # Insert the checksum bits at the right location in the matrix (this is actually faster than with a for loop)
     _binlc.insert(32,_csum[0])
     _binlc.insert(43,_csum[1])
@@ -198,36 +199,36 @@ def encode_emblc(_lc):
     for index in range(0,112,16):
         for hindex,hbit in zip(range(index+11,index+16), hamming.enc_16114(_binlc[index:index+11])):
             _binlc.insert(hindex,hbit)
-    
+
     # Insert the column parity bits at the right location in the matrix
     for index in range(0,16):
         _binlc.insert(index+112, _binlc[index+0] ^ _binlc[index+16] ^ _binlc[index+32] ^ _binlc[index+48] ^ _binlc[index+64] ^ _binlc[index+80] ^ _binlc[index+96])
-    
+
     # Create Embedded LC segments in 48 bit blocks
     emblc_b = bitarray(endian='big')
     emblc_b.extend([_binlc[0], _binlc[16],_binlc[32],_binlc[48],_binlc[64],_binlc[80],_binlc[96], _binlc[112]])
     emblc_b.extend([_binlc[1], _binlc[17],_binlc[33],_binlc[49],_binlc[65],_binlc[81],_binlc[97], _binlc[113]])
     emblc_b.extend([_binlc[2], _binlc[18],_binlc[34],_binlc[50],_binlc[66],_binlc[82],_binlc[98], _binlc[114]])
     emblc_b.extend([_binlc[3], _binlc[19],_binlc[35],_binlc[51],_binlc[67],_binlc[83],_binlc[99], _binlc[115]])
-    
+
     emblc_c = bitarray(endian='big')
     emblc_c.extend([_binlc[4], _binlc[20],_binlc[36],_binlc[52],_binlc[68],_binlc[84],_binlc[100],_binlc[116]])
     emblc_c.extend([_binlc[5], _binlc[21],_binlc[37],_binlc[53],_binlc[69],_binlc[85],_binlc[101],_binlc[117]])
     emblc_c.extend([_binlc[6], _binlc[22],_binlc[38],_binlc[54],_binlc[70],_binlc[86],_binlc[102],_binlc[118]])
     emblc_c.extend([_binlc[7], _binlc[23],_binlc[39],_binlc[55],_binlc[71],_binlc[87],_binlc[103],_binlc[119]])
-    
+
     emblc_d = bitarray(endian='big')
     emblc_d.extend([_binlc[8], _binlc[24],_binlc[40],_binlc[56],_binlc[72],_binlc[88],_binlc[104],_binlc[120]])
     emblc_d.extend([_binlc[9], _binlc[25],_binlc[41],_binlc[57],_binlc[73],_binlc[89],_binlc[105],_binlc[121]])  # bit 25 (upstream wrongly used 24)
     emblc_d.extend([_binlc[10],_binlc[26],_binlc[42],_binlc[58],_binlc[74],_binlc[90],_binlc[106],_binlc[122]])
     emblc_d.extend([_binlc[11],_binlc[27],_binlc[43],_binlc[59],_binlc[75],_binlc[91],_binlc[107],_binlc[123]])
-    
+
     emblc_e = bitarray(endian='big')
     emblc_e.extend([_binlc[12],_binlc[28],_binlc[44],_binlc[60],_binlc[76],_binlc[92],_binlc[108],_binlc[124]])
     emblc_e.extend([_binlc[13],_binlc[29],_binlc[45],_binlc[61],_binlc[77],_binlc[93],_binlc[109],_binlc[125]])
     emblc_e.extend([_binlc[14],_binlc[30],_binlc[46],_binlc[62],_binlc[78],_binlc[94],_binlc[110],_binlc[126]])
     emblc_e.extend([_binlc[15],_binlc[31],_binlc[47],_binlc[63],_binlc[79],_binlc[95],_binlc[111],_binlc[127]])
-    
+
     return({1: emblc_b, 2: emblc_c, 3: emblc_d, 4: emblc_e})
 
 #------------------------------------------------------------------------------
@@ -237,26 +238,26 @@ def encode_emblc(_lc):
 if __name__ == '__main__':
     from binascii import b2a_hex as ahex
     from time import time
-        
+
     # Validation Example
-    
+
     voice_h = b'\x2b\x60\x04\x10\x1f\x84\x2d\xd0\x0d\xf0\x7d\x41\x04\x6d\xff\x57\xd7\x5d\xf5\xde\x30\x15\x2e\x20\x70\xb2\x0f\x80\x3f\x88\xc6\x95\xe2'
     voice_hb = bitarray(endian='big')
     voice_hb.frombytes(voice_h)
     voice_hb = voice_hb[0:98] + voice_hb[166:264]
-    
+
     # Header LC -- Terminator similar
     lc = b'\x00\x10\x20\x00\x0c\x30\x2f\x9b\xe5'   # \xda\xd4\x5a
     t0 = time()
     full_lc_encode = encode_header_lc(lc)
     t1 = time()
     encode_time = t1-t0
-    
+
     t0 = time()
     full_lc_dec = decode_full_lc(full_lc_encode)
     t1 = time()
     decode_time = t1-t0
-    
+
     print('VALIDATION ROUTINES:')
     print('Orig Data:     {}, {} bytes'.format(ahex(lc), len(lc)))
     print('Orig Encoded:  {}, {} bytes'.format(ahex(voice_hb.tobytes()), len(voice_hb.tobytes())))
@@ -272,12 +273,12 @@ if __name__ == '__main__':
     emblc = encode_emblc(lc)
     t1 = time()
     encode_time = t1 -t0
-    
+
     t0 = time()
     decemblc = decode_emblc(emblc[1] + emblc[2] + emblc[3] + emblc[4])
     t1 = time()
     decode_time = t1 -t0
-    
+
     print('\nEMBEDDED LC:')
     print('Encoded Data:  Burst B:{} Burst C:{} Burst D:{} Burst E:{}'.format(ahex(emblc[1].tobytes()), ahex(emblc[2].tobytes()), ahex(emblc[3].tobytes()), ahex(emblc[4].tobytes())))
     print('Endoding Time: {}'.format(encode_time))

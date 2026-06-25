@@ -23,7 +23,6 @@
 from __future__ import annotations
 
 import pytest
-
 from tests.harness.deterministic import DeterministicScenario, PacketSpec, active_routing_table, minimal_config
 from tests.harness.session_replay import (
     FIXTURES_DIR,

@@ -29,8 +29,8 @@ from typing import Any
 from twisted.internet import reactor
 from twisted.internet.interfaces import IDelayedCall
 
-from adn_server.application.proxy import ProxyUseCases
 from adn_server.application.ports import ProxyClientSender, ProxyMasterSink
+from adn_server.application.proxy import ProxyUseCases
 from adn_server.domain.value_objects import int_id
 from adn_server.infrastructure.proxy.config import proxy_settings
 from adn_server.infrastructure.proxy.hbp_adapters import (
@@ -39,13 +39,13 @@ from adn_server.infrastructure.proxy.hbp_adapters import (
     InProcessHbpSink,
 )
 from adn_server.infrastructure.proxy.ip_blacklist import InMemoryProxyIpBlacklist
+from adn_server.infrastructure.proxy.reply_transport import ProxyReplyTransport
 from adn_server.infrastructure.proxy.rpto_queue import InMemoryPendingRptoQueue
-from adn_server.infrastructure.proxy.session_executor import apply_session_teardown
-from adn_server.infrastructure.proxy.slot_store import InMemoryProxySlotStore
 from adn_server.infrastructure.proxy.self_service_bridge import ProxySelfServiceBridge
 from adn_server.infrastructure.proxy.self_service_config import self_service_settings
+from adn_server.infrastructure.proxy.session_executor import apply_session_teardown
+from adn_server.infrastructure.proxy.slot_store import InMemoryProxySlotStore
 from adn_server.infrastructure.proxy.udp_fanin import ProxyFanInProtocol, listen_proxy_fanin
-from adn_server.infrastructure.proxy.reply_transport import ProxyReplyTransport
 
 
 def _proxy_runtime_snapshot(config: dict[str, Any]) -> dict[str, Any]:

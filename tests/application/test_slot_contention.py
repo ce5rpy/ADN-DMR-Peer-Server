@@ -4,7 +4,6 @@
 
 from __future__ import annotations
 
-
 from adn_server.application.routing.helpers import (
     hbp_ingress_new_stream_collision,
     hbp_slot_blocks_group_voice,
@@ -14,7 +13,7 @@ from adn_server.application.routing.helpers import (
     slot_in_group_hangtime,
     slot_status_hotspot_owner,
 )
-from adn_server.domain import bytes_3, bytes_4, HBPF_DATA_SYNC
+from adn_server.domain import HBPF_DATA_SYNC, bytes_3, bytes_4
 from adn_server.domain.hbp_protocol import HBPF_SLT_VHEAD, HBPF_SLT_VTERM, STREAM_TO
 
 _TG_A = bytes_3(7144)
@@ -189,6 +188,28 @@ def test_downlink_vterm_does_not_reset_transmit_hangtime() -> None:
     assert peer_slot_blocks_downlink(ctx, peer_id, peer, foreign, pkt_time=now + 3)
 
 
+def test_obp_tx_stamp_does_not_bypass_fresh_chile_downlink_session() -> None:
+    """OBP TX stamp for Panama VTERM must not flash over active Chile listen (714002301 lab)."""
+    now = 1_000_000.0
+    hs = bytes_4(714002301)
+    chile_stream = bytes_4(0x11111111)
+    panama_stream = bytes_4(0x22222222)
+    slot = {
+        "TX_PEER": bytes_4(73010),
+        "TX_STREAM_ID": panama_stream,
+        "TX_TYPE": HBPF_SLT_VHEAD,
+        "TX_TIME": now,
+        "RX_TYPE": HBPF_SLT_VTERM,
+    }
+    peers = {hs: {"CONNECTION": "YES", "OPTIONS": b"TS2=7141,71442;"}}
+    peer_slots = {
+        2: {"stream_id": chile_stream, "tgid": 7141, "time": now - 0.1},
+    }
+    assert peer_hotspot_voice_slot_busy(
+        hs, 2, panama_stream, bytes_3(71442), slot, peer_slots, None, now, 10.0, peers=peers,
+    )
+
+
 def test_obp_bridge_tx_overrides_stale_peer_slot_session() -> None:
     """Stale HS session must not block OBP bridged downlink on the same TG."""
     now = 1_000_000.0
@@ -232,6 +253,94 @@ def test_peer_hotspot_hangtime_blocks_other_tg() -> None:
     slot = {"RX_TYPE": HBPF_SLT_VTERM, "TX_TYPE": HBPF_SLT_VTERM}
     assert peer_hotspot_voice_slot_busy(
         hs, 2, _STREAM_B, _TG_B, slot, None, (7144, now), now + 2.0, 5.0,
+    )
+
+
+def test_single0_ingress_tx_allows_other_static_tg() -> None:
+    """SINGLE=0: local TX on one static TG must not block RX on another in OPTIONS."""
+    now = 1_000_000.0
+    hs = bytes_4(730039253)
+    peer = {"OPTIONS": b"TS2=730507,730508;SINGLE=0;"}
+    sys_cfg = {"SINGLE_MODE": False, "DEFAULT_UA_TIMER": 10}
+    slot = {"RX_TYPE": HBPF_SLT_VTERM, "TX_TYPE": HBPF_SLT_VTERM}
+    peer_slots = {
+        2: {
+            "stream_id": bytes_4(0x11111111),
+            "tgid": 730507,
+            "time": now,
+            "ingress": True,
+        },
+    }
+    assert not peer_hotspot_voice_slot_busy(
+        hs,
+        2,
+        bytes_4(0x22222222),
+        bytes_3(730508),
+        slot,
+        peer_slots,
+        None,
+        now + 0.1,
+        0.0,
+        peer=peer,
+        sys_cfg=sys_cfg,
+    )
+
+
+def test_monitor_peer_allows_second_static_tg_during_listen() -> None:
+    """Lab witness (many static TGs) must hear concurrent calls on different TGs."""
+    now = 1_000_000.0
+    hs = bytes_4(730039257)
+    peer = {
+        "OPTIONS": b"TS2=730500,730501,730502,730503,730504,730505,730506,730507,730508;",
+    }
+    sys_cfg = {"SINGLE_MODE": False, "DEFAULT_UA_TIMER": 10}
+    slot = {
+        "RX_PEER": bytes_4(730039253),
+        "RX_TGID": bytes_3(730507),
+        "RX_STREAM_ID": bytes_4(0x11111111),
+        "RX_TIME": now,
+        "RX_TYPE": HBPF_SLT_VHEAD,
+    }
+    peer_slots = {
+        2: {"stream_id": bytes_4(0x11111111), "tgid": 730507, "time": now, "ingress": False},
+    }
+    assert not peer_hotspot_voice_slot_busy(
+        hs,
+        2,
+        bytes_4(0x22222222),
+        bytes_3(730508),
+        slot,
+        peer_slots,
+        None,
+        now + 0.1,
+        0.0,
+        peer=peer,
+        sys_cfg=sys_cfg,
+    )
+
+
+def test_ingress_tx_blocks_same_tg_foreign_stream_despite_bridge_stamp() -> None:
+    """Local RF TX must block downlink even when OBP bridge TX stamp matches incoming."""
+    now = 1_000_000.0
+    hs = bytes_4(730039101)
+    slot = {
+        "TX_PEER": bytes_4(73010),
+        "TX_STREAM_ID": bytes_4(0x22222222),
+        "TX_TYPE": HBPF_SLT_VHEAD,
+        "TX_TIME": now,
+        "RX_TYPE": HBPF_SLT_VTERM,
+    }
+    peers = {hs: {"CONNECTION": "YES", "OPTIONS": b"TS2=730,7305;"}}
+    peer_slots = {
+        2: {
+            "stream_id": bytes_4(0x11111111),
+            "tgid": 7306,
+            "time": now,
+            "ingress": True,
+        },
+    }
+    assert peer_hotspot_voice_slot_busy(
+        hs, 2, bytes_4(0x22222222), bytes_3(7306), slot, peer_slots, None, now, 5.0, peers=peers,
     )
 
 
@@ -295,3 +404,56 @@ def test_stream_timeout_ends_active_busy() -> None:
     now = 1_000_000.0
     slot = _active_rx_slot(t=now - STREAM_TO - 0.01)
     assert not slot_has_active_voice(slot, now)
+
+
+def test_foreign_vterm_dropped_while_listening_other_tg() -> None:
+    """VTERM for a stream never delivered must not reach the hotspot."""
+    from adn_server.application.routing.downlink import (
+        DownlinkContext,
+        peer_slot_blocks_downlink,
+        touch_peer_voice_slot,
+    )
+
+    sys_cfg = {"GROUP_HANGTIME": 5.0, "MODE": "MASTER", "MAX_PEERS": 8}
+    config = {"PROXY": {"TARGET_SYSTEM": "MASTER-A"}, "SYSTEMS": {"MASTER-A": sys_cfg}}
+    hs = bytes_4(714002301)
+    peer = {"OPTIONS": b"TS2=7141,71442;"}
+    ctx = DownlinkContext(
+        config=config,
+        system_name="MASTER-A",
+        sys_cfg=sys_cfg,
+        peers={hs: peer},
+        status={1: {"RX_TYPE": HBPF_SLT_VTERM, "TX_TYPE": HBPF_SLT_VTERM}, 2: {"RX_TYPE": HBPF_SLT_VTERM, "TX_TYPE": HBPF_SLT_VTERM}},
+        connected_count=2,
+    )
+    now = 1_000_000.0
+    chile_stream = bytes_4(0x11111111)
+    panama_stream = bytes_4(0x22222222)
+    touch_peer_voice_slot(ctx, hs, 2, chile_stream, bytes_3(7141), pkt_time=now)
+    panama_vterm = b"".join([
+        b"DMRD", b"\x00", bytes_3(100), bytes_3(71442), b"\x00\x00\x00\x00",
+        bytes([0x80 | (HBPF_DATA_SYNC << 4) | HBPF_SLT_VTERM]),
+        panama_stream,
+    ] + [b"\x00"] * 33)
+    assert peer_slot_blocks_downlink(ctx, hs, peer, panama_vterm, pkt_time=now + 0.5)
+
+
+def test_global_slot_blocks_foreign_vterm_during_active_rx() -> None:
+    """Bridge TX stamp must not let foreign VTERM through during active RX."""
+    now = 1_000_000.0
+    chile_stream = bytes_4(0x11111111)
+    panama_stream = bytes_4(0x22222222)
+    slot = {
+        "RX_PEER": bytes_4(714002301),
+        "RX_STREAM_ID": chile_stream,
+        "RX_TYPE": HBPF_SLT_VHEAD,
+        "RX_TIME": now,
+        "TX_PEER": bytes_4(73010),
+        "TX_STREAM_ID": panama_stream,
+        "TX_TYPE": HBPF_SLT_VHEAD,
+        "TX_TIME": now,
+    }
+    assert hbp_slot_blocks_group_voice(
+        slot, bytes_3(71442), panama_stream, now + 0.1, 0.0, is_vterm=True,
+    )
+    assert not hbp_slot_blocks_group_voice(slot, _TG_A, chile_stream, now + 0.1, 0.0)

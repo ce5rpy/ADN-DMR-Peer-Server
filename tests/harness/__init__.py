@@ -1,4 +1,4 @@
-# ADN DMR Peer Server - tests harness   init  
+# ADN DMR Peer Server - tests harness   init
 #
 # Copyright (C) 2026  Rodrigo Pérez, CE5RPY <ce5rpy@qmd.cl>
 #

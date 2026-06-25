@@ -23,7 +23,6 @@
 from __future__ import annotations
 
 import pytest
-from tests.routing.unit_data_helpers import idle_hbp_slot
 from tests.harness.assertions import assert_forwarded, assert_not_forwarded
 from tests.harness.deterministic import (
     DeterministicScenario,
@@ -33,10 +32,10 @@ from tests.harness.deterministic import (
     parse_dmr_fields,
     patch_routing_wall_time,
 )
+from tests.routing.unit_data_helpers import idle_hbp_slot
 
 from adn_server.domain import bytes_3
 from adn_server.domain.hbp_protocol import HBPF_SLT_VHEAD, HBPF_SLT_VTERM
-
 
 DAPRS_GATEWAY_ID = 900999
 HOTSPOT_SUB_ID = 7300392

@@ -24,8 +24,8 @@ from __future__ import annotations
 
 from typing import Any
 
-from adn_server.application.subscription.routing_table_import import subscriptions_from_routing_table
 from adn_server.application.subscription.router import SubscriptionRouter
+from adn_server.application.subscription.routing_table_import import subscriptions_from_routing_table
 from adn_server.domain import bytes_3, int_id
 from adn_server.domain.subscription import TgId
 from adn_server.domain.voice_routing import ForwardLeg, VoiceIngress

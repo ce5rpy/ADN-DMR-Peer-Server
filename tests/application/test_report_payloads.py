@@ -35,11 +35,11 @@ from adn_server.application.report import (
     parse_bridge_event_csv,
     routing_table_delta,
 )
-from adn_server.application.routing.helpers import peer_should_receive_group_voice
 from adn_server.application.report.payloads import (
     parse_peer_options_static,
     resolve_peer_single_and_timer,
 )
+from adn_server.application.routing.helpers import peer_should_receive_group_voice
 from adn_server.domain import bytes_3, bytes_4
 
 _SCHEMA_PATH = Path(__file__).resolve().parents[2] / "schemas" / "report-v2.json"

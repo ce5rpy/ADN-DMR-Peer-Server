@@ -34,32 +34,31 @@ import time
 from time import perf_counter
 from typing import Any
 
-from .reporting_use_cases import ReportingUseCases
-
 from bitarray import bitarray
-from ..domain.dmr import bptc
 
 from ..domain import HBPF_DATA_SYNC, HBPF_SLT_VHEAD, HBPF_SLT_VTERM, STREAM_TO, bytes_3, bytes_4, int_id
+from ..domain.dmr import bptc
 from .ports import AclRouter, DmrEmbeddedLcEncoder, SubscriptionStore, TalkerAliasEmblcEncoder
-from .talker_alias_use_cases import TalkerAliasUseCases
-from .routing.peer_downlink_index import count_connected_peers
+from .reporting_use_cases import ReportingUseCases
+from .routing.hbp_forward import HbpForwardMixin
 from .routing.helpers import (
     hbp_slot_blocks_group_voice,
     inject_only_defer_obp_hbp_slot_contention,
-    slot_has_active_voice,
     is_private_subscriber_dst,
     is_unit_data_ingress,
     obp_target_bcsq_quenches_stream,
     resolve_voice_peer_id,
+    slot_has_active_voice,
     unit_data_hbp_target_idle,
 )
-from .routing.timers import RoutingTimerMixin
-from .routing.obp_forward import ObpForwardMixin
-from .routing.hbp_forward import HbpForwardMixin
 from .routing.lc_ta import LcTaMixin
-from .routing.subscription_table import SubscriptionTableMixin
+from .routing.obp_forward import ObpForwardMixin
+from .routing.peer_downlink_index import count_connected_peers
 from .routing.store_authority_mixin import StoreAuthorityMixin
+from .routing.subscription_table import SubscriptionTableMixin
+from .routing.timers import RoutingTimerMixin
 from .routing.voice_subscription import VoiceSubscriptionMixin
+from .talker_alias_use_cases import TalkerAliasUseCases
 
 logger = logging.getLogger(__name__)
 
@@ -635,17 +634,21 @@ class RoutingUseCases(
                         entry["SYSTEM"],
                         _target_system,
                         source_is_obp=source_is_obp,
+                        source_is_hbp=not source_is_obp,
                         connected_count=_target_connected,
                     )
                     if (
-                        not _closing_bridge_leg
-                        and not _defer_slot_contention
+                        not _defer_slot_contention
                         and hbp_slot_blocks_group_voice(
                             _ts_st,
                             entry_tgid_b,
                             stream_id,
                             pkt_time,
                             _group_hangtime,
+                            is_vterm=(
+                                frame_type == HBPF_DATA_SYNC
+                                and dtype_vseq == HBPF_SLT_VTERM
+                            ),
                         )
                     ):
                         if not _src_stream_st.get("CONTENTION"):

@@ -31,17 +31,6 @@ import json
 from typing import Any
 
 import pytest
-
-from adn_server.application.report.monitor_topology import (
-    expand_inject_proxy_systems,
-    remap_inject_proxy_voice_event,
-)
-from adn_server.application.report.payloads import build_topology
-from adn_server.domain.value_objects import bytes_4
-from adn_server.infrastructure.twisted_adapters.report.opcodes import REPORT_OPCODES
-from adn_server.infrastructure.twisted_adapters.report.wire import ReportWire
-from adn_server.infrastructure.twisted_adapters.report_server import ReportServerFactory
-from adn_server.application.report.dashboard_state import build_dashboard_state
 from tests.support.monitor_ctable_sim import (
     apply_config_to_ctable,
     apply_slim_dashboard_state,
@@ -53,6 +42,17 @@ from tests.support.monitor_ctable_sim import (
     sparse_expand_buggy,
     update_ctable_from_config,
 )
+
+from adn_server.application.report.dashboard_state import build_dashboard_state
+from adn_server.application.report.monitor_topology import (
+    expand_inject_proxy_systems,
+    remap_inject_proxy_voice_event,
+)
+from adn_server.application.report.payloads import build_topology
+from adn_server.domain.value_objects import bytes_4
+from adn_server.infrastructure.twisted_adapters.report.opcodes import REPORT_OPCODES
+from adn_server.infrastructure.twisted_adapters.report.wire import ReportWire
+from adn_server.infrastructure.twisted_adapters.report_server import ReportServerFactory
 
 MAX_PEERS = 102
 BASE_PORT = 56400

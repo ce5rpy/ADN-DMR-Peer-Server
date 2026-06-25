@@ -22,11 +22,12 @@
 
 from __future__ import annotations
 
+from tests.application.test_peer_single_downlink import _peer_id, _sys_cfg
+from twisted.internet import defer
+
 from adn_server.application.dynamic_tg_use_cases import DynamicTgUseCases
 from adn_server.application.routing.helpers import register_peer_ua_session
 from adn_server.domain.dynamic_tg import DynamicTgEntry
-from tests.application.test_peer_single_downlink import _peer_id, _sys_cfg
-from twisted.internet import defer
 
 
 class _CaptureStore:

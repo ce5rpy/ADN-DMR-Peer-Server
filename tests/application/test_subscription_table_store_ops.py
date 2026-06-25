@@ -22,15 +22,16 @@
 
 from __future__ import annotations
 
+from tests.harness.deterministic import active_routing_table, minimal_config
+
+from adn_server.application.subscription.obp_source_ops import ensure_obp_source_for_tg_store
+from adn_server.application.subscription.store_sync import replace_store_from_routing_table
 from adn_server.application.subscription.subscription_table_ops import (
     ensure_dynamic_relay_store,
     make_static_tg_store,
 )
-from adn_server.application.subscription.obp_source_ops import ensure_obp_source_for_tg_store
-from adn_server.application.subscription.store_sync import replace_store_from_routing_table
 from adn_server.domain import bytes_3
 from adn_server.infrastructure.subscription_store import InMemorySubscriptionStore
-from tests.harness.deterministic import active_routing_table, minimal_config
 
 
 def _store(bridges: dict | None = None) -> InMemorySubscriptionStore:

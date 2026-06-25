@@ -22,13 +22,9 @@
 
 from __future__ import annotations
 
-
-from adn_server.domain import HBPF_DATA_SYNC, HBPF_SLT_VHEAD, bytes_3, bytes_4, int_id
-
 from adn_server.application.routing.helpers import (
-    clear_peer_ua_sessions,
-    tg4000_reset_on_vhead,
     clear_peer_rx_status_slots,
+    clear_peer_ua_sessions,
     peer_options_static_tg_slot,
     peer_receives_group_tgid,
     peer_should_receive_group_voice,
@@ -38,7 +34,9 @@ from adn_server.application.routing.helpers import (
     register_peer_ua_multi_tg,
     register_peer_ua_session,
     seed_peer_ua_session_from_status,
+    tg4000_reset_on_vhead,
 )
+from adn_server.domain import HBPF_DATA_SYNC, HBPF_SLT_VHEAD, HBPF_SLT_VTERM, bytes_3, bytes_4, int_id
 
 
 def _sys_cfg() -> dict:
@@ -422,4 +420,92 @@ def test_new_tx_replaces_single_session_tg() -> None:
     )
     assert not peer_should_receive_group_voice(
         peer, 2, 7305, peer_id=peer_id, connected_count=8, sys_cfg=sys_cfg, now=now + 121
+    )
+
+
+def test_downlink_listen_registers_single_session() -> None:
+    """SINGLE=1: first downlink VHEAD on a static TG locks out other TGs."""
+    from adn_server.application.routing.downlink import DownlinkContext, track_peer_group_dmrd
+
+    sys_cfg = {"SINGLE_MODE": False, "DEFAULT_UA_TIMER": 10, "MODE": "MASTER", "MAX_PEERS": 8}
+    config = {"PROXY": {"TARGET_SYSTEM": "MASTER-A"}, "SYSTEMS": {"MASTER-A": sys_cfg}}
+    peer_id = _peer_id()
+    peer = {"OPTIONS": b"TS2=730,7305;SINGLE=1;TIMER=5;"}
+    ctx = DownlinkContext(
+        config=config,
+        system_name="MASTER-A",
+        sys_cfg=sys_cfg,
+        peers={peer_id: peer},
+        status={1: {}, 2: {}},
+        connected_count=3,
+    )
+    now = 1_000_000.0
+    vhead_7305 = b"".join([
+        b"DMRD", b"\x00", bytes_3(100), bytes_3(7305), b"\x00\x00\x00\x00",
+        bytes([0x80 | (HBPF_DATA_SYNC << 4) | HBPF_SLT_VHEAD]), bytes_4(0x11111111),
+    ] + [b"\x00"] * 33)
+    track_peer_group_dmrd(ctx, peer_id, vhead_7305, peer, pkt_time=now)
+    assert not peer_should_receive_group_voice(
+        peer, 2, 730, peer_id=peer_id, connected_count=3, sys_cfg=sys_cfg, now=now + 1,
+    )
+
+
+def test_downlink_vterm_clears_listen_session_not_local_tx() -> None:
+    """Listen lock from downlink ends on VTERM; local TX session survives."""
+    from adn_server.application.routing.downlink import (
+        DownlinkContext,
+        touch_peer_voice_slot,
+        track_peer_group_dmrd,
+    )
+
+    sys_cfg = {"SINGLE_MODE": False, "DEFAULT_UA_TIMER": 10, "MODE": "MASTER", "MAX_PEERS": 8}
+    config = {"PROXY": {"TARGET_SYSTEM": "MASTER-A"}, "SYSTEMS": {"MASTER-A": sys_cfg}}
+    peer_id = _peer_id()
+    peer = {"OPTIONS": b"TS2=730,7305;SINGLE=1;TIMER=5;"}
+    ctx = DownlinkContext(
+        config=config,
+        system_name="MASTER-A",
+        sys_cfg=sys_cfg,
+        peers={peer_id: peer},
+        status={1: {}, 2: {}},
+        connected_count=3,
+    )
+    now = 1_000_000.0
+    stream = bytes_4(0x11111111)
+    vhead = b"".join([
+        b"DMRD", b"\x00", bytes_3(100), bytes_3(7305), b"\x00\x00\x00\x00",
+        bytes([0x80 | (HBPF_DATA_SYNC << 4) | HBPF_SLT_VHEAD]), stream,
+    ] + [b"\x00"] * 33)
+    vterm = b"".join([
+        b"DMRD", b"\x00", bytes_3(100), bytes_3(7305), b"\x00\x00\x00\x00",
+        bytes([0x80 | (HBPF_DATA_SYNC << 4) | HBPF_SLT_VTERM]), stream,
+    ] + [b"\x00"] * 33)
+    track_peer_group_dmrd(ctx, peer_id, vhead, peer, pkt_time=now)
+    track_peer_group_dmrd(ctx, peer_id, vterm, peer, pkt_time=now + 8)
+    assert peer_should_receive_group_voice(
+        peer, 2, 730, peer_id=peer_id, connected_count=3, sys_cfg=sys_cfg, now=now + 9,
+    )
+
+    register_peer_ua_session(peer, peer_id, 2, 7305, sys_cfg, now=now + 20)
+    touch_peer_voice_slot(
+        ctx, peer_id, 2, bytes_4(0x22222222), bytes_3(7305), pkt_time=now + 21, ingress=True,
+    )
+    track_peer_group_dmrd(ctx, peer_id, vterm, peer, pkt_time=now + 30, from_ingress=False)
+    assert not peer_should_receive_group_voice(
+        peer, 2, 730, peer_id=peer_id, connected_count=3, sys_cfg=sys_cfg, now=now + 31,
+    )
+
+
+def test_single_lock_persists_after_vterm_until_timer_expires() -> None:
+    """SINGLE=1: ingress VTERM does not clear TIMER session; other TGs blocked until expiry."""
+    peer = {"OPTIONS": b"TS2=730,7305;SINGLE=1;TIMER=1;"}
+    sys_cfg = _sys_cfg()
+    peer_id = _peer_id()
+    now = 1_000_000.0
+    register_peer_ua_session(peer, peer_id, 2, 7305, sys_cfg, now=now)
+    assert not peer_should_receive_group_voice(
+        peer, 2, 730, peer_id=peer_id, connected_count=3, sys_cfg=sys_cfg, now=now + 30,
+    )
+    assert peer_should_receive_group_voice(
+        peer, 2, 730, peer_id=peer_id, connected_count=3, sys_cfg=sys_cfg, now=now + 61,
     )

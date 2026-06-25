@@ -26,6 +26,7 @@ import time
 from typing import Any
 
 from adn_server.domain import int_id
+
 from .payloads import _peer_field_json, build_topology
 
 

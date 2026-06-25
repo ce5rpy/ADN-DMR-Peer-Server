@@ -24,14 +24,15 @@ from __future__ import annotations
 
 import copy
 
-from adn_server.application.subscription.subscription_table_ops import make_static_tg_store
+from tests.harness.deterministic import active_routing_table
+from tests.harness.voice_helpers import reflector_routing_entry
+
 from adn_server.application.subscription.in_band_signalling_ops import apply_in_band_signalling_store
 from adn_server.application.subscription.store_sync import replace_store_from_routing_table
+from adn_server.application.subscription.subscription_table_ops import make_static_tg_store
 from adn_server.domain import bytes_3
 from adn_server.domain.subscription import SubscriptionPhase
 from adn_server.infrastructure.subscription_store import InMemorySubscriptionStore
-from tests.harness.deterministic import active_routing_table
-from tests.harness.voice_helpers import reflector_routing_entry
 
 
 def _store_from_bridges(bridges: dict) -> InMemorySubscriptionStore:

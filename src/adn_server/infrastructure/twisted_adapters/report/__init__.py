@@ -1,4 +1,4 @@
-# ADN DMR Peer Server - infrastructure twisted adapters report   init  
+# ADN DMR Peer Server - infrastructure twisted adapters report   init
 #
 # Copyright (C) 2026  Rodrigo Pérez, CE5RPY <ce5rpy@qmd.cl>
 #

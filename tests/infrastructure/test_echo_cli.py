@@ -45,9 +45,10 @@ def test_echo_flag_routes_to_run_echo() -> None:
 
 def test_no_proxy_skips_proxy_startup(monkeypatch: pytest.MonkeyPatch) -> None:
     """--no-proxy must not call start_proxy_service at bridge startup."""
+    from twisted.internet import reactor
+
     import adn_server.infrastructure.bootstrap.peer_server as peer_mod
     import adn_server.main as main_mod
-    from twisted.internet import reactor
 
     calls: list[str] = []
 

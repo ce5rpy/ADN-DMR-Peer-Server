@@ -128,3 +128,50 @@ def test_monitor_blocks_during_hangtime_allows_new_qso_with_stream_id() -> None:
         raw, config, config["SYSTEMS"], peer_slots, downlink_ctx=ctx,
     )
     assert {ev.split(",")[3] for ev in after} == {"SYSTEM-7", "SYSTEM-8"}
+
+
+def test_monitor_blocks_panama_end_tx_while_listening_chile() -> None:
+    """END/TX for a foreign TG must not fan out when the hotspot is on another QSO."""
+    from adn_server.application.routing.downlink import touch_peer_voice_slot
+
+    peer_hs = bytes_4(714002301)
+    peers = {peer_hs: _peer(options=b"TS2=7141,71442;")}
+    sys_cfg = {"GROUP_HANGTIME": 5.0, "MODE": "MASTER", "MAX_PEERS": 8}
+    config = {"PROXY": {"TARGET_SYSTEM": "SYSTEM"}, "SYSTEMS": {"SYSTEM": sys_cfg}}
+    sys_cfg["PEERS"] = peers
+    now = time.time()
+    chile_stream = bytes_4(0x11111111)
+    panama_stream = bytes_4(0x22222222)
+    status = {
+        1: _empty_slot(),
+        2: {
+            **_empty_slot(),
+            "RX_PEER": peer_hs,
+            "RX_STREAM_ID": chile_stream,
+            "RX_TGID": bytes_3(7141),
+            "RX_TYPE": HBPF_SLT_VHEAD,
+            "RX_TIME": now,
+            "TX_PEER": bytes_4(73010),
+            "TX_STREAM_ID": panama_stream,
+            "TX_TGID": bytes_3(71442),
+            "TX_TYPE": HBPF_SLT_VHEAD,
+            "TX_TIME": now,
+        },
+    }
+    ctx = DownlinkContext(
+        config=config,
+        system_name="SYSTEM",
+        sys_cfg=sys_cfg,
+        peers=peers,
+        status=status,
+        connected_count=1,
+    )
+    touch_peer_voice_slot(ctx, peer_hs, 2, chile_stream, bytes_3(7141), pkt_time=now)
+    peer_slots = {peer_hs: 2}
+    end_raw = "GROUP VOICE,END,TX,SYSTEM,{},73010,7000002,2,71442,3.50".format(
+        int.from_bytes(panama_stream, "big"),
+    )
+    events = remap_inject_proxy_voice_events(
+        end_raw, config, config["SYSTEMS"], peer_slots, downlink_ctx=ctx,
+    )
+    assert events == []

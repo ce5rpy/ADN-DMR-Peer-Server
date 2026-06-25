@@ -26,8 +26,8 @@ import logging
 from unittest.mock import MagicMock
 
 from adn_server.application.proxy import ProxyUseCases
-from adn_server.infrastructure.config_reload import merge_top_level_config
 from adn_server.domain.proxy import ClientEndpoint, ClientSlot
+from adn_server.infrastructure.config_reload import merge_top_level_config
 from adn_server.infrastructure.proxy.ip_blacklist import InMemoryProxyIpBlacklist
 from adn_server.infrastructure.proxy.rpto_queue import InMemoryPendingRptoQueue
 from adn_server.infrastructure.proxy.runtime import ProxyServiceState, apply_proxy_config_reload

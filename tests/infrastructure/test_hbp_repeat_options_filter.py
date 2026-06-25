@@ -23,12 +23,12 @@
 from __future__ import annotations
 
 import pytest
+from tests.harness.deterministic import DeterministicScenario, PacketSpec
+from tests.support.hbp_repeat_stack import build_hbp_repeat_stack
 
 from adn_server.domain import bytes_3, bytes_4
 from adn_server.domain.hbp_protocol import HBPF_SLT_VHEAD, HBPF_SLT_VTERM
 from adn_server.infrastructure.hbp_constants import DMRD
-from tests.harness.deterministic import DeterministicScenario, PacketSpec
-from tests.support.hbp_repeat_stack import build_hbp_repeat_stack
 
 pytestmark = pytest.mark.integration
 
@@ -165,6 +165,80 @@ def test_echo_tg_9990_reaches_caller_without_9990_in_options() -> None:
 
     pkts = [p for p in stack.transport.for_addr(("10.0.0.20", 62020)) if p[:4] == DMRD]
     assert len(pkts) == 1
+
+
+def test_server_playback_tg9_reaches_requesting_peer_without_tg9_in_options() -> None:
+    """On-demand playback (5000 -> TG 9) must reach the peer that keyed 999x."""
+    stack = _inject_proxy_stack()
+    caller = bytes_4(730039101)
+    other = bytes_4(730039102)
+    addr_caller = ("10.0.0.20", 62020)
+    addr_other = ("10.0.0.21", 62021)
+    stack.register_peer(caller, addr_caller, options="TS2=730,730444;")
+    stack.register_peer(other, addr_other, options="TS2=91;")
+    spec = PacketSpec(
+        peer_id=5000,
+        rf_src=5000,
+        dst_id=9,
+        slot=2,
+        stream_id=0xCAFEBABE,
+        payload=b"\x00" * 33,
+    )
+    burst = DeterministicScenario.voice_burst_spec(spec, seq=1, dtype_vseq=1).data()
+    stack.hbp.STATUS[2]["RX_PEER"] = caller
+    stack.hbp.send_peers(burst)
+
+    caller_pkts = [p for p in stack.transport.for_addr(addr_caller) if p[:4] == DMRD]
+    other_pkts = [p for p in stack.transport.for_addr(addr_other) if p[:4] == DMRD]
+    assert len(caller_pkts) == 1
+    assert other_pkts == []
+
+
+def test_on_demand_service_dst_skips_ts2_acl() -> None:
+    """Private call to 9991 must not be dropped by TG2 ACL that denies service TGs."""
+    from adn_server.application.routing.helpers import is_on_demand_service_dst
+
+    assert is_on_demand_service_dst(9991)
+    assert is_on_demand_service_dst(9999)
+    assert not is_on_demand_service_dst(9990)
+    assert not is_on_demand_service_dst(730444)
+
+
+def test_foreign_vterm_dropped_while_listening_chile_via_send_peers() -> None:
+    """Panama VTERM must not reach a hotspot mid-QSO on Chile (inject-only lab)."""
+    from adn_server.domain.hbp_protocol import HBPF_DATA_SYNC, HBPF_SLT_VTERM
+
+    stack = _inject_proxy_stack()
+    listener = bytes_4(714002301)
+    addr = ("10.0.0.20", 62020)
+    stack.register_peer(listener, addr, options="TS2=7141,71442;")
+    chile_stream = bytes_4(0x11111111)
+    panama_stream = bytes_4(0x22222222)
+    chile_spec = PacketSpec(
+        peer_id=73010,
+        rf_src=100,
+        dst_id=7141,
+        slot=2,
+        stream_id=int.from_bytes(chile_stream, "big"),
+    )
+    chile_burst = DeterministicScenario.voice_burst_spec(chile_spec, seq=1, dtype_vseq=1).data()
+    stack.hbp.send_peer(listener, chile_burst)
+    panama_vterm = PacketSpec(
+        peer_id=73010,
+        rf_src=100,
+        dst_id=71442,
+        slot=2,
+        stream_id=int.from_bytes(panama_stream, "big"),
+        frame_type=HBPF_DATA_SYNC,
+        dtype_vseq=HBPF_SLT_VTERM,
+    ).data()
+    stack.hbp.send_peers(panama_vterm)
+    pkts = [p for p in stack.transport.for_addr(addr) if p[:4] == DMRD]
+    assert len(pkts) == 1
+    assert pkts[0][8:11] == bytes_3(7141)
+    stack.transport.clear()
+    stack.hbp.send_peers(panama_vterm)
+    assert [p for p in stack.transport.for_addr(addr) if p[:4] == DMRD] == []
 
 
 def test_rpto_does_not_overwrite_system_options_on_inject_proxy() -> None:

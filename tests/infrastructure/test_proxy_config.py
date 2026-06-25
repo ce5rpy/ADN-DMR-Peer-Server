@@ -25,6 +25,7 @@ from __future__ import annotations
 import logging
 
 import pytest
+from tests.conftest import minimal_valid_config
 
 from adn_server.application.proxy.deployment import (
     is_proxy_inject_only,
@@ -34,8 +35,6 @@ from adn_server.domain.errors import ConfigError
 from adn_server.infrastructure.config_normalizer import expand_generator
 from adn_server.infrastructure.config_validator import validate_config
 from adn_server.infrastructure.proxy.config import apply_proxy_env_overrides
-
-from tests.conftest import minimal_valid_config
 
 
 def test_proxy_section_required_when_master_present() -> None:

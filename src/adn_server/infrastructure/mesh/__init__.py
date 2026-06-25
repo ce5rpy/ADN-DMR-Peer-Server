@@ -1,4 +1,4 @@
-# ADN DMR Peer Server - infrastructure mesh   init  
+# ADN DMR Peer Server - infrastructure mesh   init
 #
 # Copyright (C) 2026  Rodrigo Pérez, CE5RPY <ce5rpy@qmd.cl>
 #

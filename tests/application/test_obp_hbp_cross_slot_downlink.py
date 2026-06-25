@@ -4,10 +4,11 @@
 
 from __future__ import annotations
 
-from adn_server.application.routing.helpers import inject_only_defer_obp_hbp_slot_contention
-from adn_server.domain import HBPF_SLT_VHEAD, bytes_3, bytes_4
 from tests.harness.deterministic import DeterministicScenario, PacketSpec, patch_routing_wall_time
 from tests.harness.scenarios import obp_bridge_scenario
+
+from adn_server.application.routing.helpers import inject_only_defer_obp_hbp_slot_contention
+from adn_server.domain import HBPF_SLT_VHEAD, bytes_3, bytes_4
 
 
 def _two_peer_master(scenario: DeterministicScenario) -> None:
@@ -19,21 +20,39 @@ def _two_peer_master(scenario: DeterministicScenario) -> None:
     }
 
 
-def test_defer_helper_requires_inject_only_obp_to_master() -> None:
-    cfg = {"PROXY": {"TARGET_SYSTEM": "MASTER-A"}, "SYSTEMS": {"MASTER-A": {"MODE": "MASTER"}}}
+def test_defer_helper_obp_to_master_defers_global_slot_contention() -> None:
     sys_cfg = {"MODE": "MASTER", "PEERS": {bytes_4(1): {"CONNECTION": "YES"}}}
     assert inject_only_defer_obp_hbp_slot_contention(
-        cfg, "MASTER-A", sys_cfg, source_is_obp=True,
-    )
-    assert not inject_only_defer_obp_hbp_slot_contention(
-        cfg, "MASTER-A", sys_cfg, source_is_obp=False,
-    )
-    assert not inject_only_defer_obp_hbp_slot_contention(
         {}, "MASTER-A", sys_cfg, source_is_obp=True,
     )
+    assert inject_only_defer_obp_hbp_slot_contention(
+        {"PROXY": {"TARGET_SYSTEM": "MASTER-A"}}, "MASTER-A", sys_cfg, source_is_obp=True,
+    )
+    assert not inject_only_defer_obp_hbp_slot_contention(
+        {}, "MASTER-A", sys_cfg, source_is_obp=False,
+    )
+    assert not inject_only_defer_obp_hbp_slot_contention(
+        {}, "OPENBRIDGE", {"MODE": "OPENBRIDGE"}, source_is_obp=True,
+    )
 
 
-def test_defer_helper_multi_peer_master_without_inject_proxy() -> None:
+def test_defer_helper_hbp_multi_peer_defers_global_slot_contention() -> None:
+    sys_cfg = {
+        "MODE": "MASTER",
+        "PEERS": {
+            bytes_4(1): {"CONNECTION": "YES"},
+            bytes_4(2): {"CONNECTION": "YES"},
+        },
+    }
+    assert inject_only_defer_obp_hbp_slot_contention(
+        {}, "MASTER-A", sys_cfg, source_is_obp=False, source_is_hbp=True, connected_count=3,
+    )
+    assert not inject_only_defer_obp_hbp_slot_contention(
+        {}, "MASTER-A", sys_cfg, source_is_obp=False, source_is_hbp=True, connected_count=1,
+    )
+
+
+def test_defer_helper_single_peer_master_still_defers_to_send_peer() -> None:
     sys_cfg = {
         "MODE": "MASTER",
         "PEERS": {
@@ -44,7 +63,7 @@ def test_defer_helper_multi_peer_master_without_inject_proxy() -> None:
     assert inject_only_defer_obp_hbp_slot_contention(
         {}, "MASTER-A", sys_cfg, source_is_obp=True, connected_count=2,
     )
-    assert not inject_only_defer_obp_hbp_slot_contention(
+    assert inject_only_defer_obp_hbp_slot_contention(
         {}, "MASTER-A", sys_cfg, source_is_obp=True, connected_count=1,
     )
 

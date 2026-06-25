@@ -25,6 +25,7 @@ from __future__ import annotations
 from bitarray import bitarray
 
 from adn_server.application.talker_alias_use_cases import passthrough_complete, passthrough_packets_from_blocks
+from adn_server.domain.dmr.bptc import encode_emblc
 from adn_server.domain.talker_alias import (
     decode_ta_from_blocks,
     encode_utf8,
@@ -35,7 +36,6 @@ from adn_server.domain.talker_alias import (
     talker_alias_lc_bytes,
     try_buffer_ta_from_voice_fragments,
 )
-from adn_server.domain.dmr.bptc import encode_emblc
 from adn_server.infrastructure.talker_alias_emblc import encode_talker_alias_emblc
 
 _encode_emblc_correct = encode_emblc

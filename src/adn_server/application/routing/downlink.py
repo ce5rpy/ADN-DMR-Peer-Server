@@ -26,12 +26,15 @@ import time
 from dataclasses import dataclass, field
 from typing import Any
 
-from adn_server.domain import HBPF_DATA_SYNC, HBPF_SLT_VTERM, bytes_3, bytes_4, int_id
+from adn_server.domain import HBPF_DATA_SYNC, HBPF_SLT_VHEAD, HBPF_SLT_VTERM, bytes_3, bytes_4, int_id
+from adn_server.domain.hbp_protocol import STREAM_TO
 
 from .helpers import (
     SIMPLEX_VOICE_SLOT,
+    clear_peer_ua_sessions,
     hbp_slot_blocks_group_voice_for_peer,
     is_special_tg,
+    is_ua_session_tgid,
     master_per_peer_slot_contention,
     parse_dmrd_burst_fields,
     parse_dmrd_route_fields,
@@ -39,7 +42,12 @@ from .helpers import (
     peer_is_simplex,
     peer_receives_group_tgid,
     peer_should_receive_group_voice,
+    peer_single_exclusive_tgid,
+    peer_wants_downlink_single_listen_lock,
+    register_peer_ua_session,
     remap_dmrd_to_peer_static_slot,
+    slot_has_active_voice,
+    slot_status_hotspot_owner,
     synthetic_group_dmrd_route_packet,
 )
 
@@ -164,13 +172,50 @@ def peer_slot_blocks_downlink(
     wire_slot, tgid, call_type = parsed
     if call_type not in ("group", "vcsbk"):
         return False
-    if not ctx.per_peer_contention():
-        return False
+    pk = bytes_4(int_id(peer_id))
     burst = parse_dmrd_burst_fields(packet)
     stream_id = burst[3] if burst is not None else b""
+    if burst is not None:
+        _wire_slot, frame_type, dtype_vseq, _sid, dst_id, _call_type = burst
+        if frame_type == HBPF_DATA_SYNC and dtype_vseq == HBPF_SLT_VTERM:
+            now_vt = time.time() if pkt_time is None else float(pkt_time)
+            listen_slot = peer_downlink_voice_slot(
+                peer, wire_slot, int_id(dst_id), ctx.sys_cfg, peer_id=peer_id,
+            )
+            slot_st = ctx.status.get(int(listen_slot), {})
+            per_slot = ctx.peer_voice_slots.get(pk, {})
+            for row in per_slot.values():
+                if not isinstance(row, dict):
+                    continue
+                active_stream = row.get("stream_id")
+                if stream_id and active_stream and active_stream != stream_id:
+                    active_time = float(row.get("time", 0) or 0)
+                    if (now_vt - active_time) < STREAM_TO:
+                        active_tg = int(row.get("tgid", 0) or 0)
+                        incoming_tg = int_id(dst_id)
+                        if (
+                            active_tg
+                            and incoming_tg
+                            and active_tg != incoming_tg
+                            and not row.get("ingress")
+                        ):
+                            owner = slot_status_hotspot_owner(slot_st, ctx.peers)
+                            pk_vt = bytes_4(int_id(peer_id))
+                            rx_listening = (
+                                owner is not None
+                                and bytes_4(int_id(owner)) == pk_vt
+                                and slot_has_active_voice(slot_st, now_vt)
+                                and int_id(slot_st.get("RX_TGID", b"")) == active_tg
+                            )
+                            if not rx_listening:
+                                return True
+            active = per_slot.get(int(listen_slot))
+            if not isinstance(active, dict) or active.get("stream_id") != stream_id:
+                return True
+    if not ctx.per_peer_contention():
+        return False
     hang = float(ctx.sys_cfg.get("GROUP_HANGTIME", 0) or 0)
     now = time.time() if pkt_time is None else float(pkt_time)
-    pk = bytes_4(int_id(peer_id))
     peer_slots = ctx.peer_voice_slots.get(pk)
     voice_slots = peer_hangtime_voice_slots(
         peer, wire_slot, tgid, ctx.sys_cfg, peer_id=peer_id,
@@ -191,6 +236,7 @@ def peer_slot_blocks_downlink(
             peer_slots=peer_slots,
             peer_hang_row=hang_row,
             voice_slot=voice_slot,
+            sys_cfg=ctx.sys_cfg,
         ):
             return True
     return False
@@ -245,15 +291,19 @@ def touch_peer_voice_slot(
     *,
     pkt_time: float | None = None,
     clear_hangtime: bool = True,
+    ingress: bool = False,
 ) -> None:
     """Open per-hotspot voice session until VTERM."""
     now = time.time() if pkt_time is None else float(pkt_time)
     pk = bytes_4(int_id(peer_id))
-    ctx.peer_voice_slots.setdefault(pk, {})[int(voice_slot)] = {
+    row: dict[str, Any] = {
         "stream_id": stream_id,
         "tgid": int_id(tgid),
         "time": float(now),
     }
+    if ingress:
+        row["ingress"] = True
+    ctx.peer_voice_slots.setdefault(pk, {})[int(voice_slot)] = row
     if clear_hangtime:
         ctx.peer_voice_hangtime.get(pk, {}).pop(int(voice_slot), None)
 
@@ -272,6 +322,11 @@ def end_peer_voice_slot(
     now = time.time() if pkt_time is None else float(pkt_time)
     pk = bytes_4(int_id(peer_id))
     per_slot = ctx.peer_voice_slots.get(pk, {})
+    active = per_slot.get(int(voice_slot))
+    if isinstance(active, dict):
+        active_stream = active.get("stream_id")
+        if stream_id and active_stream and active_stream != stream_id:
+            return
     active = per_slot.pop(int(voice_slot), None)
     if not apply_hangtime:
         return
@@ -301,6 +356,20 @@ def track_peer_group_dmrd(
         peer, wire_slot, int_id(dst_id), ctx.sys_cfg, peer_id=peer_id,
     )
     if frame_type == HBPF_DATA_SYNC and dtype_vseq == HBPF_SLT_VTERM:
+        if (
+            not from_ingress
+            and peer_wants_downlink_single_listen_lock(peer, ctx.sys_cfg)
+        ):
+            pk = bytes_4(int_id(peer_id))
+            per_slot = ctx.peer_voice_slots.get(pk, {})
+            active = per_slot.get(int(voice_slot))
+            if isinstance(active, dict) and not active.get("ingress"):
+                ended_tg = int_id(dst_id)
+                locked = peer_single_exclusive_tgid(
+                    peer, voice_slot, ctx.sys_cfg, peer_id=peer_id, now=pkt_time,
+                )
+                if locked is not None and locked == ended_tg:
+                    clear_peer_ua_sessions(peer, ctx.sys_cfg, peer_id, slot=voice_slot)
         end_peer_voice_slot(
             ctx,
             peer_id,
@@ -311,6 +380,21 @@ def track_peer_group_dmrd(
             apply_hangtime=from_ingress,
         )
         return
+    if (
+        not from_ingress
+        and frame_type == HBPF_DATA_SYNC
+        and dtype_vseq == HBPF_SLT_VHEAD
+        and peer_wants_downlink_single_listen_lock(peer, ctx.sys_cfg)
+        and is_ua_session_tgid(int_id(dst_id))
+    ):
+        pk = bytes_4(int_id(peer_id))
+        per_slot = ctx.peer_voice_slots.get(pk, {})
+        active = per_slot.get(int(voice_slot))
+        if not isinstance(active, dict) or active.get("stream_id") != stream_id:
+            now = time.time() if pkt_time is None else float(pkt_time)
+            register_peer_ua_session(
+                peer, peer_id, voice_slot, int_id(dst_id), ctx.sys_cfg, now=now,
+            )
     touch_peer_voice_slot(
         ctx,
         peer_id,
@@ -319,6 +403,7 @@ def track_peer_group_dmrd(
         dst_id,
         pkt_time=pkt_time,
         clear_hangtime=from_ingress,
+        ingress=from_ingress,
     )
 
 
@@ -366,6 +451,49 @@ def peer_would_show_group_voice_on_monitor(
     route_pkt = build_dmra_route_packet(wire_slot, tgid, stream_id)
     remapped = remap_dmrd_for_peer(route_pkt, peer, ctx.sys_cfg, peer_id=peer_id)
     return not peer_slot_blocks_downlink(ctx, peer_id, peer, remapped)
+
+
+def peer_monitor_end_tx_conflicts_with_session(
+    ctx: DownlinkContext | None,
+    peer_id: bytes,
+    peer: dict[str, Any],
+    wire_slot: int,
+    tgid: int,
+    stream_id: bytes | None,
+) -> bool:
+    """True when END/TX must not touch this hotspot (active QSO on another stream/TG)."""
+    if ctx is None or not stream_id:
+        return False
+    pk = bytes_4(int_id(peer_id))
+    peer_slots = ctx.peer_voice_slots.get(pk)
+    if not isinstance(peer_slots, dict):
+        return False
+    incoming_tg = int(tgid)
+    now = time.time()
+    for voice_slot in peer_hangtime_voice_slots(
+        peer, wire_slot, tgid, ctx.sys_cfg, peer_id=peer_id,
+    ):
+        row = peer_slots.get(int(voice_slot))
+        if not isinstance(row, dict) or row.get("ingress"):
+            continue
+        active_stream = row.get("stream_id")
+        active_tg = int(row.get("tgid", 0) or 0)
+        if not active_stream or active_stream == stream_id:
+            continue
+        if (now - float(row.get("time", 0) or 0)) >= STREAM_TO:
+            continue
+        if not active_tg or active_tg == incoming_tg:
+            continue
+        slot_st = ctx.status.get(int(voice_slot), {})
+        owner = slot_status_hotspot_owner(slot_st, ctx.peers)
+        if (
+            owner is not None
+            and bytes_4(int_id(owner)) == pk
+            and slot_has_active_voice(slot_st, now)
+            and int_id(slot_st.get("RX_TGID", b"")) == active_tg
+        ):
+            return True
+    return False
 
 
 def iter_downlink_voice_slots(

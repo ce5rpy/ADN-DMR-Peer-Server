@@ -22,7 +22,6 @@
 
 from __future__ import annotations
 
-
 from adn_server.application.routing.downlink import (
     DownlinkContext,
     iter_downlink_voice_slots,

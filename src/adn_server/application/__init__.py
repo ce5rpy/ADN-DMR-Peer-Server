@@ -21,11 +21,10 @@
 #   Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301  USA
 ###############################################################################
 
-from .routing_use_cases import RoutingUseCases
 from .ident_use_cases import IdentUseCases
 from .ports import (
-    AliasLoader,
     AclRouter,
+    AliasLoader,
     ConfigLoader,
     KeysStore,
     ReportSender,
@@ -34,6 +33,7 @@ from .ports import (
     VoiceProvider,
 )
 from .reporting_use_cases import ReportingUseCases
+from .routing_use_cases import RoutingUseCases
 from .voice_use_cases import VoiceUseCases
 
 __all__ = [
