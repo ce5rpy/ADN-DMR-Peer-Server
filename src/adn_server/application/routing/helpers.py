@@ -358,11 +358,20 @@ def peer_hotspot_voice_slot_busy(
         return True
     active = (peer_slots or {}).get(int(voice_slot))
     if isinstance(active, dict):
-        if active.get("ingress"):
-            return True
-        active_stream = active.get("stream_id")
         incoming_tgid = int_id(incoming_tgid_b)
         active_tgid = int(active.get("tgid", 0) or 0)
+        if active.get("ingress"):
+            if (
+                isinstance(peer, dict)
+                and sys_cfg is not None
+                and not peer_single_mode(peer, sys_cfg)
+                and active_tgid
+                and incoming_tgid != active_tgid
+            ):
+                pass
+            else:
+                return True
+        active_stream = active.get("stream_id")
         if stream_id and active_stream and active_stream == stream_id:
             pass
         elif (
@@ -374,6 +383,14 @@ def peer_hotspot_voice_slot_busy(
             and (pkt_time - float(active.get("time", 0) or 0)) >= STREAM_TO
         ):
             peer_slots.pop(int(voice_slot), None)
+        elif (
+            isinstance(peer, dict)
+            and sys_cfg is not None
+            and not peer_single_mode(peer, sys_cfg)
+            and active_tgid
+            and incoming_tgid != active_tgid
+        ):
+            return False
         else:
             return True
     if isinstance(peer, dict) and peer_single_blocks_foreign_same_tg_downlink(
@@ -1350,8 +1367,9 @@ def peer_single_blocks_foreign_same_tg_downlink(
         return False
     active = (peer_slots or {}).get(int(voice_slot))
     if isinstance(active, dict) and active.get("ingress"):
-        if int(active.get("tgid", 0) or 0) == incoming:
-            return False
+        return True
+    if isinstance(peer, dict) and peer_receives_group_tgid(peer, voice_slot, incoming):
+        return False
     return True
 
 

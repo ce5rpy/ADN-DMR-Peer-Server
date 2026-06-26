@@ -578,6 +578,20 @@ def test_single_blocks_foreign_same_tg_while_local_ua() -> None:
     )
 
 
+def test_single_allows_static_same_tg_cross_rx_after_local_ptt() -> None:
+    """Static TG in OPTIONS: network downlink on same TG after local PTT (cross-rx)."""
+    from adn_server.application.routing.helpers import peer_single_blocks_foreign_same_tg_downlink
+
+    peer = {"OPTIONS": b"TS1=730500;TS2=730501,730502,730503;SINGLE=1;TIMER=60;"}
+    sys_cfg = _sys_cfg()
+    peer_id = _peer_id()
+    now = 1_000_000.0
+    register_peer_ua_session(peer, peer_id, 1, 730500, sys_cfg, now=now)
+    assert not peer_single_blocks_foreign_same_tg_downlink(
+        peer, peer_id, 1, bytes_3(730500), None, sys_cfg, now=now + 10,
+    )
+
+
 def test_downlink_vterm_does_not_clear_local_ua_session() -> None:
     """Network VTERM on session TG must not wipe a local PTT lock (TIMER session)."""
     from adn_server.application.routing.downlink import DownlinkContext, track_peer_group_dmrd

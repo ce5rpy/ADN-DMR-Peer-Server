@@ -488,8 +488,8 @@ def test_peer_hotspot_hangtime_blocks_other_tg() -> None:
     )
 
 
-def test_single0_ingress_tx_blocks_other_static_tg_on_slot() -> None:
-    """SINGLE=0: local TX on one TG blocks any other downlink on the same RF slot."""
+def test_single0_ingress_tx_allows_other_static_tg_on_slot() -> None:
+    """SINGLE=0: RX on another OPTIONS TG while local TX on the same RF slot."""
     now = 1_000_000.0
     hs = bytes_4(730039253)
     peer = {"OPTIONS": b"TS2=730507,730508;SINGLE=0;"}
@@ -503,7 +503,7 @@ def test_single0_ingress_tx_blocks_other_static_tg_on_slot() -> None:
             "ingress": True,
         },
     }
-    assert peer_hotspot_voice_slot_busy(
+    assert not peer_hotspot_voice_slot_busy(
         hs,
         2,
         bytes_4(0x22222222),
@@ -523,7 +523,7 @@ def test_lab_witness_nine_static_tgs_blocks_second_tg_on_slot() -> None:
     now = 1_000_000.0
     hs = bytes_4(730039257)
     peer = {
-        "OPTIONS": b"TS2=730500,730501,730502,730503,730504,730505,730506,730507,730508;",
+        "OPTIONS": b"TS2=730500,730501,730502,730503,730504,730505,730506,730507,730508;SINGLE=1;TIMER=60;",
     }
     sys_cfg = {"SINGLE_MODE": False, "DEFAULT_UA_TIMER": 10}
     slot = {
