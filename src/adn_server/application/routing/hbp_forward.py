@@ -46,8 +46,13 @@ from __future__ import annotations
 import logging
 from hashlib import blake2b
 
-from ...domain import int_id
-from .helpers import hbp_ingress_new_stream_collision, master_per_peer_slot_contention
+from ...domain import bytes_4, int_id
+from .helpers import (
+    group_voice_tg_ingress_collision,
+    hbp_ingress_downlink_session_blocks_tx,
+    hbp_ingress_new_stream_collision,
+    master_per_peer_slot_contention,
+)
 from .peer_downlink_index import count_connected_peers
 
 logger = logging.getLogger(__name__)
@@ -55,6 +60,63 @@ logger = logging.getLogger(__name__)
 
 class HbpForwardMixin:
     """routerHBP group voice ingress controls and sendDataToHBP."""
+
+    def _ingress_drop_log_cache(self) -> set[tuple]:
+        cache = getattr(self, "_ingress_drop_logged", None)
+        if cache is None:
+            cache = set()
+            self._ingress_drop_logged = cache
+        return cache
+
+    def _ingress_drop_key(
+        self,
+        kind: str,
+        system_name: str,
+        peer_id: bytes,
+        dst_id: bytes,
+        stream_id: bytes,
+        *,
+        slot: int | None = None,
+    ) -> tuple:
+        key: tuple = (
+            kind,
+            system_name,
+            bytes_4(int_id(peer_id)),
+            dst_id,
+            stream_id,
+        )
+        if slot is not None:
+            return (*key, int(slot))
+        return key
+
+    def _log_ingress_warning_once(
+        self,
+        key: tuple,
+        msg: str,
+        *args: object,
+    ) -> None:
+        cache = self._ingress_drop_log_cache()
+        if key in cache:
+            return
+        cache.add(key)
+        logger.warning(msg, *args)
+
+    def _clear_ingress_drop_log(
+        self,
+        system_name: str,
+        peer_id: bytes,
+        dst_id: bytes,
+        stream_id: bytes,
+        slot: int,
+    ) -> None:
+        cache = self._ingress_drop_log_cache()
+        pk = bytes_4(int_id(peer_id))
+        tg = dst_id
+        sid = stream_id
+        sl = int(slot)
+        for kind in ("slot_collision", "tg_busy", "downlink_tx"):
+            cache.discard((kind, system_name, pk, tg, sid))
+            cache.discard((kind, system_name, pk, tg, sid, sl))
 
     def _hbp_group_voice_ingress_controls(
         self,
@@ -81,13 +143,6 @@ class HbpForwardMixin:
         _slot_st = getattr(src_proto, "STATUS", {}).get(slot, {})
         _is_new_stream = stream_id != _slot_st.get("RX_STREAM_ID")
         if _is_new_stream:
-            _slot_st["packets"] = 0
-            _slot_st["loss"] = 0
-            _slot_st["crcs"] = set()
-            _slot_st["LOOPLOG"] = False
-            _slot_st.pop("_bcsq", None)
-            _slot_st["lastSeq"] = False
-            _slot_st["lastData"] = False
             sys_cfg = systems_cfg.get(system_name, {})
             peers = getattr(src_proto, "_peers", None) or sys_cfg.get("PEERS", {})
             connected = count_connected_peers(peers) if isinstance(peers, dict) else 0
@@ -97,11 +152,51 @@ class HbpForwardMixin:
             if hbp_ingress_new_stream_collision(
                 _slot_st, peer_id, rf_src, stream_id, pkt_time, per_peer=per_peer,
             ):
-                logger.warning(
+                self._log_ingress_warning_once(
+                    self._ingress_drop_key(
+                        "slot_collision", system_name, peer_id, dst_id, stream_id, slot=slot,
+                    ),
                     "(%s) Packet received with STREAM ID: %s <FROM> SUB: %s PEER: %s <TO> TGID %s, SLOT %s collided with existing call",
                     system_name, int_id(stream_id), int_id(rf_src), int_id(peer_id), int_id(dst_id), slot,
                 )
                 return False
+            if group_voice_tg_ingress_collision(
+                protocols, systems_cfg, dst_id, stream_id, rf_src, pkt_time,
+            ):
+                self._log_ingress_warning_once(
+                    self._ingress_drop_key(
+                        "tg_busy", system_name, peer_id, dst_id, stream_id,
+                    ),
+                    "(%s) TG %s busy — dropping stream %s from peer %s",
+                    system_name, int_id(dst_id), int_id(stream_id), int_id(peer_id),
+                )
+                return False
+            from .downlink import normalize_ua_voice_slot
+
+            peer = peers.get(peer_id) if isinstance(peers, dict) else None
+            if peer is None and isinstance(peers, dict):
+                peer = peers.get(bytes_4(int_id(peer_id)))
+            voice_slot = normalize_ua_voice_slot(peer, slot) if isinstance(peer, dict) else slot
+            peer_slots = getattr(src_proto, "_peer_voice_slots", {}).get(bytes_4(int_id(peer_id)))
+            if hbp_ingress_downlink_session_blocks_tx(
+                voice_slot, dst_id, peer_slots,
+            ):
+                self._log_ingress_warning_once(
+                    self._ingress_drop_key(
+                        "downlink_tx", system_name, peer_id, dst_id, stream_id, slot=voice_slot,
+                    ),
+                    "(%s) Packet dropped: peer %s already receiving on TG %s slot %s",
+                    system_name, int_id(peer_id), int_id(dst_id), voice_slot,
+                )
+                return False
+            self._clear_ingress_drop_log(system_name, peer_id, dst_id, stream_id, slot)
+            _slot_st["packets"] = 0
+            _slot_st["loss"] = 0
+            _slot_st["crcs"] = set()
+            _slot_st["LOOPLOG"] = False
+            _slot_st.pop("_bcsq", None)
+            _slot_st["lastSeq"] = False
+            _slot_st["lastData"] = False
             _slot_st["RX_START"] = pkt_time
         _slot_st["packets"] = _slot_st.get("packets", 0) + 1
         _pkts = _slot_st["packets"]

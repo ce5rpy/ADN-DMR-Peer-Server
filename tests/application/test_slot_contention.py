@@ -5,10 +5,14 @@
 from __future__ import annotations
 
 from adn_server.application.routing.helpers import (
+    group_voice_tg_ingress_collision,
+    hbp_ingress_downlink_session_blocks_tx,
     hbp_ingress_new_stream_collision,
+    hbp_master_ingress_repeat_allowed,
     hbp_slot_blocks_group_voice,
     hbp_slot_blocks_group_voice_for_peer,
     peer_hotspot_voice_slot_busy,
+    register_peer_ua_session,
     slot_has_active_voice,
     slot_in_group_hangtime,
     slot_status_hotspot_owner,
@@ -57,6 +61,142 @@ def test_ingress_same_subscriber_rekey_allowed() -> None:
     )
 
 
+def test_ingress_collides_when_other_hotspot_owns_busy_slot() -> None:
+    """MASTER slot is global: second hotspot must not open a new stream on a busy TS."""
+    now = 1_000_000.0
+    slot = _active_rx_slot()
+    slot["RX_RFS"] = bytes_3(730039264)
+    slot["RX_PEER"] = bytes_4(730039264)
+    assert hbp_ingress_new_stream_collision(
+        slot,
+        bytes_4(730039265),
+        bytes_3(730039265),
+        _STREAM_B,
+        now + 0.1,
+        per_peer=True,
+    )
+
+
+def test_ingress_collides_when_obp_bridge_tx_leg_active() -> None:
+    """OBP bridge TX stamp on STATUS[slot] must block a new HBP ingress stream."""
+    now = 1_000_000.0
+    slot = {
+        "RX_TYPE": HBPF_SLT_VTERM,
+        "TX_TYPE": HBPF_SLT_VHEAD,
+        "TX_TIME": now,
+        "TX_RFS": bytes_3(730039256),
+        "TX_STREAM_ID": _STREAM_A,
+    }
+    assert hbp_ingress_new_stream_collision(
+        slot,
+        bytes_4(730039267),
+        bytes_3(730039267),
+        _STREAM_B,
+        now + 0.1,
+        per_peer=True,
+    )
+
+
+def test_ingress_downlink_session_blocks_tx_on_same_tg() -> None:
+    peer_slots = {
+        1: {"stream_id": _STREAM_A, "tgid": 730500, "time": 1_000_000.0},
+    }
+    assert hbp_ingress_downlink_session_blocks_tx(1, bytes_3(730500), peer_slots)
+    assert not hbp_ingress_downlink_session_blocks_tx(1, bytes_3(730502), peer_slots)
+
+
+def test_ingress_downlink_session_allows_tx_after_own_ingress() -> None:
+    peer_slots = {
+        2: {"stream_id": _STREAM_A, "tgid": 730502, "time": 1_000_000.0, "ingress": True},
+    }
+    assert not hbp_ingress_downlink_session_blocks_tx(2, bytes_3(730502), peer_slots)
+
+
+def test_master_repeat_denied_for_colliding_stream() -> None:
+    now = 1_000_000.0
+    slot = _active_rx_slot()
+    slot["RX_RFS"] = bytes_3(730039264)
+    slot["RX_PEER"] = bytes_4(730039264)
+    assert not hbp_master_ingress_repeat_allowed(
+        slot,
+        bytes_4(730039265),
+        bytes_3(730039265),
+        _TG_A,
+        _STREAM_B,
+        now + 0.1,
+    )
+
+
+def test_master_repeat_allowed_for_slot_owner_continuation() -> None:
+    now = 1_000_000.0
+    slot = _active_rx_slot()
+    slot["RX_PEER"] = bytes_4(730039264)
+    assert hbp_master_ingress_repeat_allowed(
+        slot,
+        bytes_4(730039264),
+        bytes_3(730039264),
+        _TG_A,
+        _STREAM_A,
+        now + 0.1,
+    )
+
+
+def test_group_voice_tg_collision_rejects_second_hbp_stream() -> None:
+    now = 1_000_000.0
+    master_status = {
+        2: _active_rx_slot(tgid=_TG_A, stream_id=_STREAM_A, t=now),
+    }
+    master_status[2]["RX_RFS"] = bytes_3(730039264)
+    protocols = {"M1": type("P", (), {"STATUS": master_status})()}
+    systems = {"M1": {"MODE": "MASTER"}}
+    assert group_voice_tg_ingress_collision(
+        protocols, systems, _TG_A, _STREAM_B, bytes_3(730039265), now + 0.1,
+    )
+
+
+def test_group_voice_tg_collision_rejects_obp_while_hbp_active() -> None:
+    now = 1_000_000.0
+    master_status = {1: _active_rx_slot(tgid=bytes_3(730500), stream_id=_STREAM_A, t=now)}
+    master_status[1]["RX_RFS"] = bytes_3(730039266)
+    obp_status: dict[bytes, dict] = {}
+    protocols = {
+        "M1": type("P", (), {"STATUS": master_status})(),
+        "OBP": type("P", (), {"STATUS": obp_status})(),
+    }
+    systems = {"M1": {"MODE": "MASTER"}, "OBP": {"MODE": "OPENBRIDGE"}}
+    assert group_voice_tg_ingress_collision(
+        protocols, systems, bytes_3(730500), _STREAM_B, bytes_3(730039256), now + 0.1,
+    )
+
+
+def test_group_voice_tg_collision_across_hbp_slots() -> None:
+    """Active TG on slot 1 must block a new stream on slot 2 (dual-slot OBP peers)."""
+    now = 1_000_000.0
+    master_status = {
+        1: _active_rx_slot(tgid=bytes_3(730500), stream_id=_STREAM_A, t=now),
+    }
+    master_status[1]["RX_RFS"] = bytes_3(730039266)
+    protocols = {"M1": type("P", (), {"STATUS": master_status})()}
+    systems = {"M1": {"MODE": "MASTER"}}
+    assert group_voice_tg_ingress_collision(
+        protocols, systems, bytes_3(730500), _STREAM_B, bytes_3(730039267), now + 0.1,
+    )
+
+
+def test_peer_hotspot_voice_slot_busy_blocks_downlink_during_local_ingress() -> None:
+    """Rejected ingress still marks local TX — downlink must not arrive on that slot."""
+    now = 1_000_000.0
+    hs = bytes_4(730039265)
+    slot = _active_rx_slot()
+    slot["RX_PEER"] = bytes_4(730039264)
+    peer_slots = {
+        2: {"stream_id": _STREAM_B, "tgid": 730502, "time": now, "ingress": True},
+    }
+    assert peer_hotspot_voice_slot_busy(
+        hs, 2, _STREAM_A, _TG_A, slot, peer_slots, None, now + 0.05, 5.0,
+    )
+
+
 def test_per_peer_scope_ignores_other_hotspot_busy_slot() -> None:
     """Inject-only: peer B must not inherit slot contention from peer A."""
     now = 1_000_000.0
@@ -91,8 +231,8 @@ def test_bridge_tx_stamp_same_stream_allows_obp_downlink() -> None:
     )
 
 
-def test_per_peer_obp_tx_stamp_clears_stale_peer_slot_block() -> None:
-    """OBP TX stamp + same stream must deliver despite stale per-peer session row."""
+def test_per_peer_obp_tx_stamp_blocked_when_other_stream_active() -> None:
+    """OBP TX stamp must not override an active per-peer session on another stream."""
     now = 1_000_000.0
     peer = bytes_4(714002301)
     slot = _active_rx_slot()
@@ -106,7 +246,63 @@ def test_per_peer_obp_tx_stamp_clears_stale_peer_slot_block() -> None:
         slot, peer, _TG_B, _STREAM_B, now + 0.1, 0.0, per_peer=True, peers=peers,
         peer_slots={2: {"stream_id": _STREAM_A, "tgid": 7144, "time": now}},
         voice_slot=2,
-    ) is False
+    ) is True
+
+
+def test_lab_witness_many_static_tgs_allows_second_tg_on_slot() -> None:
+    """Full-table lab witness (>6 static TGs) is not subject to one-QSO hard slot lock."""
+    now = 1_000_000.0
+    witness_id = bytes_4(730039257)
+    tg_list = ",".join(str(730500 + i) for i in range(13))
+    witness = {"OPTIONS": f"TS2={tg_list};SINGLE=1;".encode()}
+    peer_slots = {
+        2: {"stream_id": _STREAM_A, "tgid": 730500, "time": now - 1.0},
+    }
+    slot = {"RX_TYPE": HBPF_SLT_VTERM, "TX_TYPE": HBPF_SLT_VTERM}
+    assert not peer_hotspot_voice_slot_busy(
+        witness_id,
+        2,
+        _STREAM_B,
+        _TG_B,
+        slot,
+        peer_slots,
+        None,
+        now,
+        5.0,
+        peer=witness,
+        sys_cfg={"GROUP_HANGTIME": 5.0},
+    )
+
+
+def test_same_stream_vterm_not_blocked_by_peer_slot_busy() -> None:
+    """VTERM for the active stream must reach the hotspot to clear peer_voice_slots."""
+    from adn_server.application.routing.downlink import (
+        DownlinkContext,
+        peer_slot_blocks_downlink,
+        touch_peer_voice_slot,
+    )
+
+    sys_cfg = {"GROUP_HANGTIME": 5.0, "MODE": "MASTER", "MAX_PEERS": 8}
+    config = {"PROXY": {"TARGET_SYSTEM": "MASTER-A"}, "SYSTEMS": {"MASTER-A": sys_cfg}}
+    hs = bytes_4(714002301)
+    peer = {"OPTIONS": b"TS2=7141,71442;SINGLE=1;"}
+    ctx = DownlinkContext(
+        config=config,
+        system_name="MASTER-A",
+        sys_cfg=sys_cfg,
+        peers={hs: peer},
+        status={1: {"RX_TYPE": HBPF_SLT_VTERM, "TX_TYPE": HBPF_SLT_VTERM}, 2: {"RX_TYPE": HBPF_SLT_VTERM, "TX_TYPE": HBPF_SLT_VTERM}},
+        connected_count=2,
+    )
+    now = 1_000_000.0
+    stream = bytes_4(0x11111111)
+    touch_peer_voice_slot(ctx, hs, 2, stream, bytes_3(7141), pkt_time=now)
+    vterm = b"".join([
+        b"DMRD", b"\x00", bytes_3(100), bytes_3(7141), b"\x00\x00\x00\x00",
+        bytes([0x80 | (HBPF_DATA_SYNC << 4) | HBPF_SLT_VTERM]),
+        stream,
+    ] + [b"\x00"] * 33)
+    assert not peer_slot_blocks_downlink(ctx, hs, peer, vterm, pkt_time=now + 0.5)
 
 
 def test_peer_slot_session_blocks_other_tg_after_burst_gap() -> None:
@@ -149,6 +345,42 @@ def test_obp_tx_stamp_does_not_override_peer_hangtime() -> None:
     assert not peer_hotspot_voice_slot_busy(
         hs, 2, _STREAM_B, bytes_3(7306), slot, None, hang, now + 2.0, 10.0, peers=peers,
     )
+
+
+def test_downlink_track_preserves_ingress_tx_flag() -> None:
+    """Delivered downlink DMRD must not clear ingress while hotspot is still TX."""
+    from adn_server.application.routing.downlink import (
+        DownlinkContext,
+        peer_slot_blocks_downlink,
+        touch_peer_voice_slot,
+        track_peer_group_dmrd,
+    )
+
+    sys_cfg = {"GROUP_HANGTIME": 5.0, "MODE": "MASTER", "MAX_PEERS": 8}
+    config = {"SYSTEMS": {"MASTER-A": sys_cfg}}
+    peer_id = bytes_4(730039264)
+    peer = {"OPTIONS": b"TS2=730502;SINGLE=1;"}
+    ctx = DownlinkContext(
+        config=config,
+        system_name="MASTER-A",
+        sys_cfg=sys_cfg,
+        peers={peer_id: peer},
+        status={1: {}, 2: {}},
+        connected_count=2,
+    )
+    now = 1_000_000.0
+    stream_a = bytes_4(0x11111111)
+    stream_b = bytes_4(0x22222222)
+    touch_peer_voice_slot(
+        ctx, peer_id, 2, stream_a, bytes_3(730502), pkt_time=now, ingress=True,
+    )
+    foreign_vhead = b"".join([
+        b"DMRD", b"\x00", bytes_3(730039265), bytes_3(730502), b"\x00\x00\x00\x00",
+        bytes([0x80 | (HBPF_DATA_SYNC << 4) | HBPF_SLT_VHEAD]), stream_b,
+    ] + [b"\x00"] * 33)
+    assert peer_slot_blocks_downlink(ctx, peer_id, peer, foreign_vhead, pkt_time=now + 2.1)
+    track_peer_group_dmrd(ctx, peer_id, foreign_vhead, peer, pkt_time=now + 2)
+    assert ctx.peer_voice_slots[peer_id][2].get("ingress") is True
 
 
 def test_downlink_vterm_does_not_reset_transmit_hangtime() -> None:
@@ -210,8 +442,8 @@ def test_obp_tx_stamp_does_not_bypass_fresh_chile_downlink_session() -> None:
     )
 
 
-def test_obp_bridge_tx_overrides_stale_peer_slot_session() -> None:
-    """Stale HS session must not block OBP bridged downlink on the same TG."""
+def test_obp_bridge_tx_blocked_when_other_stream_session_active() -> None:
+    """Active per-peer session on another stream blocks OBP bridged downlink (one QSO per slot)."""
     now = 1_000_000.0
     hs = bytes_4(0x2B83833D)
     slot = {
@@ -222,7 +454,7 @@ def test_obp_bridge_tx_overrides_stale_peer_slot_session() -> None:
         "RX_TYPE": HBPF_SLT_VTERM,
     }
     peers = {hs: {"CONNECTION": "YES"}}
-    assert not peer_hotspot_voice_slot_busy(
+    assert peer_hotspot_voice_slot_busy(
         hs, 2, _STREAM_B, _TG_B, slot,
         {2: {"stream_id": _STREAM_A, "tgid": 7305, "time": now - 5.0}},
         None, now, 5.0, peers=peers,
@@ -256,8 +488,8 @@ def test_peer_hotspot_hangtime_blocks_other_tg() -> None:
     )
 
 
-def test_single0_ingress_tx_allows_other_static_tg() -> None:
-    """SINGLE=0: local TX on one static TG must not block RX on another in OPTIONS."""
+def test_single0_ingress_tx_blocks_other_static_tg_on_slot() -> None:
+    """SINGLE=0: local TX on one TG blocks any other downlink on the same RF slot."""
     now = 1_000_000.0
     hs = bytes_4(730039253)
     peer = {"OPTIONS": b"TS2=730507,730508;SINGLE=0;"}
@@ -271,7 +503,7 @@ def test_single0_ingress_tx_allows_other_static_tg() -> None:
             "ingress": True,
         },
     }
-    assert not peer_hotspot_voice_slot_busy(
+    assert peer_hotspot_voice_slot_busy(
         hs,
         2,
         bytes_4(0x22222222),
@@ -286,8 +518,8 @@ def test_single0_ingress_tx_allows_other_static_tg() -> None:
     )
 
 
-def test_monitor_peer_allows_second_static_tg_during_listen() -> None:
-    """Lab witness (many static TGs) must hear concurrent calls on different TGs."""
+def test_lab_witness_nine_static_tgs_allows_second_tg_on_slot() -> None:
+    """Lab witness with >6 static TGs is not hard-locked to one QSO per RF slot."""
     now = 1_000_000.0
     hs = bytes_4(730039257)
     peer = {
@@ -319,6 +551,32 @@ def test_monitor_peer_allows_second_static_tg_during_listen() -> None:
     )
 
 
+def test_ingress_tx_blocks_same_stream_obp_echo() -> None:
+    """OBP loopback with same stream_id must not downlink while hotspot is still TX."""
+    now = 1_000_000.0
+    hs = bytes_4(730039264)
+    stream = bytes_4(0x22222222)
+    slot = {
+        "TX_PEER": bytes_4(73010),
+        "TX_STREAM_ID": stream,
+        "TX_TYPE": HBPF_SLT_VHEAD,
+        "TX_TIME": now,
+        "RX_TYPE": HBPF_SLT_VTERM,
+    }
+    peers = {hs: {"CONNECTION": "YES", "OPTIONS": b"TS2=730502;SINGLE=1;"}}
+    peer_slots = {
+        2: {
+            "stream_id": stream,
+            "tgid": 730502,
+            "time": now,
+            "ingress": True,
+        },
+    }
+    assert peer_hotspot_voice_slot_busy(
+        hs, 2, stream, bytes_3(730502), slot, peer_slots, None, now, 5.0, peers=peers,
+    )
+
+
 def test_ingress_tx_blocks_same_tg_foreign_stream_despite_bridge_stamp() -> None:
     """Local RF TX must block downlink even when OBP bridge TX stamp matches incoming."""
     now = 1_000_000.0
@@ -341,6 +599,67 @@ def test_ingress_tx_blocks_same_tg_foreign_stream_despite_bridge_stamp() -> None
     }
     assert peer_hotspot_voice_slot_busy(
         hs, 2, bytes_4(0x22222222), bytes_3(7306), slot, peer_slots, None, now, 5.0, peers=peers,
+    )
+
+
+def test_single1_listen_blocks_other_static_tg_during_downlink() -> None:
+    """Lab J39JQ: SINGLE=1 listening on 730502 must not RX 730500 on same slot."""
+    now = 1_000_000.0
+    hs = bytes_4(730039270)
+    peer = {"OPTIONS": b"TS2=730500,730508;SINGLE=1;TIMER=5;"}
+    sys_cfg = {"SINGLE_MODE": False, "DEFAULT_UA_TIMER": 10}
+    slot = {
+        "RX_PEER": bytes_4(730039269),
+        "RX_TGID": bytes_3(730500),
+        "RX_STREAM_ID": bytes_4(0x11111111),
+        "RX_TIME": now,
+        "RX_TYPE": HBPF_SLT_VHEAD,
+    }
+    peer_slots = {
+        2: {"stream_id": bytes_4(0x22222222), "tgid": 730502, "time": now, "ingress": False},
+    }
+    assert peer_hotspot_voice_slot_busy(
+        hs,
+        2,
+        bytes_4(0x11111111),
+        bytes_3(730500),
+        slot,
+        peer_slots,
+        None,
+        now + 0.1,
+        5.0,
+        peer=peer,
+        sys_cfg=sys_cfg,
+    )
+
+
+def test_single1_ua_blocks_same_tg_foreign_tx() -> None:
+    """SINGLE=1 UA on 730502: block HP3ICC downlink on same TG while slot is busy."""
+    now = 1_000_000.0
+    listener = bytes_4(730039270)
+    tx_peer = bytes_4(730039269)
+    peer = {"OPTIONS": b"TS2=730500,730508;SINGLE=1;TIMER=5;"}
+    sys_cfg = {"SINGLE_MODE": False, "DEFAULT_UA_TIMER": 10}
+    register_peer_ua_session(peer, listener, 2, 730502, sys_cfg, now=now)
+    slot = {
+        "RX_PEER": tx_peer,
+        "RX_TGID": bytes_3(730502),
+        "RX_STREAM_ID": bytes_4(0x11111111),
+        "RX_TIME": now,
+        "RX_TYPE": HBPF_SLT_VHEAD,
+    }
+    assert peer_hotspot_voice_slot_busy(
+        listener,
+        2,
+        bytes_4(0x22222222),
+        bytes_3(730502),
+        slot,
+        None,
+        None,
+        now + 0.1,
+        5.0,
+        peer=peer,
+        sys_cfg=sys_cfg,
     )
 
 

@@ -52,6 +52,7 @@ from typing import Any
 from ...domain import HBPF_DATA_SYNC, HBPF_SLT_VHEAD, int_id
 from ...domain.dmr import decode
 from ...domain.dmr.const import LC_OPT
+from .helpers import group_voice_tg_ingress_collision
 
 logger = logging.getLogger(__name__)
 
@@ -162,6 +163,17 @@ class ObpForwardMixin:
             return True
 
         if stream_id not in status:
+            if group_voice_tg_ingress_collision(
+                protocols, systems_cfg, dst_id, stream_id, rf_src, pkt_time,
+            ):
+                self._log_ingress_warning_once(
+                    self._ingress_drop_key(
+                        "tg_busy", system_name, peer_id, dst_id, stream_id,
+                    ),
+                    "(%s) TG %s busy — dropping OBP stream %s from peer %s",
+                    system_name, int_id(dst_id), int_id(stream_id), int_id(peer_id),
+                )
+                return False
             st: dict[str, Any] = {
                 "START": pkt_time,
                 "CONTENTION": False,

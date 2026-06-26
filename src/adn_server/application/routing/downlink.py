@@ -31,6 +31,7 @@ from adn_server.domain.hbp_protocol import STREAM_TO
 
 from .helpers import (
     SIMPLEX_VOICE_SLOT,
+    _peer_ua_session_entry,
     clear_peer_ua_sessions,
     hbp_slot_blocks_group_voice_for_peer,
     is_special_tg,
@@ -218,6 +219,7 @@ def peer_slot_blocks_downlink(
             active = per_slot.get(int(listen_slot))
             if not isinstance(active, dict) or active.get("stream_id") != stream_id:
                 return True
+            return False
     if not ctx.per_peer_contention():
         return False
     hang = float(ctx.sys_cfg.get("GROUP_HANGTIME", 0) or 0)
@@ -307,7 +309,8 @@ def touch_peer_voice_slot(
         "tgid": int_id(tgid),
         "time": float(now),
     }
-    if ingress:
+    prev = ctx.peer_voice_slots.get(pk, {}).get(int(voice_slot))
+    if ingress or (isinstance(prev, dict) and prev.get("ingress")):
         row["ingress"] = True
     ctx.peer_voice_slots.setdefault(pk, {})[int(voice_slot)] = row
     if clear_hangtime:
@@ -332,7 +335,9 @@ def end_peer_voice_slot(
     if isinstance(active, dict):
         active_stream = active.get("stream_id")
         if stream_id and active_stream and active_stream != stream_id:
-            return
+            active_time = float(active.get("time", 0) or 0)
+            if (now - active_time) < STREAM_TO:
+                return
     active = per_slot.pop(int(voice_slot), None)
     if not apply_hangtime:
         return
@@ -375,7 +380,9 @@ def track_peer_group_dmrd(
                     peer, voice_slot, ctx.sys_cfg, peer_id=peer_id, now=pkt_time,
                 )
                 if locked is not None and locked == ended_tg:
-                    clear_peer_ua_sessions(peer, ctx.sys_cfg, peer_id, slot=voice_slot)
+                    entry = _peer_ua_session_entry(ctx.sys_cfg, peer_id, voice_slot)
+                    if not isinstance(entry, dict) or entry.get("source") != "local":
+                        clear_peer_ua_sessions(peer, ctx.sys_cfg, peer_id, slot=voice_slot)
         end_peer_voice_slot(
             ctx,
             peer_id,
@@ -391,16 +398,32 @@ def track_peer_group_dmrd(
         and frame_type == HBPF_DATA_SYNC
         and dtype_vseq == HBPF_SLT_VHEAD
         and peer_wants_downlink_single_listen_lock(peer, ctx.sys_cfg)
-        and is_ua_session_tgid(int_id(dst_id))
     ):
-        pk = bytes_4(int_id(peer_id))
-        per_slot = ctx.peer_voice_slots.get(pk, {})
-        active = per_slot.get(int(voice_slot))
-        if not isinstance(active, dict) or active.get("stream_id") != stream_id:
-            now = time.time() if pkt_time is None else float(pkt_time)
-            register_peer_ua_session(
-                peer, peer_id, voice_slot, int_id(dst_id), ctx.sys_cfg, now=now,
+        dst_tgid = int_id(dst_id)
+        listen_lock_tg = is_ua_session_tgid(dst_tgid) or peer_receives_group_tgid(
+            peer, wire_slot, dst_tgid,
+        )
+        if listen_lock_tg:
+            pk = bytes_4(int_id(peer_id))
+            per_slot = ctx.peer_voice_slots.get(pk, {})
+            active = per_slot.get(int(voice_slot))
+            locked = peer_single_exclusive_tgid(
+                peer, voice_slot, ctx.sys_cfg, peer_id=peer_id, now=pkt_time,
             )
+            entry = _peer_ua_session_entry(ctx.sys_cfg, peer_id, voice_slot)
+            local_lock = (
+                locked is not None
+                and int(locked) == int(dst_tgid)
+                and isinstance(entry, dict)
+                and entry.get("source") == "local"
+            )
+            if local_lock:
+                pass
+            elif not isinstance(active, dict) or active.get("stream_id") != stream_id:
+                now = time.time() if pkt_time is None else float(pkt_time)
+                register_peer_ua_session(
+                    peer, peer_id, voice_slot, dst_tgid, ctx.sys_cfg, now=now, source="listen",
+                )
     touch_peer_voice_slot(
         ctx,
         peer_id,

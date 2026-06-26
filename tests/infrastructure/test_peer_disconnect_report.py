@@ -71,6 +71,21 @@ def test_disconnect_keeps_sys_cfg_sessions() -> None:
     assert export_peer_ua_sessions(sys_cfg, peer_id, now=1_000_100.0)["2"]["tgid"] == 7305
 
 
+def test_disconnect_clears_peer_voice_slots() -> None:
+    proto = _master_protocol()
+    peer_id = bytes_4(730039101)
+    pk = bytes_4(730039101)
+    proto._peer_voice_slots[pk] = {
+        2: {"stream_id": bytes_4(0x12345678), "tgid": 7305, "time": 1_000_000.0},
+    }
+    proto._peer_voice_hangtime[pk] = {2: (7305, 1_000_000.0)}
+
+    proto._on_peer_disconnected(peer_id)
+
+    assert pk not in proto._peer_voice_slots
+    assert pk not in proto._peer_voice_hangtime
+
+
 def test_export_peer_ua_sessions_omits_expired() -> None:
     peer_id = bytes_4(730039101)
     sys_cfg: dict = {"_PEER_UA_SESSIONS": {}}

@@ -25,6 +25,7 @@ from __future__ import annotations
 from adn_server.application.routing.helpers import (
     clear_peer_rx_status_slots,
     clear_peer_ua_sessions,
+    peer_hotspot_voice_slot_busy,
     peer_options_static_tg_slot,
     peer_receives_group_tgid,
     peer_should_receive_group_voice,
@@ -508,4 +509,60 @@ def test_single_lock_persists_after_vterm_until_timer_expires() -> None:
     )
     assert peer_should_receive_group_voice(
         peer, 2, 730, peer_id=peer_id, connected_count=3, sys_cfg=sys_cfg, now=now + 61,
+    )
+
+
+def test_single_blocks_foreign_same_tg_while_local_ua() -> None:
+    """J39JQ UA on 730502: slot gate blocks HP3ICC downlink on the same TG."""
+    from adn_server.application.routing.helpers import peer_single_blocks_foreign_same_tg_downlink
+
+    peer = {"OPTIONS": b"TS2=730500,730508;SINGLE=1;TIMER=60;"}
+    sys_cfg = _sys_cfg()
+    peer_id = _peer_id()
+    now = 1_000_000.0
+    register_peer_ua_session(peer, peer_id, 2, 730502, sys_cfg, now=now)
+    assert peer_single_blocks_foreign_same_tg_downlink(
+        peer, peer_id, 2, bytes_3(730502), None, sys_cfg, now=now + 10,
+    )
+    assert peer_hotspot_voice_slot_busy(
+        peer_id,
+        2,
+        bytes_4(0x22222222),
+        bytes_3(730502),
+        {"RX_TYPE": HBPF_SLT_VTERM, "TX_TYPE": HBPF_SLT_VTERM},
+        None,
+        None,
+        now + 0.1,
+        5.0,
+        peer=peer,
+        sys_cfg=sys_cfg,
+    )
+
+
+def test_downlink_vterm_does_not_clear_local_ua_session() -> None:
+    """Network VTERM on session TG must not wipe a local PTT lock (TIMER session)."""
+    from adn_server.application.routing.downlink import DownlinkContext, track_peer_group_dmrd
+
+    sys_cfg = {"SINGLE_MODE": False, "DEFAULT_UA_TIMER": 10, "MODE": "MASTER", "MAX_PEERS": 8}
+    config = {"PROXY": {"TARGET_SYSTEM": "MASTER-A"}, "SYSTEMS": {"MASTER-A": sys_cfg}}
+    peer_id = _peer_id()
+    peer = {"OPTIONS": b"TS2=730500,730508;SINGLE=1;TIMER=60;"}
+    ctx = DownlinkContext(
+        config=config,
+        system_name="MASTER-A",
+        sys_cfg=sys_cfg,
+        peers={peer_id: peer},
+        status={1: {}, 2: {}},
+        connected_count=3,
+    )
+    now = 1_000_000.0
+    register_peer_ua_session(peer, peer_id, 2, 730502, sys_cfg, now=now, source="local")
+    stream = bytes_4(0x11111111)
+    vterm = b"".join([
+        b"DMRD", b"\x00", bytes_3(100), bytes_3(730502), b"\x00\x00\x00\x00",
+        bytes([0x80 | (HBPF_DATA_SYNC << 4) | HBPF_SLT_VTERM]), stream,
+    ] + [b"\x00"] * 33)
+    track_peer_group_dmrd(ctx, peer_id, vterm, peer, pkt_time=now + 8)
+    assert not peer_should_receive_group_voice(
+        peer, 2, 730500, peer_id=peer_id, connected_count=3, sys_cfg=sys_cfg, now=now + 9,
     )

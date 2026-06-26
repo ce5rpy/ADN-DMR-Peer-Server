@@ -52,6 +52,7 @@ from ...application.routing.downlink import (
 from ...application.routing.helpers import (
     clear_peer_rx_status_slots,
     clear_peer_ua_sessions,
+    hbp_master_ingress_repeat_allowed,
     is_on_demand_service_dst,
     is_server_originated_voice,
     is_special_tg,
@@ -576,6 +577,17 @@ class HBPProtocol(DatagramProtocol):
             if len(packet) >= 8 and peer_matches_rf_source(peer_id, packet[5:8], self._peers):
                 return True
             return self._cached_connected_peer_count() == 1
+        if len(packet) >= 8 and peer_matches_rf_source(peer_id, packet[5:8], self._peers):
+            ctx = self._downlink_ctx()
+            if ctx.per_peer_contention():
+                peer = self._peers[peer_id]
+                voice_slot = peer_downlink_voice_slot(
+                    peer, slot, tgid, self._config, peer_id=peer_id,
+                )
+                pk = bytes_4(int_id(peer_id))
+                active = ctx.peer_voice_slots.get(pk, {}).get(int(voice_slot))
+                if isinstance(active, dict) and active.get("ingress"):
+                    return False
         connected = self._cached_connected_peer_count()
         store = self._get_subscription_store() if self._get_subscription_store else None
         return peer_should_receive_group_voice(
@@ -626,7 +638,13 @@ class HBPProtocol(DatagramProtocol):
                 ctx, peer_id, voice_slot, stream_id, dst_id, pkt_time=pkt_time, ingress=True,
             )
 
-    def _peer_would_accept_group_dmrd(self, peer_id: bytes, packet: bytes) -> bool:
+    def _peer_would_accept_group_dmrd(
+        self,
+        peer_id: bytes,
+        packet: bytes,
+        *,
+        routed: bool = False,
+    ) -> bool:
         """True when group/vcsbk DMRD passes OPTIONS filter and per-hotspot slot gate."""
         if packet[:4] != DMRD or not self._peer_should_receive_dmrd(peer_id, packet):
             return False
@@ -636,7 +654,11 @@ class HBPProtocol(DatagramProtocol):
         ctx = self._downlink_ctx()
         if not ctx.per_peer_contention():
             return True
-        route_pkt = remap_dmrd_for_peer(packet, peer, self._config, peer_id=peer_id)
+        route_pkt = (
+            packet
+            if routed
+            else remap_dmrd_for_peer(packet, peer, self._config, peer_id=peer_id)
+        )
         return not peer_slot_blocks_downlink(ctx, peer_id, peer, route_pkt)
 
     def _downlink_drop_key(self, peer_id: bytes, route_pkt: bytes) -> tuple[bytes, bytes]:
@@ -666,7 +688,9 @@ class HBPProtocol(DatagramProtocol):
                 route_pkt = remap_dmrd_for_peer(
                     _packet, peer, self._config, peer_id=_peer,
                 )
-            if not self._peer_would_accept_group_dmrd(_peer, route_pkt):
+            if not self._peer_would_accept_group_dmrd(
+                _peer, _packet if not _skip_dual_expand else route_pkt, routed=_skip_dual_expand,
+            ):
                 self._log_downlink_drop_once(_peer, route_pkt)
                 return
             self._downlink_drop_logged.discard(self._downlink_drop_key(_peer, route_pkt))
@@ -1034,6 +1058,9 @@ class HBPProtocol(DatagramProtocol):
             sessions = peer.get("_UA_SESSION")
             if isinstance(sessions, dict):
                 sessions.clear()
+        pk = bytes_4(int_id(peer_id))
+        self._peer_voice_slots.pop(pk, None)
+        self._peer_voice_hangtime.pop(pk, None)
         clear_peer_rx_status_slots(self.STATUS, peer_id)
 
     def _remove_peer(self, peer_id: bytes) -> None:
@@ -1123,16 +1150,6 @@ class HBPProtocol(DatagramProtocol):
                 if sub_map is not None:
                     sub_map[_rf_src] = (self._system, _slot, pkt_time)
                 self.note_dmrd_stream(_peer_id, _rf_src, _stream_id)
-                self._sync_peer_voice_from_ingress(
-                    _peer_id,
-                    _slot,
-                    _dst_id,
-                    _stream_id,
-                    call_type=_call_type,
-                    frame_type=_frame_type,
-                    dtype_vseq=_dtype_vseq,
-                    pkt_time=pkt_time,
-                )
                 if (
                     _call_type in ("group", "vcsbk")
                     and _frame_type == HBPF_DATA_SYNC
@@ -1176,8 +1193,37 @@ class HBPProtocol(DatagramProtocol):
                     self.store_ta_from_voice_burst(
                         _peer_id, _rf_src, _stream_id, _dtype_vseq, _data[20:53],
                     )
+                if _call_type in ("group", "vcsbk"):
+                    self._sync_peer_voice_from_ingress(
+                        _peer_id,
+                        _slot,
+                        _dst_id,
+                        _stream_id,
+                        call_type=_call_type,
+                        frame_type=_frame_type,
+                        dtype_vseq=_dtype_vseq,
+                        pkt_time=pkt_time,
+                    )
+                _slot_st = self.STATUS.get(_slot, {})
+                _protocols: dict[str, Any] = {}
+                if self._router and getattr(self._router, "_get_protocols", None):
+                    _protocols = self._router._get_protocols() or {}
+                _repeat_ok = (
+                    _call_type not in ("group", "vcsbk")
+                    or hbp_master_ingress_repeat_allowed(
+                        _slot_st,
+                        _peer_id,
+                        _rf_src,
+                        _dst_id,
+                        _stream_id,
+                        pkt_time,
+                        protocols=_protocols,
+                        systems_cfg=self._CONFIG.get("SYSTEMS", {}),
+                    )
+                )
                 if (
-                    self._config.get("REPEAT", True)
+                    _repeat_ok
+                    and self._config.get("REPEAT", True)
                     and _call_type in ("group", "vcsbk")
                     and _frame_type == HBPF_DATA_SYNC
                     and _dtype_vseq == HBPF_SLT_VHEAD
@@ -1190,7 +1236,11 @@ class HBPProtocol(DatagramProtocol):
                         self._on_talker_alias_local_repeat(
                             self._system, _peer_id, _rf_src, _stream_id,
                         )
-                if self._config.get("REPEAT", True) and _call_type in ("group", "vcsbk"):
+                if (
+                    _repeat_ok
+                    and self._config.get("REPEAT", True)
+                    and _call_type in ("group", "vcsbk")
+                ):
                     _repeat_tail = _data[15:]
                     if (
                         _dtype_vseq in (1, 2, 3, 4)
@@ -1226,17 +1276,6 @@ class HBPProtocol(DatagramProtocol):
                     _call_type, _dtype_vseq, _stream_id,
                     self.STATUS.get(_slot, {}).get("RX_STREAM_ID") if _slot in self.STATUS else None,
                 )
-                if _slot in self.STATUS and not _unit_data:
-                    if _stream_id != self.STATUS[_slot].get("RX_STREAM_ID"):
-                        self.STATUS[_slot]["RX_START"] = pkt_time
-                        if _frame_type == HBPF_DATA_SYNC and _dtype_vseq == HBPF_SLT_VHEAD and len(dmrpkt) >= 33:
-                            try:
-                                decoded_slot = decode.voice_head_term(dmrpkt)
-                                self.STATUS[_slot]["RX_LC"] = decoded_slot["LC"]
-                            except Exception:
-                                self.STATUS[_slot]["RX_LC"] = LC_OPT + _dst_id + _rf_src
-                        else:
-                            self.STATUS[_slot]["RX_LC"] = LC_OPT + _dst_id + _rf_src
                 _accepted = False
                 if self._dmrd_received:
                     _accepted = self._dmrd_received(
@@ -1244,6 +1283,25 @@ class HBPProtocol(DatagramProtocol):
                         _call_type, _frame_type, _dtype_vseq, _stream_id, _data,
                         ingress_pkt_time=pkt_time,
                     )
+                if _accepted:
+                    if _slot in self.STATUS and not _unit_data:
+                        if _stream_id != self.STATUS[_slot].get("RX_STREAM_ID"):
+                            self.STATUS[_slot]["RX_START"] = pkt_time
+                            if _frame_type == HBPF_DATA_SYNC and _dtype_vseq == HBPF_SLT_VHEAD and len(dmrpkt) >= 33:
+                                try:
+                                    decoded_slot = decode.voice_head_term(dmrpkt)
+                                    self.STATUS[_slot]["RX_LC"] = decoded_slot["LC"]
+                                except Exception:
+                                    self.STATUS[_slot]["RX_LC"] = LC_OPT + _dst_id + _rf_src
+                            else:
+                                self.STATUS[_slot]["RX_LC"] = LC_OPT + _dst_id + _rf_src
+                        self.STATUS[_slot]["RX_PEER"] = _peer_id
+                        self.STATUS[_slot]["RX_SEQ"] = _seq
+                        self.STATUS[_slot]["RX_RFS"] = _rf_src
+                        self.STATUS[_slot]["RX_TYPE"] = _dtype_vseq
+                        self.STATUS[_slot]["RX_TGID"] = _dst_id
+                        self.STATUS[_slot]["RX_TIME"] = pkt_time
+                        self.STATUS[_slot]["RX_STREAM_ID"] = _stream_id
                 _voice = self._CONFIG.get("VOICE", {})
                 if _accepted and self._on_handle_recording and _voice.get("RECORDING_ENABLED") and int_id(_dst_id) == _voice.get("RECORDING_TG") and _slot == _voice.get("RECORDING_TIMESLOT", 2):
                     dmrpkt = _data[20:53] if len(_data) >= 53 else _data[20:]
@@ -1260,7 +1318,8 @@ class HBPProtocol(DatagramProtocol):
                 ):
                     reactor.callInThread(self._on_play_file_request, str(_int_dst_id), self._system)
                 if (
-                    _call_type in ("group", "vcsbk")
+                    _accepted
+                    and _call_type in ("group", "vcsbk")
                     and _frame_type == HBPF_DATA_SYNC
                     and _dtype_vseq == HBPF_SLT_VTERM
                     and _slot in self.STATUS
@@ -1269,21 +1328,13 @@ class HBPProtocol(DatagramProtocol):
                 ):
                     self._on_in_band_signalling(self._system, _slot, _dst_id, pkt_time)
                 if (
-                    _call_type in ("group", "vcsbk")
+                    _accepted
+                    and _call_type in ("group", "vcsbk")
                     and _frame_type == HBPF_DATA_SYNC
                     and _dtype_vseq == HBPF_SLT_VTERM
                     and self._on_talker_alias_stream_end
                 ):
                     self._on_talker_alias_stream_end(self._system, _stream_id)
-                # Legacy routerHBP: unit data (_data_call) does not mark slot RX busy.
-                if _slot in self.STATUS and not _unit_data:
-                    self.STATUS[_slot]["RX_PEER"] = _peer_id
-                    self.STATUS[_slot]["RX_SEQ"] = _seq
-                    self.STATUS[_slot]["RX_RFS"] = _rf_src
-                    self.STATUS[_slot]["RX_TYPE"] = _dtype_vseq
-                    self.STATUS[_slot]["RX_TGID"] = _dst_id
-                    self.STATUS[_slot]["RX_TIME"] = pkt_time
-                    self.STATUS[_slot]["RX_STREAM_ID"] = _stream_id
 
         elif _command == RPTL:
             _peer_id = _data[4:8]
