@@ -1331,7 +1331,12 @@ def peer_single_blocks_foreign_same_tg_downlink(
     *,
     now: float | None = None,
 ) -> bool:
-    """SINGLE=1 local UA on TG T: block network downlink on T unless hotspot is TX on T."""
+    """SINGLE=1 local UA on TG T: block network downlink on T unless hotspot is TX on T.
+
+    Downlink listen locks (``source=listen``) only exclude other TGs via
+    ``peer_single_blocks_group_voice``; same-TG stream overlap uses
+    ``peer_hotspot_voice_slot_busy``.
+    """
     if not sys_cfg or not peer_single_mode(peer, sys_cfg):
         return False
     incoming = int_id(incoming_tgid_b)
@@ -1339,6 +1344,9 @@ def peer_single_blocks_foreign_same_tg_downlink(
         peer, sys_cfg, peer_id=peer_id, now=now, prefer_slot=voice_slot,
     )
     if locked is None or int(locked) != incoming:
+        return False
+    entry = _peer_ua_session_entry(sys_cfg, peer_id, voice_slot)
+    if isinstance(entry, dict) and entry.get("source") == "listen":
         return False
     active = (peer_slots or {}).get(int(voice_slot))
     if isinstance(active, dict) and active.get("ingress"):
