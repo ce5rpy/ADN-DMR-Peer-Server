@@ -249,8 +249,8 @@ def test_per_peer_obp_tx_stamp_blocked_when_other_stream_active() -> None:
     ) is True
 
 
-def test_lab_witness_many_static_tgs_allows_second_tg_on_slot() -> None:
-    """Full-table lab witness (>6 static TGs) is not subject to one-QSO hard slot lock."""
+def test_lab_witness_many_static_tgs_blocks_second_tg_on_slot() -> None:
+    """Full-table lab witness (>6 static TGs) still obeys one-QSO-per-RF-slot."""
     now = 1_000_000.0
     witness_id = bytes_4(730039257)
     tg_list = ",".join(str(730500 + i) for i in range(13))
@@ -259,7 +259,7 @@ def test_lab_witness_many_static_tgs_allows_second_tg_on_slot() -> None:
         2: {"stream_id": _STREAM_A, "tgid": 730500, "time": now - 1.0},
     }
     slot = {"RX_TYPE": HBPF_SLT_VTERM, "TX_TYPE": HBPF_SLT_VTERM}
-    assert not peer_hotspot_voice_slot_busy(
+    assert peer_hotspot_voice_slot_busy(
         witness_id,
         2,
         _STREAM_B,
@@ -518,8 +518,8 @@ def test_single0_ingress_tx_blocks_other_static_tg_on_slot() -> None:
     )
 
 
-def test_lab_witness_nine_static_tgs_allows_second_tg_on_slot() -> None:
-    """Lab witness with >6 static TGs is not hard-locked to one QSO per RF slot."""
+def test_lab_witness_nine_static_tgs_blocks_second_tg_on_slot() -> None:
+    """Lab witness with >6 static TGs is hard-locked to one QSO per RF slot."""
     now = 1_000_000.0
     hs = bytes_4(730039257)
     peer = {
@@ -536,7 +536,7 @@ def test_lab_witness_nine_static_tgs_allows_second_tg_on_slot() -> None:
     peer_slots = {
         2: {"stream_id": bytes_4(0x11111111), "tgid": 730507, "time": now, "ingress": False},
     }
-    assert not peer_hotspot_voice_slot_busy(
+    assert peer_hotspot_voice_slot_busy(
         hs,
         2,
         bytes_4(0x22222222),

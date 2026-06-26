@@ -271,6 +271,31 @@ def _peer_status_rx_hangtime_blocks(
     return (pkt_time - rx_t) < hang
 
 
+def _peer_single_locked_tgid(
+    peer: dict[str, Any],
+    sys_cfg: dict[str, Any],
+    *,
+    peer_id: bytes | None = None,
+    now: float | None = None,
+    prefer_slot: int | None = None,
+) -> int | None:
+    """First active SINGLE=1 session TG (``prefer_slot`` checked before the other TS)."""
+    slots: list[int] = []
+    if prefer_slot is not None:
+        slots.append(int(prefer_slot))
+    for voice_slot in (1, 2):
+        if prefer_slot is not None and voice_slot == int(prefer_slot):
+            continue
+        slots.append(voice_slot)
+    for voice_slot in slots:
+        locked = peer_single_exclusive_tgid(
+            peer, voice_slot, sys_cfg, peer_id=peer_id, now=now,
+        )
+        if locked is not None:
+            return locked
+    return None
+
+
 def peer_single_same_tg_foreign_tx_blocks(
     peer: dict[str, Any],
     peer_id: bytes,
@@ -285,13 +310,9 @@ def peer_single_same_tg_foreign_tx_blocks(
     if not sys_cfg or not peer_single_mode(peer, sys_cfg):
         return False
     incoming = int_id(incoming_tgid_b)
-    locked = None
-    for voice_slot in (1, 2):
-        locked = peer_single_exclusive_tgid(
-            peer, voice_slot, sys_cfg, peer_id=peer_id, now=pkt_time,
-        )
-        if locked is not None:
-            break
+    locked = _peer_single_locked_tgid(
+        peer, sys_cfg, peer_id=peer_id, now=pkt_time,
+    )
     if locked is None or int(locked) != incoming:
         return False
     if not slot_has_active_voice(slot_st, pkt_time):
@@ -339,10 +360,22 @@ def peer_hotspot_voice_slot_busy(
     if isinstance(active, dict):
         if active.get("ingress"):
             return True
-        if peer_hotspot_hard_slot_one_qso(peer):
-            active_stream = active.get("stream_id")
-            if not (stream_id and active_stream and active_stream == stream_id):
-                return True
+        active_stream = active.get("stream_id")
+        incoming_tgid = int_id(incoming_tgid_b)
+        active_tgid = int(active.get("tgid", 0) or 0)
+        if stream_id and active_stream and active_stream == stream_id:
+            pass
+        elif (
+            stream_id
+            and active_stream
+            and active_stream != stream_id
+            and active_tgid
+            and active_tgid == incoming_tgid
+            and (pkt_time - float(active.get("time", 0) or 0)) >= STREAM_TO
+        ):
+            peer_slots.pop(int(voice_slot), None)
+        else:
+            return True
     if isinstance(peer, dict) and peer_single_blocks_foreign_same_tg_downlink(
         peer, pk, voice_slot, incoming_tgid_b, peer_slots, sys_cfg, now=pkt_time,
     ):
@@ -1302,18 +1335,9 @@ def peer_single_blocks_foreign_same_tg_downlink(
     if not sys_cfg or not peer_single_mode(peer, sys_cfg):
         return False
     incoming = int_id(incoming_tgid_b)
-    locked = peer_single_exclusive_tgid(
-        peer, voice_slot, sys_cfg, peer_id=peer_id, now=now,
+    locked = _peer_single_locked_tgid(
+        peer, sys_cfg, peer_id=peer_id, now=now, prefer_slot=voice_slot,
     )
-    if locked is None:
-        for alt_slot in (1, 2):
-            if alt_slot == voice_slot:
-                continue
-            locked = peer_single_exclusive_tgid(
-                peer, alt_slot, sys_cfg, peer_id=peer_id, now=now,
-            )
-            if locked is not None:
-                break
     if locked is None or int(locked) != incoming:
         return False
     active = (peer_slots or {}).get(int(voice_slot))
@@ -1337,13 +1361,6 @@ def peer_wants_downlink_single_listen_lock(peer: dict[str, Any], sys_cfg: dict[s
         return False
     if not peer_single_mode(peer, sys_cfg):
         return False
-    return peer_static_options_tg_count(peer) <= 6
-
-
-def peer_hotspot_hard_slot_one_qso(peer: dict[str, Any] | None) -> bool:
-    """True when the one-QSO-per-RF-slot rule applies (normal hotspots, not lab witnesses)."""
-    if not isinstance(peer, dict):
-        return True
     return peer_static_options_tg_count(peer) <= 6
 
 
@@ -1378,15 +1395,34 @@ def peer_options_static_tg_slot(peer: dict[str, Any], tgid: int) -> int | None:
     return None
 
 
+def synthetic_group_dmrd_burst_packet(
+    slot: int,
+    tgid: int,
+    stream_id: bytes,
+    *,
+    frame_type: int = 0,
+    dtype_vseq: int = 0,
+    call_type: str = "group",
+) -> bytes:
+    """Minimal DMRD with burst header fields for slot-tracking helpers."""
+    bits = 0x80 if int(slot) == 2 else 0
+    if call_type == "vcsbk":
+        bits |= 0x23
+    else:
+        bits |= (int(frame_type) & 0x3) << 4
+        bits |= int(dtype_vseq) & 0xF
+    sid = bytes_4(int_id(stream_id)) if stream_id else b"\x00" * 4
+    return b"DMRD" + b"\x00" * 4 + bytes_3(tgid) + b"\x00" * 4 + bytes([bits]) + sid + b"\x00" * 34
+
+
 def synthetic_group_dmrd_route_packet(
     slot: int,
     tgid: int,
     stream_id: bytes | None = None,
 ) -> bytes:
     """Minimal DMRD for downlink/monitor gate lookup (slot, TG, optional stream)."""
-    bits = 0x80 if int(slot) == 2 else 0
-    sid = bytes_4(int_id(stream_id)) if stream_id else b"\x00" * 4
-    return b"DMRD" + b"\x00" * 4 + bytes_3(tgid) + b"\x00" * 4 + bytes([bits]) + sid + b"\x00" * 34
+    sid = stream_id if stream_id else b"\x00" * 4
+    return synthetic_group_dmrd_burst_packet(slot, tgid, sid)
 
 
 def peer_downlink_voice_slot(

@@ -41,6 +41,7 @@ from .helpers import (
     parse_dmrd_route_fields,
     peer_downlink_voice_slot,
     peer_is_simplex,
+    peer_options_static_tg_slot,
     peer_receives_group_tgid,
     peer_should_receive_group_voice,
     peer_single_exclusive_tgid,
@@ -113,12 +114,6 @@ def peer_listen_slots(peer: dict[str, Any], tgid: int) -> list[int]:
     if static is not None:
         return [static]
     return []
-
-
-def peer_options_static_tg_slot(peer: dict[str, Any], tgid: int) -> int | None:
-    from adn_server.application.routing.helpers import peer_options_static_tg_slot as _slot
-
-    return _slot(peer, tgid)
 
 
 def peer_accepts_group_downlink(
@@ -217,9 +212,11 @@ def peer_slot_blocks_downlink(
                             if not rx_listening:
                                 return True
             active = per_slot.get(int(listen_slot))
-            if not isinstance(active, dict) or active.get("stream_id") != stream_id:
-                return True
-            return False
+            if not isinstance(active, dict):
+                return False
+            if active.get("stream_id") == stream_id:
+                return False
+            return True
     if not ctx.per_peer_contention():
         return False
     hang = float(ctx.sys_cfg.get("GROUP_HANGTIME", 0) or 0)
@@ -357,15 +354,19 @@ def track_peer_group_dmrd(
     *,
     pkt_time: float | None = None,
     from_ingress: bool = False,
+    voice_slot: int | None = None,
 ) -> None:
     """Update per-hotspot slot state from downlink or ingress DMRD."""
     burst = parse_dmrd_burst_fields(packet)
     if burst is None:
         return
     wire_slot, frame_type, dtype_vseq, stream_id, dst_id, _call_type = burst
-    voice_slot = peer_downlink_voice_slot(
-        peer, wire_slot, int_id(dst_id), ctx.sys_cfg, peer_id=peer_id,
-    )
+    if voice_slot is None:
+        voice_slot = peer_downlink_voice_slot(
+            peer, wire_slot, int_id(dst_id), ctx.sys_cfg, peer_id=peer_id,
+        )
+    else:
+        voice_slot = int(voice_slot)
     if frame_type == HBPF_DATA_SYNC and dtype_vseq == HBPF_SLT_VTERM:
         if (
             not from_ingress
@@ -436,9 +437,23 @@ def track_peer_group_dmrd(
     )
 
 
-def build_dmra_route_packet(slot: int, tgid: int, stream_id: bytes | None = None) -> bytes:
-    """Synthetic DMRD for DMRA / monitor fan-out lookup."""
-    return synthetic_group_dmrd_route_packet(slot, tgid, stream_id)
+def peer_accepts_group_dmrd_packet(
+    ctx: DownlinkContext,
+    peer_id: bytes,
+    peer: dict[str, Any],
+    packet: bytes,
+    *,
+    routed: bool = False,
+) -> bool:
+    """True when group/vcsbk DMRD passes per-hotspot slot gate (OPTIONS checked separately)."""
+    if not ctx.per_peer_contention():
+        return True
+    route_pkt = (
+        packet
+        if routed
+        else remap_dmrd_for_peer(packet, peer, ctx.sys_cfg, peer_id=peer_id)
+    )
+    return not peer_slot_blocks_downlink(ctx, peer_id, peer, route_pkt)
 
 
 def peer_accepts_dmra(
@@ -451,7 +466,7 @@ def peer_accepts_dmra(
     peer = ctx.peers.get(peer_id)
     if not isinstance(peer, dict):
         return False
-    route_pkt = build_dmra_route_packet(slot, tgid)
+    route_pkt = synthetic_group_dmrd_route_packet(slot, tgid)
     if not peer_accepts_group_downlink(ctx, peer_id, peer, slot, tgid):
         return False
     remapped = remap_dmrd_for_peer(route_pkt, peer, ctx.sys_cfg, peer_id=peer_id)
@@ -477,7 +492,7 @@ def peer_would_show_group_voice_on_monitor(
         return False
     if ctx is None or not ctx.per_peer_contention():
         return True
-    route_pkt = build_dmra_route_packet(wire_slot, tgid, stream_id)
+    route_pkt = synthetic_group_dmrd_route_packet(wire_slot, tgid, stream_id)
     remapped = remap_dmrd_for_peer(route_pkt, peer, ctx.sys_cfg, peer_id=peer_id)
     return not peer_slot_blocks_downlink(ctx, peer_id, peer, remapped)
 

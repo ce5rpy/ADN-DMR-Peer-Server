@@ -41,11 +41,10 @@ from twisted.internet.protocol import DatagramProtocol
 from ...application.proxy.deployment import is_proxy_inject_only
 from ...application.routing.downlink import (
     DownlinkContext,
-    build_dmra_route_packet,
     iter_downlink_voice_slots,
     normalize_ua_voice_slot,
     peer_accepts_dmra,
-    peer_slot_blocks_downlink,
+    peer_accepts_group_dmrd_packet,
     remap_dmrd_for_peer,
     track_peer_group_dmrd,
 )
@@ -65,6 +64,8 @@ from ...application.routing.helpers import (
     register_peer_ua_session,
     resolve_voice_peer_id,
     seed_peer_ua_session_from_status,
+    synthetic_group_dmrd_route_packet,
+    synthetic_group_dmrd_burst_packet,
     tg4000_reset_on_vhead,
 )
 from ...application.routing.peer_downlink_index import (
@@ -619,24 +620,26 @@ class HBPProtocol(DatagramProtocol):
         peer = self._peers.get(peer_id)
         if peer is None:
             return
-        from ...application.routing.downlink import normalize_ua_voice_slot
-
-        voice_slot = normalize_ua_voice_slot(peer, wire_slot)
         ctx = self._downlink_ctx()
         if not ctx.per_peer_contention():
             return
-        if frame_type == HBPF_DATA_SYNC and dtype_vseq == HBPF_SLT_VTERM:
-            from ...application.routing.downlink import end_peer_voice_slot
-
-            end_peer_voice_slot(
-                ctx, peer_id, voice_slot, stream_id, dst_id, pkt_time=pkt_time,
-            )
-        else:
-            from ...application.routing.downlink import touch_peer_voice_slot
-
-            touch_peer_voice_slot(
-                ctx, peer_id, voice_slot, stream_id, dst_id, pkt_time=pkt_time, ingress=True,
-            )
+        packet = synthetic_group_dmrd_burst_packet(
+            wire_slot,
+            int_id(dst_id),
+            stream_id,
+            frame_type=frame_type,
+            dtype_vseq=dtype_vseq,
+            call_type=call_type,
+        )
+        track_peer_group_dmrd(
+            ctx,
+            peer_id,
+            packet,
+            peer,
+            pkt_time=pkt_time,
+            from_ingress=True,
+            voice_slot=normalize_ua_voice_slot(peer, wire_slot),
+        )
 
     def _peer_would_accept_group_dmrd(
         self,
@@ -651,15 +654,9 @@ class HBPProtocol(DatagramProtocol):
         peer = self._peers.get(peer_id)
         if peer is None:
             return True
-        ctx = self._downlink_ctx()
-        if not ctx.per_peer_contention():
-            return True
-        route_pkt = (
-            packet
-            if routed
-            else remap_dmrd_for_peer(packet, peer, self._config, peer_id=peer_id)
+        return peer_accepts_group_dmrd_packet(
+            self._downlink_ctx(), peer_id, peer, packet, routed=routed,
         )
-        return not peer_slot_blocks_downlink(ctx, peer_id, peer, route_pkt)
 
     def _downlink_drop_key(self, peer_id: bytes, route_pkt: bytes) -> tuple[bytes, bytes]:
         pk = bytes_4(int_id(peer_id))
@@ -844,7 +841,7 @@ class HBPProtocol(DatagramProtocol):
             return 0
         ctx = self._downlink_ctx()
 
-        route_pkt = build_dmra_route_packet(slot, tgid)
+        route_pkt = synthetic_group_dmrd_route_packet(slot, tgid)
         sent = 0
         for peer_id in self._iter_downlink_peers(route_pkt):
             if exclude_peer and peer_id == exclude_peer:
