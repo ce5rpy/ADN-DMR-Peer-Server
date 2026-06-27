@@ -360,37 +360,32 @@ def peer_hotspot_voice_slot_busy(
     if isinstance(active, dict):
         incoming_tgid = int_id(incoming_tgid_b)
         active_tgid = int(active.get("tgid", 0) or 0)
+        active_stream = active.get("stream_id")
+        active_time = float(active.get("time", 0) or 0)
+        age = pkt_time - active_time
         if active.get("ingress"):
             if (
-                isinstance(peer, dict)
+                age < STREAM_TO
+                and isinstance(peer, dict)
                 and sys_cfg is not None
                 and not peer_single_mode(peer, sys_cfg)
                 and active_tgid
                 and incoming_tgid != active_tgid
             ):
+                return False
+            return True
+        if stream_id and active_stream:
+            if active_stream == stream_id:
                 pass
+            elif active_tgid and active_tgid == incoming_tgid:
+                if age >= STREAM_TO:
+                    peer_slots.pop(int(voice_slot), None)
+                else:
+                    return True
+            elif active_tgid and incoming_tgid != active_tgid:
+                return True
             else:
                 return True
-        active_stream = active.get("stream_id")
-        if stream_id and active_stream and active_stream == stream_id:
-            pass
-        elif (
-            stream_id
-            and active_stream
-            and active_stream != stream_id
-            and active_tgid
-            and active_tgid == incoming_tgid
-            and (pkt_time - float(active.get("time", 0) or 0)) >= STREAM_TO
-        ):
-            peer_slots.pop(int(voice_slot), None)
-        elif (
-            isinstance(peer, dict)
-            and sys_cfg is not None
-            and not peer_single_mode(peer, sys_cfg)
-            and active_tgid
-            and incoming_tgid != active_tgid
-        ):
-            return False
         else:
             return True
     if isinstance(peer, dict) and peer_single_blocks_foreign_same_tg_downlink(

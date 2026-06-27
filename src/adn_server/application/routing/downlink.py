@@ -31,6 +31,7 @@ from adn_server.domain.hbp_protocol import STREAM_TO
 
 from .helpers import (
     SIMPLEX_VOICE_SLOT,
+    _peer_transmit_hangtime_blocks,
     _peer_ua_session_entry,
     clear_peer_ua_sessions,
     hbp_slot_blocks_group_voice_for_peer,
@@ -213,19 +214,31 @@ def peer_slot_blocks_downlink(
                                 return True
             active = per_slot.get(int(listen_slot))
             if not isinstance(active, dict):
+                for row in per_slot.values():
+                    if not isinstance(row, dict):
+                        continue
+                    if int(row.get("tgid", 0) or 0) == int_id(dst_id):
+                        return False
                 return False
             if active.get("stream_id") == stream_id:
+                return False
+            if int(active.get("tgid", 0) or 0) == int_id(dst_id):
                 return False
             return True
     if not ctx.per_peer_contention():
         return False
     hang = float(ctx.sys_cfg.get("GROUP_HANGTIME", 0) or 0)
     now = time.time() if pkt_time is None else float(pkt_time)
+    seed_hangtime_for_stale_ingress_voice_slots(ctx, peer_id, pkt_time=now)
+    incoming_tgid_b = bytes_3(tgid)
+    if hang > 0:
+        for hang_row in ctx.peer_voice_hangtime.get(pk, {}).values():
+            if _peer_transmit_hangtime_blocks(hang_row, incoming_tgid_b, now, hang):
+                return True
     peer_slots = ctx.peer_voice_slots.get(pk)
     voice_slots = peer_hangtime_voice_slots(
         peer, wire_slot, tgid, ctx.sys_cfg, peer_id=peer_id,
     )
-    incoming_tgid_b = bytes_3(tgid)
     for voice_slot in sorted(voice_slots):
         hang_row = ctx.peer_voice_hangtime.get(pk, {}).get(voice_slot)
         slot_st = ctx.status.get(voice_slot, {})
@@ -314,6 +327,34 @@ def touch_peer_voice_slot(
         ctx.peer_voice_hangtime.get(pk, {}).pop(int(voice_slot), None)
 
 
+def seed_hangtime_for_stale_ingress_voice_slots(
+    ctx: DownlinkContext,
+    peer_id: bytes,
+    *,
+    pkt_time: float | None = None,
+) -> None:
+    """Start GROUP_HANGTIME from last ingress burst when PTT ended before VTERM."""
+    hang = float(ctx.sys_cfg.get("GROUP_HANGTIME", 0) or 0)
+    if hang <= 0:
+        return
+    now = time.time() if pkt_time is None else float(pkt_time)
+    pk = bytes_4(int_id(peer_id))
+    per_slot = ctx.peer_voice_slots.get(pk)
+    if not isinstance(per_slot, dict):
+        return
+    peer_hang = ctx.peer_voice_hangtime.setdefault(pk, {})
+    for voice_slot, active in per_slot.items():
+        if not isinstance(active, dict) or not active.get("ingress"):
+            continue
+        active_time = float(active.get("time", 0) or 0)
+        if active_time <= 0 or (now - active_time) < STREAM_TO:
+            continue
+        ended_tg = int(active.get("tgid", 0) or 0)
+        if not ended_tg or int(voice_slot) in peer_hang:
+            continue
+        peer_hang[int(voice_slot)] = (ended_tg, active_time + STREAM_TO)
+
+
 def end_peer_voice_slot(
     ctx: DownlinkContext,
     peer_id: bytes,
@@ -328,20 +369,20 @@ def end_peer_voice_slot(
     now = time.time() if pkt_time is None else float(pkt_time)
     pk = bytes_4(int_id(peer_id))
     per_slot = ctx.peer_voice_slots.get(pk, {})
-    active = per_slot.get(int(voice_slot))
-    if isinstance(active, dict):
-        active_stream = active.get("stream_id")
-        if stream_id and active_stream and active_stream != stream_id:
-            active_time = float(active.get("time", 0) or 0)
-            if (now - active_time) < STREAM_TO:
-                return
+    ended_tg = int_id(tgid)
     active = per_slot.pop(int(voice_slot), None)
+    if active is None and ended_tg:
+        for vs, row in list(per_slot.items()):
+            if isinstance(row, dict) and int(row.get("tgid", 0) or 0) == ended_tg:
+                voice_slot = int(vs)
+                active = per_slot.pop(vs, None)
+                break
     if not apply_hangtime:
         return
     if isinstance(active, dict):
         ended_tg = int(active.get("tgid", 0) or 0)
-    else:
-        ended_tg = int_id(tgid)
+    elif not ended_tg:
+        return
     if ended_tg:
         apply_hangtime_after_vterm(ctx, peer_id, voice_slot, ended_tg, pkt_time=now)
 
@@ -380,10 +421,14 @@ def track_peer_group_dmrd(
                 locked = peer_single_exclusive_tgid(
                     peer, voice_slot, ctx.sys_cfg, peer_id=peer_id, now=pkt_time,
                 )
+                active_tg = int(active.get("tgid", 0) or 0)
+                entry = _peer_ua_session_entry(ctx.sys_cfg, peer_id, voice_slot)
+                listen_lock = isinstance(entry, dict) and entry.get("source") == "listen"
                 if locked is not None and locked == ended_tg:
-                    entry = _peer_ua_session_entry(ctx.sys_cfg, peer_id, voice_slot)
                     if not isinstance(entry, dict) or entry.get("source") != "local":
                         clear_peer_ua_sessions(peer, ctx.sys_cfg, peer_id, slot=voice_slot)
+                elif listen_lock and active_tg and active_tg == ended_tg:
+                    clear_peer_ua_sessions(peer, ctx.sys_cfg, peer_id, slot=voice_slot)
         end_peer_voice_slot(
             ctx,
             peer_id,

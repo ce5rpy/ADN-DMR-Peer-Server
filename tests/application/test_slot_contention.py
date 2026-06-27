@@ -456,9 +456,127 @@ def test_obp_bridge_tx_blocked_when_other_stream_session_active() -> None:
     peers = {hs: {"CONNECTION": "YES"}}
     assert peer_hotspot_voice_slot_busy(
         hs, 2, _STREAM_B, _TG_B, slot,
-        {2: {"stream_id": _STREAM_A, "tgid": 7305, "time": now - 5.0}},
+        {2: {"stream_id": _STREAM_A, "tgid": 7305, "time": now - 0.1}},
         None, now, 5.0, peers=peers,
     )
+
+
+def test_master_slot_alone_does_not_handoff_cross_tg_listen_lock() -> None:
+    """Cross-TG handoff requires VTERM — not MASTER STATUS (STREAM_TO gaps are not QSO end)."""
+    now = 1_000_000.0
+    hs = bytes_4(730039257)
+    peer = {
+        "OPTIONS": b"TS2=730500,730501,730502;SINGLE=1;TIMER=60;",
+    }
+    sys_cfg = {"SINGLE_MODE": False, "DEFAULT_UA_TIMER": 10, "GROUP_HANGTIME": 5.0}
+    slot = {
+        "RX_PEER": bytes_4(730039254),
+        "RX_TGID": bytes_3(730501),
+        "RX_STREAM_ID": _STREAM_B,
+        "RX_TIME": now,
+        "RX_TYPE": HBPF_SLT_VHEAD,
+    }
+    peer_slots = {
+        2: {
+            "stream_id": _STREAM_A,
+            "tgid": 730500,
+            "time": now - STREAM_TO - 1.0,
+            "ingress": False,
+        },
+    }
+    assert peer_hotspot_voice_slot_busy(
+        hs,
+        2,
+        _STREAM_B,
+        bytes_3(730501),
+        slot,
+        peer_slots,
+        None,
+        now,
+        5.0,
+        peer=peer,
+        sys_cfg=sys_cfg,
+    )
+    assert 2 in peer_slots
+
+
+def test_vterm_clears_listen_session_then_next_tg_downlink() -> None:
+    """Post-QSO handoff: VTERM for ended TG clears peer_voice_slots; next TG may RX."""
+    from adn_server.application.routing.downlink import (
+        DownlinkContext,
+        peer_slot_blocks_downlink,
+        touch_peer_voice_slot,
+        track_peer_group_dmrd,
+    )
+
+    sys_cfg = {"GROUP_HANGTIME": 5.0, "MODE": "MASTER", "MAX_PEERS": 8}
+    config = {"SYSTEMS": {"MASTER-A": sys_cfg}}
+    hs = bytes_4(730039257)
+    peer = {"OPTIONS": b"TS2=730500,730501;SINGLE=1;TIMER=60;"}
+    ctx = DownlinkContext(
+        config=config,
+        system_name="MASTER-A",
+        sys_cfg=sys_cfg,
+        peers={hs: peer},
+        status={1: {"RX_TYPE": HBPF_SLT_VTERM, "TX_TYPE": HBPF_SLT_VTERM}, 2: {"RX_TYPE": HBPF_SLT_VTERM, "TX_TYPE": HBPF_SLT_VTERM}},
+        connected_count=3,
+    )
+    now = 1_000_000.0
+    stream_a = bytes_4(0x11111111)
+    stream_b = bytes_4(0x22222222)
+    touch_peer_voice_slot(ctx, hs, 2, stream_a, bytes_3(730500), pkt_time=now)
+    vterm = b"".join([
+        b"DMRD", b"\x00", bytes_3(100), bytes_3(730500), b"\x00\x00\x00\x00",
+        bytes([0x80 | (HBPF_DATA_SYNC << 4) | HBPF_SLT_VTERM]),
+        stream_b,
+    ] + [b"\x00"] * 33)
+    assert not peer_slot_blocks_downlink(ctx, hs, peer, vterm, pkt_time=now + 8)
+    track_peer_group_dmrd(ctx, hs, vterm, peer, pkt_time=now + 8)
+    assert ctx.peer_voice_slots.get(hs, {}).get(2) is None
+    vhead501 = b"".join([
+        b"DMRD", b"\x00", bytes_3(730039254), bytes_3(730501), b"\x00\x00\x00\x00",
+        bytes([0x80 | (HBPF_DATA_SYNC << 4) | HBPF_SLT_VHEAD]),
+        stream_b,
+    ] + [b"\x00"] * 33)
+    assert not peer_slot_blocks_downlink(ctx, hs, peer, vhead501, pkt_time=now + 8.1)
+
+
+def test_overlap_blocks_handoff_while_first_tg_still_active_on_master() -> None:
+    """Concurrent QSOs: do not pop listen session while MASTER slot still carries the first TG."""
+    now = 1_000_000.0
+    hs = bytes_4(730039257)
+    slot = {
+        "TX_PEER": bytes_4(730039252),
+        "TX_TGID": bytes_3(730500),
+        "TX_STREAM_ID": _STREAM_A,
+        "TX_TIME": now,
+        "TX_TYPE": HBPF_SLT_VHEAD,
+        "RX_PEER": bytes_4(730039254),
+        "RX_TGID": bytes_3(730501),
+        "RX_STREAM_ID": _STREAM_B,
+        "RX_TIME": now,
+        "RX_TYPE": HBPF_SLT_VHEAD,
+    }
+    peer_slots = {
+        2: {
+            "stream_id": _STREAM_A,
+            "tgid": 730500,
+            "time": now - STREAM_TO - 0.5,
+            "ingress": False,
+        },
+    }
+    assert peer_hotspot_voice_slot_busy(
+        hs,
+        2,
+        _STREAM_B,
+        bytes_3(730501),
+        slot,
+        peer_slots,
+        None,
+        now,
+        5.0,
+    )
+    assert 2 in peer_slots
 
 
 def test_bridge_tx_peer_does_not_clear_hotspot_contention() -> None:
@@ -725,6 +843,54 @@ def test_stream_timeout_ends_active_busy() -> None:
     assert not slot_has_active_voice(slot, now)
 
 
+def test_ingress_vterm_via_track_sets_transmit_hangtime() -> None:
+    """Ingress VTERM after local TX must block another TG until GROUP_HANGTIME expires."""
+    from adn_server.application.routing.downlink import (
+        DownlinkContext,
+        peer_slot_blocks_downlink,
+        track_peer_group_dmrd,
+    )
+    from adn_server.domain import HBPF_DATA_SYNC, HBPF_SLT_VHEAD, HBPF_SLT_VTERM, bytes_3, bytes_4
+    from adn_server.domain.hbp_protocol import HBPF_VOICE
+
+    sys_cfg = {"GROUP_HANGTIME": 10.0, "MODE": "MASTER", "MAX_PEERS": 8}
+    config = {"PROXY": {"TARGET_SYSTEM": "MASTER-A"}, "SYSTEMS": {"MASTER-A": sys_cfg}}
+    peer_id = bytes_4(730039253)
+    peer = {"OPTIONS": b"TS2=730507,730508;SINGLE=0;"}
+    ctx = DownlinkContext(
+        config=config,
+        system_name="MASTER-A",
+        sys_cfg=sys_cfg,
+        peers={peer_id: peer},
+        status={1: {}, 2: {}},
+        connected_count=5,
+    )
+    now = 1_000_000.0
+    stream = bytes_4(0x11111111)
+    vhead = b"".join([
+        b"DMRD", b"\x00", bytes_3(100), bytes_3(730507), b"\x00\x00\x00\x00",
+        bytes([0x80 | (HBPF_DATA_SYNC << 4) | HBPF_SLT_VHEAD]), stream,
+    ] + [b"\x00"] * 33)
+    voice = b"".join([
+        b"DMRD", b"\x00", bytes_3(100), bytes_3(730507), b"\x00\x00\x00\x00",
+        bytes([0x80 | (HBPF_VOICE << 4)]), stream,
+    ] + [b"\x00"] * 33)
+    vterm = b"".join([
+        b"DMRD", b"\x00", bytes_3(100), bytes_3(730507), b"\x00\x00\x00\x00",
+        bytes([0x80 | (HBPF_DATA_SYNC << 4) | HBPF_SLT_VTERM]), stream,
+    ] + [b"\x00"] * 33)
+    track_peer_group_dmrd(ctx, peer_id, vhead, peer, pkt_time=now, from_ingress=True, voice_slot=2)
+    track_peer_group_dmrd(ctx, peer_id, voice, peer, pkt_time=now + 4, from_ingress=True, voice_slot=2)
+    track_peer_group_dmrd(ctx, peer_id, vterm, peer, pkt_time=now + 5, from_ingress=True, voice_slot=2)
+    assert ctx.peer_voice_hangtime[peer_id][2] == (730507, now + 5)
+    foreign = b"".join([
+        b"DMRD", b"\x00", bytes_3(100), bytes_3(730508), b"\x00\x00\x00\x00",
+        bytes([0x80 | (HBPF_DATA_SYNC << 4) | HBPF_SLT_VHEAD]), bytes_4(0x22222222),
+    ] + [b"\x00"] * 33)
+    assert peer_slot_blocks_downlink(ctx, peer_id, peer, foreign, pkt_time=now + 7)
+    assert not peer_slot_blocks_downlink(ctx, peer_id, peer, foreign, pkt_time=now + 16)
+
+
 def test_foreign_vterm_dropped_while_listening_other_tg() -> None:
     """VTERM for a stream never delivered must not reach the hotspot."""
     from adn_server.application.routing.downlink import (
@@ -755,6 +921,68 @@ def test_foreign_vterm_dropped_while_listening_other_tg() -> None:
         panama_stream,
     ] + [b"\x00"] * 33)
     assert peer_slot_blocks_downlink(ctx, hs, peer, panama_vterm, pkt_time=now + 0.5)
+
+
+def test_vterm_allowed_when_tgid_matches_active_on_other_voice_slot() -> None:
+    """Bridge stream handoff: VTERM for ended TG must clear listen session by TG."""
+    from adn_server.application.routing.downlink import (
+        DownlinkContext,
+        peer_slot_blocks_downlink,
+        touch_peer_voice_slot,
+    )
+
+    sys_cfg = {"GROUP_HANGTIME": 5.0, "MODE": "MASTER", "MAX_PEERS": 8}
+    config = {"PROXY": {"TARGET_SYSTEM": "MASTER-A"}, "SYSTEMS": {"MASTER-A": sys_cfg}}
+    hs = bytes_4(730039251)
+    peer = {"OPTIONS": b"TS1=730500;TS2=730501,730502,730503;SINGLE=1;TIMER=60;"}
+    ctx = DownlinkContext(
+        config=config,
+        system_name="MASTER-A",
+        sys_cfg=sys_cfg,
+        peers={hs: peer},
+        status={1: {"RX_TYPE": HBPF_SLT_VTERM, "TX_TYPE": HBPF_SLT_VTERM}, 2: {"RX_TYPE": HBPF_SLT_VTERM, "TX_TYPE": HBPF_SLT_VTERM}},
+        connected_count=3,
+    )
+    now = 1_000_000.0
+    listen_stream = bytes_4(0x11111111)
+    bridge_stream = bytes_4(0x22222222)
+    touch_peer_voice_slot(ctx, hs, 1, listen_stream, bytes_3(730500), pkt_time=now)
+    vterm = b"".join([
+        b"DMRD", b"\x00", bytes_3(100), bytes_3(730500), b"\x00\x00\x00\x00",
+        bytes([0x80 | (HBPF_DATA_SYNC << 4) | HBPF_SLT_VTERM]),
+        bridge_stream,
+    ] + [b"\x00"] * 33)
+    assert not peer_slot_blocks_downlink(ctx, hs, peer, vterm, pkt_time=now + 8)
+
+
+def test_non_ingress_active_does_not_allow_cross_tg_single0() -> None:
+    """Downlink listen session (non-ingress) must not bypass one-QSO slot rule."""
+    now = 1_000_000.0
+    hs = bytes_4(730039253)
+    peer = {"OPTIONS": b"TS2=730507,730508;SINGLE=0;"}
+    sys_cfg = {"SINGLE_MODE": False, "DEFAULT_UA_TIMER": 10}
+    slot = {"RX_TYPE": HBPF_SLT_VTERM, "TX_TYPE": HBPF_SLT_VTERM}
+    peer_slots = {
+        2: {
+            "stream_id": bytes_4(0x11111111),
+            "tgid": 730507,
+            "time": now,
+            "ingress": False,
+        },
+    }
+    assert peer_hotspot_voice_slot_busy(
+        hs,
+        2,
+        bytes_4(0x22222222),
+        bytes_3(730508),
+        slot,
+        peer_slots,
+        None,
+        now + 0.1,
+        0.0,
+        peer=peer,
+        sys_cfg=sys_cfg,
+    )
 
 
 def test_global_slot_blocks_foreign_vterm_during_active_rx() -> None:

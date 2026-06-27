@@ -64,8 +64,8 @@ from ...application.routing.helpers import (
     register_peer_ua_session,
     resolve_voice_peer_id,
     seed_peer_ua_session_from_status,
-    synthetic_group_dmrd_route_packet,
     synthetic_group_dmrd_burst_packet,
+    synthetic_group_dmrd_route_packet,
     tg4000_reset_on_vhead,
 )
 from ...application.routing.peer_downlink_index import (
