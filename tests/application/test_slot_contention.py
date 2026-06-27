@@ -169,6 +169,44 @@ def test_group_voice_tg_collision_rejects_obp_while_hbp_active() -> None:
     )
 
 
+def test_group_voice_tg_collision_rejects_fresh_obp_stream() -> None:
+    """Active OBP leg with recent packets must block a new HBP stream on the same TG."""
+    now = 1_000_000.0
+    obp_stream = bytes_4(0x3E7A0F77)
+    obp_status = {
+        obp_stream: {
+            "TGID": bytes_3(730500),
+            "START": now - 5.0,
+            "LAST": now - 0.1,
+            "RFS": bytes_3(730039266),
+        },
+    }
+    protocols = {"OBP": type("P", (), {"STATUS": obp_status})()}
+    systems = {"OBP": {"MODE": "OPENBRIDGE"}}
+    assert group_voice_tg_ingress_collision(
+        protocols, systems, bytes_3(730500), _STREAM_B, bytes_3(730039256), now,
+    )
+
+
+def test_group_voice_tg_collision_ignores_stale_obp_stream() -> None:
+    """Truncated OBP leg with no recent packets must not block new ingress."""
+    now = 1_000_000.0
+    obp_stream = bytes_4(0x3E7A0F77)
+    obp_status = {
+        obp_stream: {
+            "TGID": bytes_3(730500),
+            "START": now - 60.0,
+            "LAST": now - 45.0,
+            "RFS": bytes_3(730039266),
+        },
+    }
+    protocols = {"OBP": type("P", (), {"STATUS": obp_status})()}
+    systems = {"OBP": {"MODE": "OPENBRIDGE"}}
+    assert not group_voice_tg_ingress_collision(
+        protocols, systems, bytes_3(730500), _STREAM_B, bytes_3(730039256), now,
+    )
+
+
 def test_group_voice_tg_collision_across_hbp_slots() -> None:
     """Active TG on slot 1 must block a new stream on slot 2 (dual-slot OBP peers)."""
     now = 1_000_000.0

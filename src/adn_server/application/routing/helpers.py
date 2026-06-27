@@ -583,6 +583,9 @@ def _obp_stream_active(st: dict[str, Any], pkt_time: float) -> bool:
     start = float(st.get("START", 0) or 0)
     if start <= 0 or start + 180 < pkt_time:
         return False
+    last = float(st.get("LAST", start) or start)
+    if (pkt_time - last) >= STREAM_TO:
+        return False
     return True
 
 
