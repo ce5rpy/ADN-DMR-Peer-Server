@@ -51,7 +51,13 @@ def test_hbp_source_timeout_drops_after_180_seconds() -> None:
     assert scenario.protocols["MASTER-A"].STATUS[2].get("LOOPLOG") is True
 
 
-def test_hbp_stream_collision_drops_conflicting_new_stream() -> None:
+def test_hbp_stream_collision_silent_activation_on_busy_tg() -> None:
+    """Spec §3 divergence: TX onto a TG with an active QSO is not rejected.
+
+    The stream passes the ingress gate (silent activation), but uplink audio is
+    suppressed — no forwarding to other systems. The downlink of the active QSO
+    continues to reach the peer independently.
+    """
     bridges = active_routing_table(91, (("MASTER-A", 2), ("MASTER-B", 2)))
     scenario = DeterministicScenario(routing_table=bridges)
     t0 = scenario.clock.time()
@@ -74,8 +80,11 @@ def test_hbp_stream_collision_drops_conflicting_new_stream() -> None:
         ingress_pkt_time=t0 + 0.1,
     )
 
-    assert not ok
+    assert_inject_ok(ok)
+    # Uplink is suppressed: no packets forwarded to MASTER-B
     assert len(scenario.capture.for_system("MASTER-B")) == 0
+    # Silent activation marker is set on the source slot
+    assert scenario.protocols["MASTER-A"].STATUS[2].get("_suppress_uplink") is True
 
 
 @pytest.mark.behavior

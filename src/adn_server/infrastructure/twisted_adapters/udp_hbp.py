@@ -1216,6 +1216,11 @@ class HBPProtocol(DatagramProtocol):
                         pkt_time,
                         protocols=_protocols,
                         systems_cfg=self._CONFIG.get("SYSTEMS", {}),
+                        is_vterm=(
+                            _frame_type == HBPF_DATA_SYNC
+                            and _dtype_vseq == HBPF_SLT_VTERM
+                        ),
+                        system_cfg=self._config,
                     )
                 )
                 if (
@@ -1282,22 +1287,31 @@ class HBPProtocol(DatagramProtocol):
                     )
                 if _accepted:
                     if _slot in self.STATUS and not _unit_data:
+                        _suppress = self.STATUS[_slot].get("_suppress_uplink")
                         if _stream_id != self.STATUS[_slot].get("RX_STREAM_ID"):
-                            self.STATUS[_slot]["RX_START"] = pkt_time
+                            if not _suppress:
+                                self.STATUS[_slot]["RX_START"] = pkt_time
                             if _frame_type == HBPF_DATA_SYNC and _dtype_vseq == HBPF_SLT_VHEAD and len(dmrpkt) >= 33:
                                 try:
                                     decoded_slot = decode.voice_head_term(dmrpkt)
-                                    self.STATUS[_slot]["RX_LC"] = decoded_slot["LC"]
+                                    if not _suppress:
+                                        self.STATUS[_slot]["RX_LC"] = decoded_slot["LC"]
                                 except Exception:
-                                    self.STATUS[_slot]["RX_LC"] = LC_OPT + _dst_id + _rf_src
+                                    if not _suppress:
+                                        self.STATUS[_slot]["RX_LC"] = LC_OPT + _dst_id + _rf_src
                             else:
-                                self.STATUS[_slot]["RX_LC"] = LC_OPT + _dst_id + _rf_src
-                        self.STATUS[_slot]["RX_PEER"] = _peer_id
-                        self.STATUS[_slot]["RX_SEQ"] = _seq
-                        self.STATUS[_slot]["RX_RFS"] = _rf_src
-                        self.STATUS[_slot]["RX_TYPE"] = _dtype_vseq
-                        self.STATUS[_slot]["RX_TGID"] = _dst_id
-                        self.STATUS[_slot]["RX_TIME"] = pkt_time
+                                if not _suppress:
+                                    self.STATUS[_slot]["RX_LC"] = LC_OPT + _dst_id + _rf_src
+                        if not _suppress:
+                            self.STATUS[_slot]["RX_PEER"] = _peer_id
+                            self.STATUS[_slot]["RX_SEQ"] = _seq
+                            self.STATUS[_slot]["RX_RFS"] = _rf_src
+                            self.STATUS[_slot]["RX_TYPE"] = _dtype_vseq
+                            self.STATUS[_slot]["RX_TGID"] = _dst_id
+                            self.STATUS[_slot]["RX_TIME"] = pkt_time
+                        # Always track RX_STREAM_ID so subsequent frames of a suppressed
+                        # stream are not re-evaluated as a new stream (which would clear
+                        # _suppress_uplink and leak the uplink to the network).
                         self.STATUS[_slot]["RX_STREAM_ID"] = _stream_id
                 _voice = self._CONFIG.get("VOICE", {})
                 if _accepted and self._on_handle_recording and _voice.get("RECORDING_ENABLED") and int_id(_dst_id) == _voice.get("RECORDING_TG") and _slot == _voice.get("RECORDING_TIMESLOT", 2):
@@ -1329,9 +1343,20 @@ class HBPProtocol(DatagramProtocol):
                     and _call_type in ("group", "vcsbk")
                     and _frame_type == HBPF_DATA_SYNC
                     and _dtype_vseq == HBPF_SLT_VTERM
+                    and _slot in self.STATUS
                     and self._on_talker_alias_stream_end
                 ):
                     self._on_talker_alias_stream_end(self._system, _stream_id)
+                # Clean up silent-activation markers when the suppressed stream ends.
+                if (
+                    _accepted
+                    and _call_type in ("group", "vcsbk")
+                    and _frame_type == HBPF_DATA_SYNC
+                    and _dtype_vseq == HBPF_SLT_VTERM
+                    and _slot in self.STATUS
+                ):
+                    self.STATUS[_slot].pop("_suppress_uplink", None)
+                    self.STATUS[_slot].pop("_silent_activation_tg", None)
 
         elif _command == RPTL:
             _peer_id = _data[4:8]
@@ -1723,15 +1748,28 @@ class HBPProtocol(DatagramProtocol):
                 ):
                     self._on_in_band_signalling(self._system, _slot, _dst_id, pkt_time)
                 if _slot in self.STATUS and not _unit_data:
-                    if _stream_id != self.STATUS[_slot].get("RX_STREAM_ID"):
+                    _suppress = self.STATUS[_slot].get("_suppress_uplink")
+                    if _stream_id != self.STATUS[_slot].get("RX_STREAM_ID") and not _suppress:
                         self.STATUS[_slot]["RX_START"] = pkt_time
-                    self.STATUS[_slot]["RX_PEER"] = _peer_id
-                    self.STATUS[_slot]["RX_SEQ"] = _seq
-                    self.STATUS[_slot]["RX_RFS"] = _rf_src
-                    self.STATUS[_slot]["RX_TYPE"] = _dtype_vseq
-                    self.STATUS[_slot]["RX_TGID"] = _dst_id
-                    self.STATUS[_slot]["RX_TIME"] = pkt_time
+                    if not _suppress:
+                        self.STATUS[_slot]["RX_PEER"] = _peer_id
+                        self.STATUS[_slot]["RX_SEQ"] = _seq
+                        self.STATUS[_slot]["RX_RFS"] = _rf_src
+                        self.STATUS[_slot]["RX_TYPE"] = _dtype_vseq
+                        self.STATUS[_slot]["RX_TGID"] = _dst_id
+                        self.STATUS[_slot]["RX_TIME"] = pkt_time
+                    # Always track RX_STREAM_ID so subsequent frames of a suppressed
+                    # stream are not re-evaluated as a new stream (leak of uplink).
                     self.STATUS[_slot]["RX_STREAM_ID"] = _stream_id
+                # Clean up silent-activation markers when the suppressed stream ends.
+                if (
+                    _call_type in ("group", "vcsbk")
+                    and _frame_type == HBPF_DATA_SYNC
+                    and _dtype_vseq == HBPF_SLT_VTERM
+                    and _slot in self.STATUS
+                ):
+                    self.STATUS[_slot].pop("_suppress_uplink", None)
+                    self.STATUS[_slot].pop("_silent_activation_tg", None)
 
         elif _command == DMRA:
             if len(_data) >= DMRA_PACKET_LEN:

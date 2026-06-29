@@ -46,6 +46,7 @@ from .helpers import (
     peer_receives_group_tgid,
     peer_should_receive_group_voice,
     peer_single_exclusive_tgid,
+    peer_single_mode,
     peer_wants_downlink_single_listen_lock,
     register_peer_ua_session,
     remap_dmrd_to_peer_static_slot,
@@ -320,6 +321,8 @@ def touch_peer_voice_slot(
         "time": float(now),
     }
     prev = ctx.peer_voice_slots.get(pk, {}).get(int(voice_slot))
+    if not ingress and isinstance(prev, dict) and prev.get("ingress"):
+        return
     if ingress or (isinstance(prev, dict) and prev.get("ingress")):
         row["ingress"] = True
     ctx.peer_voice_slots.setdefault(pk, {})[int(voice_slot)] = row
@@ -364,6 +367,7 @@ def end_peer_voice_slot(
     *,
     pkt_time: float | None = None,
     apply_hangtime: bool = True,
+    from_ingress: bool = False,
 ) -> None:
     """Close session on VTERM; ingress VTERM may start GROUP_HANGTIME window."""
     now = time.time() if pkt_time is None else float(pkt_time)
@@ -377,14 +381,49 @@ def end_peer_voice_slot(
                 voice_slot = int(vs)
                 active = per_slot.pop(vs, None)
                 break
+    peer = ctx.peers.get(peer_id) or ctx.peers.get(pk)
+    if (
+        isinstance(peer, dict)
+        and ended_tg
+        and ctx.sys_cfg is not None
+        and not peer_single_mode(peer, ctx.sys_cfg)
+        and ctx.subscription_store is not None
+        and ctx.system_name
+    ):
+        from adn_server.application.subscription.subscription_queries import (
+            system_has_active_leg_in_store,
+        )
+
+        voice_ended = isinstance(active, dict) and (
+            active.get("stream_id") or active.get("ingress")
+        )
+        if voice_ended and system_has_active_leg_in_store(
+            ctx.subscription_store,
+            ctx.system_name,
+            int(voice_slot),
+            int(ended_tg),
+        ):
+            per_slot[int(voice_slot)] = {
+                "stream_id": b"",
+                "tgid": int(ended_tg),
+                "time": float(now),
+                "bridge_hold": True,
+                "bridge_hold_ingress": bool(from_ingress),
+            }
+            ctx.peer_voice_slots.setdefault(pk, {})[int(voice_slot)] = per_slot[int(voice_slot)]
+            return
     if not apply_hangtime:
         return
     if isinstance(active, dict):
-        ended_tg = int(active.get("tgid", 0) or 0)
-    elif not ended_tg:
+        active_tg = int(active.get("tgid", 0) or 0)
+        # Only seed hangtime when the VTERM TG matches the session TG. A VTERM for a
+        # different TG (e.g. foreign stream that this peer never heard) must not seed
+        # hangtime from an unrelated active/bridge_hold session.
+        if active_tg and active_tg == ended_tg:
+            apply_hangtime_after_vterm(ctx, peer_id, voice_slot, active_tg, pkt_time=now)
         return
-    if ended_tg:
-        apply_hangtime_after_vterm(ctx, peer_id, voice_slot, ended_tg, pkt_time=now)
+    # No active session for this peer: VTERM for a stream it never received — do not
+    # seed GROUP_HANGTIME (would block a fresh PTT on a different TG).
 
 
 def track_peer_group_dmrd(
@@ -429,6 +468,10 @@ def track_peer_group_dmrd(
                         clear_peer_ua_sessions(peer, ctx.sys_cfg, peer_id, slot=voice_slot)
                 elif listen_lock and active_tg and active_tg == ended_tg:
                     clear_peer_ua_sessions(peer, ctx.sys_cfg, peer_id, slot=voice_slot)
+        pk = bytes_4(int_id(peer_id))
+        apply_hangtime = from_ingress
+        if not from_ingress and not peer_single_mode(peer, ctx.sys_cfg):
+            apply_hangtime = True
         end_peer_voice_slot(
             ctx,
             peer_id,
@@ -436,7 +479,8 @@ def track_peer_group_dmrd(
             stream_id,
             dst_id,
             pkt_time=pkt_time,
-            apply_hangtime=from_ingress,
+            apply_hangtime=apply_hangtime,
+            from_ingress=from_ingress,
         )
         return
     if (
@@ -506,6 +550,8 @@ def peer_accepts_dmra(
     peer_id: bytes,
     slot: int,
     tgid: int,
+    *,
+    pkt_time: float | None = None,
 ) -> bool:
     """P1: DMRA uses same accept + slot-busy rules as DMRD."""
     peer = ctx.peers.get(peer_id)
@@ -515,7 +561,9 @@ def peer_accepts_dmra(
     if not peer_accepts_group_downlink(ctx, peer_id, peer, slot, tgid):
         return False
     remapped = remap_dmrd_for_peer(route_pkt, peer, ctx.sys_cfg, peer_id=peer_id)
-    return not peer_slot_blocks_downlink(ctx, peer_id, peer, remapped)
+    return not peer_slot_blocks_downlink(
+        ctx, peer_id, peer, remapped, pkt_time=pkt_time,
+    )
 
 
 def peer_would_show_group_voice_on_monitor(

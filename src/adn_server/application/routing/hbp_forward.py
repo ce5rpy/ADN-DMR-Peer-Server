@@ -52,6 +52,7 @@ from .helpers import (
     hbp_ingress_downlink_session_blocks_tx,
     hbp_ingress_new_stream_collision,
     master_per_peer_slot_contention,
+    tg_has_active_conversation,
 )
 from .peer_downlink_index import count_connected_peers
 
@@ -143,6 +144,8 @@ class HbpForwardMixin:
         _slot_st = getattr(src_proto, "STATUS", {}).get(slot, {})
         _is_new_stream = stream_id != _slot_st.get("RX_STREAM_ID")
         if _is_new_stream:
+            _slot_st.pop("_suppress_uplink", None)
+            _slot_st.pop("_silent_activation_tg", None)
             sys_cfg = systems_cfg.get(system_name, {})
             peers = getattr(src_proto, "_peers", None) or sys_cfg.get("PEERS", {})
             connected = count_connected_peers(peers) if isinstance(peers, dict) else 0
@@ -163,14 +166,29 @@ class HbpForwardMixin:
             if group_voice_tg_ingress_collision(
                 protocols, systems_cfg, dst_id, stream_id, rf_src, pkt_time,
             ):
-                self._log_ingress_warning_once(
-                    self._ingress_drop_key(
-                        "tg_busy", system_name, peer_id, dst_id, stream_id,
-                    ),
-                    "(%s) TG %s busy — dropping stream %s from peer %s",
-                    system_name, int_id(dst_id), int_id(stream_id), int_id(peer_id),
-                )
-                return False
+                # TX onto a TG with an active (in-progress) QSO is not rejected.
+                # The TG is activated dynamically, the user's uplink audio is suppressed
+                # (not forwarded to the network), and the downlink of the active QSO is
+                # delivered to the user. Only a TG that is merely in GROUP_HANGTIME
+                # (no live stream) is rejected as busy (legacy parity).
+                if tg_has_active_conversation(
+                    protocols, systems_cfg, dst_id, stream_id, rf_src, pkt_time,
+                ):
+                    logger.info(
+                        "(%s) TG %s has active QSO — activating dynamic TG silently for peer %s (uplink suppressed)",
+                        system_name, int_id(dst_id), int_id(peer_id),
+                    )
+                    _slot_st["_suppress_uplink"] = True
+                    _slot_st["_silent_activation_tg"] = int_id(dst_id)
+                else:
+                    self._log_ingress_warning_once(
+                        self._ingress_drop_key(
+                            "tg_busy", system_name, peer_id, dst_id, stream_id,
+                        ),
+                        "(%s) TG %s busy — dropping stream %s from peer %s",
+                        system_name, int_id(dst_id), int_id(stream_id), int_id(peer_id),
+                    )
+                    return False
             from .downlink import normalize_ua_voice_slot
 
             peer = peers.get(peer_id) if isinstance(peers, dict) else None

@@ -52,6 +52,11 @@ from ...domain.hbp_protocol import HBPF_SLT_VTERM, STREAM_TO
 PeerVoiceSlotRow = dict[str, Any]
 PeerVoiceSlotMap = dict[int, PeerVoiceSlotRow]
 
+# A per-peer downlink voice session with no frames for this long is considered
+# dead (VTERM lost or stream abandoned). Matches the legacy bridge_master idle
+# loop threshold (bridge_master.py ~607: RX_TIME < now - 5).
+_STALE_PEER_SESSION_TIMEOUT = 5.0
+
 RF_MODE_SIMPLEX = "simplex"
 RF_MODE_DUPLEX = "duplex"
 # MMDVMHost DMO: downlink DMRD with TS1 bit set is dropped; only TS2 passes (DMRNetwork.cpp).
@@ -347,9 +352,14 @@ def peer_hotspot_voice_slot_busy(
 ) -> bool:
     """True when this hotspot must not receive another group stream on ``voice_slot``.
 
-    Hard rule (SINGLE=0 and SINGLE=1): at most one group QSO per RF slot per hotspot.
-    A second TG or stream is dropped until VTERM clears ``peer_voice_slots`` (and
-    GROUP_HANGTIME where applicable). Same ``stream_id`` continues one call leg.
+    Hard rules (SINGLE=0 and SINGLE=1):
+
+    - **Transmitting** (``ingress``): drop every downlink byte until VTERM clears the slot.
+    - **Listening** on TG *T*: drop every byte for TG *U* ≠ *T* on this RF slot (no hangtime
+      exception for another OPTIONS/UA TG).
+    - **Bridge hold**: while an ACTIVE bridge leg keeps *T* on the slot, foreign legs on
+      *U* ≠ *T* stay dropped (OBP or HBP).
+    - Same ``stream_id`` on the same TG continues one call leg.
     """
     pk = bytes_4(int_id(peer_id))
     if peer is None and peers is not None:
@@ -364,17 +374,18 @@ def peer_hotspot_voice_slot_busy(
         active_time = float(active.get("time", 0) or 0)
         age = pkt_time - active_time
         if active.get("ingress"):
-            if (
-                age < STREAM_TO
-                and isinstance(peer, dict)
-                and sys_cfg is not None
-                and not peer_single_mode(peer, sys_cfg)
-                and active_tgid
-                and incoming_tgid != active_tgid
-            ):
-                return False
             return True
-        if stream_id and active_stream:
+        if active.get("bridge_hold") and active_tgid and incoming_tgid != active_tgid:
+            # Bridge hold (ingress from own TX or listener) blocks a foreign TG only for
+            # GROUP_HANGTIME, matching legacy bridge_master contention on TX_TIME/RX_TIME.
+            if age <= group_hangtime:
+                return True
+            peer_slots.pop(int(voice_slot), None)
+            active = None
+        if isinstance(active, dict) and active_time > 0 and age >= _STALE_PEER_SESSION_TIMEOUT:
+            peer_slots.pop(int(voice_slot), None)
+            active = None
+        if isinstance(active, dict) and stream_id and active_stream:
             if active_stream == stream_id:
                 pass
             elif active_tgid and active_tgid == incoming_tgid:
@@ -386,8 +397,11 @@ def peer_hotspot_voice_slot_busy(
                 return True
             else:
                 return True
-        else:
-            return True
+        elif isinstance(active, dict):
+            if active_tgid and active_tgid == incoming_tgid:
+                pass
+            else:
+                return True
     if isinstance(peer, dict) and peer_single_blocks_foreign_same_tg_downlink(
         peer, pk, voice_slot, incoming_tgid_b, peer_slots, sys_cfg, now=pkt_time,
     ):
@@ -396,11 +410,6 @@ def peer_hotspot_voice_slot_busy(
         peer, pk, incoming_tgid_b, stream_id, slot_st, sys_cfg, pkt_time=pkt_time,
     ):
         return True
-    if stream_id and stream_id == slot_st.get("TX_STREAM_ID"):
-        tx_peer = slot_st.get("TX_PEER")
-        if tx_peer is not None and int_id(tx_peer) != 0:
-            if peers is None or not peer_key_in_peers(tx_peer, peers):
-                return False
     if bytes_4(int_id(slot_st.get("RX_PEER", b""))) == pk:
         if slot_has_active_voice(slot_st, pkt_time) and stream_id != slot_st.get("RX_STREAM_ID"):
             return True
@@ -530,17 +539,25 @@ def hbp_ingress_new_stream_collision(
 ) -> bool:
     """True when a new group-voice stream must drop on ingress (legacy routerHBP).
 
-    MASTER ``STATUS[slot]`` is shared: only one live stream per wire timeslot.
-    Same-subscriber rekey with a new stream id is allowed. ``per_peer`` applies
-    to downlink slot gates only, not ingress collision (legacy bridge_master).
+    When ``per_peer`` is False the MASTER ``STATUS[slot]`` is treated as a shared
+    RF slot: only one live stream per wire timeslot (legacy bridge_master).
+
+    When ``per_peer`` is True the MASTER fronts multiple hotspots, each on its
+    own frequency, so concurrent streams to different TGs on the same slot are
+    legitimate. Per-hotspot contention (one listen TG per peer/slot) is enforced
+    at downlink time by ``peer_hotspot_voice_slot_busy``; it must not be applied
+    here on ingress, otherwise a second hotspot is silenced by the first.
+    Same-subscriber rekey with a new stream id is always allowed.
     """
-    del per_peer, peer_id
     from ...domain.hbp_protocol import HBPF_SLT_VTERM, STREAM_TO
 
     if stream_id and stream_id == slot_st.get("RX_STREAM_ID"):
         return False
     if stream_id and stream_id == slot_st.get("TX_STREAM_ID"):
         return False
+    if per_peer:
+        return False
+    del peer_id
     for leg in ("RX", "TX"):
         type_key = f"{leg}_TYPE"
         time_key = f"{leg}_TIME"
@@ -587,6 +604,65 @@ def _obp_stream_active(st: dict[str, Any], pkt_time: float) -> bool:
     if (pkt_time - last) >= STREAM_TO:
         return False
     return True
+
+
+def tg_has_active_conversation(
+    protocols: dict[str, Any],
+    systems_cfg: dict[str, Any],
+    tgid_b: bytes,
+    stream_id: bytes,
+    rf_src: bytes,
+    pkt_time: float,
+) -> bool:
+    """True when TG *tgid_b* has an active (in-progress) voice conversation.
+
+    Distinct from ``group_voice_tg_ingress_collision``: that helper also matches a TG
+    that is merely in ``GROUP_HANGTIME`` (idle but recent). This one only matches a TG
+    with a live stream (within ``STREAM_TO`` of the last frame), so the ingress gate
+    can activate the TG silently (no uplink, deliver downlink of the active QSO)
+    instead of rejecting the stream.
+    """
+    tgid = int_id(tgid_b)
+    if tgid < 5 or tgid in (9, 4000, 5000):
+        return False
+    for sys_name, proto in protocols.items():
+        mode = systems_cfg.get(sys_name, {}).get("MODE")
+        status = getattr(proto, "STATUS", None)
+        if not isinstance(status, dict):
+            continue
+        if mode in ("MASTER", "PEER"):
+            for slot_key in (1, 2):
+                slot_st = status.get(slot_key)
+                if not isinstance(slot_st, dict):
+                    continue
+                if not slot_has_active_voice(slot_st, pkt_time):
+                    continue
+                active_tg = _hbp_slot_active_tgid(slot_st, pkt_time)
+                if active_tg is None or int_id(active_tg) != tgid:
+                    continue
+                leg_stream = slot_st.get("RX_STREAM_ID") or slot_st.get("TX_STREAM_ID")
+                leg_rfs = slot_st.get("RX_RFS") or slot_st.get("TX_RFS") or b"\x00\x00\x00"
+                if stream_id and leg_stream == stream_id:
+                    continue
+                if _same_rf_source(rf_src, leg_rfs):
+                    continue
+                return True
+        elif mode == "OPENBRIDGE":
+            for key, st in status.items():
+                if isinstance(key, int) or not isinstance(st, dict):
+                    continue
+                if "TGID" not in st or int_id(st.get("TGID", b"")) != tgid:
+                    continue
+                if not _obp_stream_active(st, pkt_time):
+                    continue
+                leg_stream = key if isinstance(key, (bytes, bytearray)) else b""
+                leg_rfs = st.get("RFS", b"\x00\x00\x00")
+                if stream_id and leg_stream == stream_id:
+                    continue
+                if _same_rf_source(rf_src, leg_rfs):
+                    continue
+                return True
+    return False
 
 
 def group_voice_tg_ingress_collision(
@@ -663,8 +739,18 @@ def hbp_master_ingress_repeat_allowed(
     *,
     protocols: dict[str, Any] | None = None,
     systems_cfg: dict[str, Any] | None = None,
+    is_vterm: bool = False,
+    system_cfg: dict[str, Any] | None = None,
 ) -> bool:
-    """True when MASTER REPEAT may fan this ingress packet to other peers."""
+    """True when MASTER REPEAT may fan this ingress packet to other peers.
+
+    In a multi-hotspot MASTER, concurrent streams from different peers to
+    different TGs on the same wire timeslot are legitimate: each hotspot is
+    on its own RF frequency. Contention is enforced per-peer at downlink
+    time (``peer_slot_blocks_downlink``). Applying a global shared-slot gate
+    here would drop voice packets of an active stream whenever a second
+    stream updates ``RX_STREAM_ID``, causing audible gaps on the first call.
+    """
     if stream_id and stream_id == slot_st.get("RX_STREAM_ID"):
         owner = slot_st.get("RX_PEER")
         return (
@@ -672,8 +758,16 @@ def hbp_master_ingress_repeat_allowed(
             and int_id(owner) != 0
             and bytes_4(int_id(owner)) == bytes_4(int_id(peer_id))
         )
+    # A VTERM closes an existing stream; it must reach peers that were hearing
+    # that stream even when another stream is now active on the shared slot
+    # (multi-hotspot MASTER). Blocking it leaves per-peer sessions open forever.
+    if is_vterm:
+        return True
+    per_peer = bool(system_cfg and master_per_peer_slot_contention(
+        systems_cfg or {}, "", system_cfg, connected_count=0,
+    ))
     if hbp_ingress_new_stream_collision(
-        slot_st, peer_id, rf_src, stream_id, pkt_time, per_peer=False,
+        slot_st, peer_id, rf_src, stream_id, pkt_time, per_peer=per_peer,
     ):
         return False
     if protocols and systems_cfg and group_voice_tg_ingress_collision(
@@ -1321,19 +1415,22 @@ def peer_single_blocks_group_voice(
 ) -> bool:
     """True when SINGLE=1 peer must not receive downlink for ``tgid``.
 
-    With an active session on TG X, every other TG (static or dynamic) is blocked
-    until the TIMER expires or a new local TX replaces the session.
+    With an active SINGLE session on TG *X* in the peer's RF listen slot for
+    *tgid*, every other TG on **that same RF slot** is blocked until the TIMER
+    expires or a new local TX replaces the session.
+
+    Duplex hotspots have independent RF timeslots: a listen lock on TS1 must not
+    block a static TG on TS2 (and vice versa). Simplex hotspots always collapse
+    to ``SIMPLEX_VOICE_SLOT``, so both TGs share the same RF slot and blocking
+    still applies.
     """
-    del slot
     if not sys_cfg:
         return False
-    for voice_slot in (1, 2):
-        locked = peer_single_exclusive_tgid(
-            peer, voice_slot, sys_cfg, peer_id=peer_id, now=now,
-        )
-        if locked is not None and int(tgid) != locked:
-            return True
-    return False
+    voice_slot = peer_downlink_voice_slot(peer, int(slot), int(tgid), sys_cfg, peer_id=peer_id)
+    locked = peer_single_exclusive_tgid(
+        peer, voice_slot, sys_cfg, peer_id=peer_id, now=now,
+    )
+    return locked is not None and int(tgid) != locked
 
 
 def peer_single_blocks_foreign_same_tg_downlink(

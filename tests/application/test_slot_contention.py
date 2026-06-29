@@ -16,6 +16,7 @@ from adn_server.application.routing.helpers import (
     slot_has_active_voice,
     slot_in_group_hangtime,
     slot_status_hotspot_owner,
+    tg_has_active_conversation,
 )
 from adn_server.domain import HBPF_DATA_SYNC, bytes_3, bytes_4
 from adn_server.domain.hbp_protocol import HBPF_SLT_VHEAD, HBPF_SLT_VTERM, STREAM_TO
@@ -61,13 +62,18 @@ def test_ingress_same_subscriber_rekey_allowed() -> None:
     )
 
 
-def test_ingress_collides_when_other_hotspot_owns_busy_slot() -> None:
-    """MASTER slot is global: second hotspot must not open a new stream on a busy TS."""
+def test_ingress_allows_other_hotspot_when_per_peer() -> None:
+    """Multi-hotspot MASTER: second hotspot may open a new stream on a busy TS.
+
+    Per-peer contention (one listen TG per hotspot/slot) is enforced at
+    downlink, not at ingress; a global slot collision here would silence a
+    second hotspot that operates on its own frequency.
+    """
     now = 1_000_000.0
     slot = _active_rx_slot()
     slot["RX_RFS"] = bytes_3(730039264)
     slot["RX_PEER"] = bytes_4(730039264)
-    assert hbp_ingress_new_stream_collision(
+    assert not hbp_ingress_new_stream_collision(
         slot,
         bytes_4(730039265),
         bytes_3(730039265),
@@ -78,7 +84,11 @@ def test_ingress_collides_when_other_hotspot_owns_busy_slot() -> None:
 
 
 def test_ingress_collides_when_obp_bridge_tx_leg_active() -> None:
-    """OBP bridge TX stamp on STATUS[slot] must block a new HBP ingress stream."""
+    """OBP bridge TX stamp on STATUS[slot] must block a new HBP ingress stream.
+
+    Only applies to the legacy shared-slot model (``per_peer=False``); with
+    ``per_peer=True`` the decision is deferred to per-peer downlink gates.
+    """
     now = 1_000_000.0
     slot = {
         "RX_TYPE": HBPF_SLT_VTERM,
@@ -93,7 +103,7 @@ def test_ingress_collides_when_obp_bridge_tx_leg_active() -> None:
         bytes_3(730039267),
         _STREAM_B,
         now + 0.1,
-        per_peer=True,
+        per_peer=False,
     )
 
 
@@ -221,6 +231,94 @@ def test_group_voice_tg_collision_across_hbp_slots() -> None:
     )
 
 
+def test_tg_has_active_conversation_detects_live_hbp_qso() -> None:
+    """Spec §3: a TG with an active (in-progress) HBP QSO is detected as active conversation."""
+    now = 1_000_000.0
+    master_status = {
+        2: _active_rx_slot(tgid=bytes_3(730500), stream_id=_STREAM_A, t=now),
+    }
+    master_status[2]["RX_RFS"] = bytes_3(730039264)
+    protocols = {"M1": type("P", (), {"STATUS": master_status})()}
+    systems = {"M1": {"MODE": "MASTER"}}
+    assert tg_has_active_conversation(
+        protocols, systems, bytes_3(730500), _STREAM_B, bytes_3(730039265), now + 0.1,
+    )
+
+
+def test_tg_has_active_conversation_detects_live_obp_qso() -> None:
+    """Spec §3: a TG with an active (in-progress) OBP stream is detected as active conversation."""
+    now = 1_000_000.0
+    obp_stream = bytes_4(0x3E7A0F77)
+    obp_status = {
+        obp_stream: {
+            "TGID": bytes_3(730500),
+            "START": now - 5.0,
+            "LAST": now - 0.1,
+            "RFS": bytes_3(730039266),
+        },
+    }
+    protocols = {"OBP": type("P", (), {"STATUS": obp_status})()}
+    systems = {"OBP": {"MODE": "OPENBRIDGE"}}
+    assert tg_has_active_conversation(
+        protocols, systems, bytes_3(730500), _STREAM_B, bytes_3(730039256), now,
+    )
+
+
+def test_tg_has_active_conversation_false_for_hangtime_only() -> None:
+    """Spec §3 vs §4: a TG that is merely in GROUP_HANGTIME (no live stream) is NOT active conversation."""
+    now = 1_000_000.0
+    # Slot idle (VTERM) but recent — within hangtime
+    master_status = {
+        2: {
+            "RX_TYPE": HBPF_SLT_VTERM,
+            "TX_TYPE": HBPF_SLT_VTERM,
+            "RX_TGID": bytes_3(730500),
+            "RX_TIME": now - 1.0,
+            "RX_STREAM_ID": _STREAM_A,
+            "TX_TIME": 0.0,
+        },
+    }
+    protocols = {"M1": type("P", (), {"STATUS": master_status})()}
+    systems = {"M1": {"MODE": "MASTER"}}
+    assert not tg_has_active_conversation(
+        protocols, systems, bytes_3(730500), _STREAM_B, bytes_3(730039265), now,
+    )
+
+
+def test_tg_has_active_conversation_false_for_stale_obp() -> None:
+    """Spec §3: a truncated OBP stream (no recent packets) is NOT an active conversation."""
+    now = 1_000_000.0
+    obp_stream = bytes_4(0x3E7A0F77)
+    obp_status = {
+        obp_stream: {
+            "TGID": bytes_3(730500),
+            "START": now - 60.0,
+            "LAST": now - 45.0,
+            "RFS": bytes_3(730039266),
+        },
+    }
+    protocols = {"OBP": type("P", (), {"STATUS": obp_status})()}
+    systems = {"OBP": {"MODE": "OPENBRIDGE"}}
+    assert not tg_has_active_conversation(
+        protocols, systems, bytes_3(730500), _STREAM_B, bytes_3(730039256), now,
+    )
+
+
+def test_tg_has_active_conversation_false_for_same_rf_source() -> None:
+    """Spec §3: same RF source rekeying is not an 'active conversation' collision."""
+    now = 1_000_000.0
+    rf = bytes_3(730039264)
+    master_status = {
+        2: _active_rx_slot(tgid=bytes_3(730500), stream_id=_STREAM_A, t=now),
+    }
+    master_status[2]["RX_RFS"] = rf
+    protocols = {"M1": type("P", (), {"STATUS": master_status})()}
+    systems = {"M1": {"MODE": "MASTER"}}
+    assert not tg_has_active_conversation(
+        protocols, systems, bytes_3(730500), _STREAM_B, rf, now + 0.1,
+    )
+
+
 def test_peer_hotspot_voice_slot_busy_blocks_downlink_during_local_ingress() -> None:
     """Rejected ingress still marks local TX — downlink must not arrive on that slot."""
     now = 1_000_000.0
@@ -294,7 +392,7 @@ def test_lab_witness_many_static_tgs_blocks_second_tg_on_slot() -> None:
     tg_list = ",".join(str(730500 + i) for i in range(13))
     witness = {"OPTIONS": f"TS2={tg_list};SINGLE=1;".encode()}
     peer_slots = {
-        2: {"stream_id": _STREAM_A, "tgid": 730500, "time": now - 1.0},
+        2: {"stream_id": _STREAM_A, "tgid": 730500, "time": now - 0.1},
     }
     slot = {"RX_TYPE": HBPF_SLT_VTERM, "TX_TYPE": HBPF_SLT_VTERM}
     assert peer_hotspot_voice_slot_busy(
@@ -644,8 +742,8 @@ def test_peer_hotspot_hangtime_blocks_other_tg() -> None:
     )
 
 
-def test_single0_ingress_tx_allows_other_static_tg_on_slot() -> None:
-    """SINGLE=0: RX on another OPTIONS TG while local TX on the same RF slot."""
+def test_single0_ingress_tx_blocks_other_tg_on_slot() -> None:
+    """SINGLE=0: no downlink bytes on another TG while local TX on the same RF slot."""
     now = 1_000_000.0
     hs = bytes_4(730039253)
     peer = {"OPTIONS": b"TS2=730507,730508;SINGLE=0;"}
@@ -659,7 +757,7 @@ def test_single0_ingress_tx_allows_other_static_tg_on_slot() -> None:
             "ingress": True,
         },
     }
-    assert not peer_hotspot_voice_slot_busy(
+    assert peer_hotspot_voice_slot_busy(
         hs,
         2,
         bytes_4(0x22222222),
@@ -671,6 +769,7 @@ def test_single0_ingress_tx_allows_other_static_tg_on_slot() -> None:
         0.0,
         peer=peer,
         sys_cfg=sys_cfg,
+        peers={hs: peer, bytes_4(730039254): {"OPTIONS": b"TS2=730508;"}},
     )
 
 
@@ -1042,3 +1141,562 @@ def test_global_slot_blocks_foreign_vterm_during_active_rx() -> None:
         slot, bytes_3(71442), panama_stream, now + 0.1, 0.0, is_vterm=True,
     )
     assert not hbp_slot_blocks_group_voice(slot, _TG_A, chile_stream, now + 0.1, 0.0)
+
+
+def test_single0_listen_vterm_hangtime_blocks_obp_and_dmra() -> None:
+    """SINGLE=0 listen-only: post-VTERM GROUP_HANGTIME blocks OBP voice and TA on another TG."""
+    from adn_server.application.routing.downlink import (
+        DownlinkContext,
+        peer_accepts_dmra,
+        peer_slot_blocks_downlink,
+        track_peer_group_dmrd,
+    )
+
+    sys_cfg = {"GROUP_HANGTIME": 5.0, "MODE": "MASTER", "MAX_PEERS": 8, "SINGLE_MODE": False}
+    config = {"SYSTEMS": {"MASTER-A": sys_cfg}}
+    hs = bytes_4(730039269)
+    peer = {"OPTIONS": b"TS2=730501,730504;"}
+    ctx = DownlinkContext(
+        config=config,
+        system_name="MASTER-A",
+        sys_cfg=sys_cfg,
+        peers={hs: peer},
+        status={
+            1: {"RX_TYPE": HBPF_SLT_VTERM, "TX_TYPE": HBPF_SLT_VTERM},
+            2: {"RX_TYPE": HBPF_SLT_VTERM, "TX_TYPE": HBPF_SLT_VTERM},
+        },
+        connected_count=5,
+    )
+    now = 1_000_000.0
+    j39jq_stream = bytes_4(0x11111111)
+    obp_stream = bytes_4(0x22222222)
+    vhead = b"".join([
+        b"DMRD", b"\x00", bytes_3(3520001), bytes_3(730502), b"\x00\x00\x00\x00",
+        bytes([0x80 | (HBPF_DATA_SYNC << 4) | HBPF_SLT_VHEAD]), j39jq_stream,
+    ] + [b"\x00"] * 33)
+    vterm = b"".join([
+        b"DMRD", b"\x00", bytes_3(3520001), bytes_3(730502), b"\x00\x00\x00\x00",
+        bytes([0x80 | (HBPF_DATA_SYNC << 4) | HBPF_SLT_VTERM]), j39jq_stream,
+    ] + [b"\x00"] * 33)
+    track_peer_group_dmrd(ctx, hs, vhead, peer, pkt_time=now)
+    track_peer_group_dmrd(ctx, hs, vterm, peer, pkt_time=now + 4.5)
+    assert ctx.peer_voice_hangtime[hs][2] == (730502, now + 4.5)
+    obp_vhead = b"".join([
+        b"DMRD", b"\x00", bytes_3(7140023), bytes_3(730504), b"\x00\x00\x00\x00",
+        bytes([0x80 | (HBPF_DATA_SYNC << 4) | HBPF_SLT_VHEAD]), obp_stream,
+    ] + [b"\x00"] * 33)
+    overlap = now + 9.0
+    assert peer_slot_blocks_downlink(ctx, hs, peer, obp_vhead, pkt_time=overlap)
+    assert not peer_accepts_dmra(ctx, hs, 2, 730504, pkt_time=overlap)
+    assert not peer_slot_blocks_downlink(ctx, hs, peer, obp_vhead, pkt_time=now + 11.0)
+
+
+def test_live_listen_session_blocks_foreign_tg_downlink() -> None:
+    """Mid-QSO downlink listen on TG A blocks foreign TG B on same slot (730502 vs 730504)."""
+    from adn_server.application.routing.downlink import (
+        DownlinkContext,
+        peer_accepts_dmra,
+        peer_slot_blocks_downlink,
+        touch_peer_voice_slot,
+    )
+
+    sys_cfg = {"GROUP_HANGTIME": 5.0, "MODE": "MASTER", "MAX_PEERS": 8, "SINGLE_MODE": False}
+    config = {"SYSTEMS": {"MASTER-A": sys_cfg}}
+    hs = bytes_4(730039269)
+    peer = {"OPTIONS": b"TS2=730501,730504;"}
+    ctx = DownlinkContext(
+        config=config,
+        system_name="MASTER-A",
+        sys_cfg=sys_cfg,
+        peers={hs: peer},
+        status={2: {"RX_TYPE": HBPF_SLT_VTERM, "TX_TYPE": HBPF_SLT_VTERM}},
+        connected_count=5,
+    )
+    now = 1_000_000.0
+    j39jq_stream = bytes_4(0x11111111)
+    touch_peer_voice_slot(ctx, hs, 2, j39jq_stream, bytes_3(730502), pkt_time=now)
+    obp_vhead = b"".join([
+        b"DMRD", b"\x00", bytes_3(7140023), bytes_3(730504), b"\x00\x00\x00\x00",
+        bytes([0x80 | (HBPF_DATA_SYNC << 4) | HBPF_SLT_VHEAD]), bytes_4(0x22222222),
+    ] + [b"\x00"] * 33)
+    assert peer_slot_blocks_downlink(ctx, hs, peer, obp_vhead, pkt_time=now + 0.5)
+    assert not peer_accepts_dmra(ctx, hs, 2, 730504, pkt_time=now + 0.5)
+
+
+def test_idle_static_bridges_do_not_block_options_fanout() -> None:
+    """Static ACTIVE bridge rows must not drop OPTIONS fan-out for another TG on the slot."""
+    from adn_server.application.routing.downlink import (
+        DownlinkContext,
+        peer_slot_blocks_downlink,
+    )
+    from adn_server.application.subscription.routing_table_import import (
+        subscriptions_from_routing_table,
+    )
+    from adn_server.infrastructure.subscription_store import InMemorySubscriptionStore
+
+    def _row(*, system: str, ts: int, tgid: int) -> dict:
+        return {
+            "SYSTEM": system,
+            "TS": ts,
+            "TGID": bytes_3(tgid),
+            "ACTIVE": True,
+            "TIMEOUT": 3600.0,
+            "TO_TYPE": "OFF",
+            "ON": [bytes_3(tgid)],
+            "OFF": [],
+            "RESET": [],
+            "TIMER": 0.0,
+        }
+
+    sys_cfg = {"GROUP_HANGTIME": 5.0, "MODE": "MASTER", "MAX_PEERS": 8, "SINGLE_MODE": True}
+    config = {"SYSTEMS": {"MASTER-A": sys_cfg}}
+    hs = bytes_4(730039252)
+    peer = {"OPTIONS": b"TS2=730500,730504;"}
+    store = InMemorySubscriptionStore()
+    store.replace_all(
+        subscriptions_from_routing_table(
+            {
+                "730501": [_row(system="MASTER-A", ts=2, tgid=730501)],
+                "730502": [_row(system="MASTER-A", ts=2, tgid=730502)],
+            }
+        )
+    )
+    ctx = DownlinkContext(
+        config=config,
+        system_name="MASTER-A",
+        sys_cfg=sys_cfg,
+        peers={hs: peer},
+        status={2: {"RX_TYPE": HBPF_SLT_VTERM, "TX_TYPE": HBPF_SLT_VTERM}},
+        connected_count=6,
+        subscription_store=store,
+    )
+    ref_vhead = b"".join([
+        b"DMRD", b"\x00", bytes_3(730039251), bytes_3(730500), b"\x00\x00\x00\x00",
+        bytes([0x80 | (1 << 4) | HBPF_SLT_VHEAD]), bytes_4(0x33333333),
+    ] + [b"\x00"] * 33)
+    assert not peer_slot_blocks_downlink(ctx, hs, peer, ref_vhead, pkt_time=1_000_002.0)
+
+
+def test_foreign_obp_blocked_when_master_slot_carries_other_tg() -> None:
+    """OBP (non-hotspot rf_src) blocked when this hotspot still holds the prior TG on slot."""
+    from adn_server.application.routing.downlink import (
+        DownlinkContext,
+        peer_slot_blocks_downlink,
+    )
+
+    sys_cfg = {"GROUP_HANGTIME": 5.0, "MODE": "MASTER", "MAX_PEERS": 8, "SINGLE_MODE": False}
+    config = {"SYSTEMS": {"MASTER-A": sys_cfg}}
+    hs = bytes_4(730039269)
+    peer = {"OPTIONS": b"TS2=730501,730504;"}
+    now = 1_000_000.0
+    j39jq_stream = bytes_4(0x11111111)
+    ctx = DownlinkContext(
+        config=config,
+        system_name="MASTER-A",
+        sys_cfg=sys_cfg,
+        peers={hs: peer},
+        status={
+            2: {
+                "RX_PEER": bytes_4(730039270),
+                "RX_TGID": bytes_3(730502),
+                "RX_STREAM_ID": j39jq_stream,
+                "RX_TIME": now,
+                "RX_TYPE": HBPF_SLT_VTERM,
+                "TX_TYPE": HBPF_SLT_VTERM,
+            },
+        },
+        peer_voice_slots={
+            hs: {
+                2: {
+                    "stream_id": b"",
+                    "tgid": 730502,
+                    "time": now,
+                    "bridge_hold": True,
+                },
+            },
+        },
+        connected_count=5,
+    )
+    obp_vhead = b"".join([
+        b"DMRD", b"\x00", bytes_3(7140023), bytes_3(730504), b"\x00\x00\x00\x00",
+        bytes([0x80 | (HBPF_DATA_SYNC << 4) | HBPF_SLT_VHEAD]), bytes_4(0x22222222),
+    ] + [b"\x00"] * 33)
+    hbp_vhead = b"".join([
+        b"DMRD", b"\x00", bytes_3(730039270), bytes_3(730500), b"\x00\x00\x00\x00",
+        bytes([0x80 | (HBPF_DATA_SYNC << 4) | HBPF_SLT_VHEAD]), bytes_4(0x33333333),
+    ] + [b"\x00"] * 33)
+    assert peer_slot_blocks_downlink(ctx, hs, peer, obp_vhead, pkt_time=now + 0.5)
+    assert peer_slot_blocks_downlink(ctx, hs, peer, hbp_vhead, pkt_time=now + 0.5)
+
+
+def test_single0_ingress_vterm_bridge_hold_blocks_within_hangtime() -> None:
+    """SINGLE=0 ingress TX: bridge_hold blocks a foreign TG only within GROUP_HANGTIME.
+
+    Matches legacy bridge_master contention on TX_TIME: after hangtime expires a fresh
+    PTT on a different TG is delivered.
+    """
+    from adn_server.application.routing.downlink import (
+        DownlinkContext,
+        peer_slot_blocks_downlink,
+        track_peer_group_dmrd,
+    )
+    from adn_server.application.subscription.routing_table_import import (
+        subscriptions_from_routing_table,
+    )
+    from adn_server.infrastructure.subscription_store import InMemorySubscriptionStore
+
+    def _row(*, system: str, ts: int, tgid: int) -> dict:
+        return {
+            "SYSTEM": system,
+            "TS": ts,
+            "TGID": bytes_3(tgid),
+            "ACTIVE": True,
+            "TIMEOUT": 3600.0,
+            "TO_TYPE": "OFF",
+            "ON": [bytes_3(tgid)],
+            "OFF": [],
+            "RESET": [],
+            "TIMER": 0.0,
+        }
+
+    sys_cfg = {"GROUP_HANGTIME": 5.0, "MODE": "MASTER", "MAX_PEERS": 8, "SINGLE_MODE": False}
+    config = {"SYSTEMS": {"MASTER-A": sys_cfg}}
+    hs = bytes_4(730039270)
+    peer = {"OPTIONS": b"TS2=730500,730508;"}
+    store = InMemorySubscriptionStore()
+    store.replace_all(
+        subscriptions_from_routing_table(
+            {"730502": [_row(system="MASTER-A", ts=2, tgid=730502)]},
+        )
+    )
+    ctx = DownlinkContext(
+        config=config,
+        system_name="MASTER-A",
+        sys_cfg=sys_cfg,
+        peers={hs: peer},
+        status={2: {"RX_TYPE": HBPF_SLT_VTERM, "TX_TYPE": HBPF_SLT_VTERM}},
+        connected_count=5,
+        subscription_store=store,
+    )
+    now = 1_000_000.0
+    stream = bytes_4(0x11111111)
+    vhead = b"".join([
+        b"DMRD", b"\x00", bytes_3(3520001), bytes_3(730502), b"\x00\x00\x00\x00",
+        bytes([0x80 | (HBPF_DATA_SYNC << 4) | HBPF_SLT_VHEAD]), stream,
+    ] + [b"\x00"] * 33)
+    vterm = b"".join([
+        b"DMRD", b"\x00", bytes_3(3520001), bytes_3(730502), b"\x00\x00\x00\x00",
+        bytes([0x80 | (HBPF_DATA_SYNC << 4) | HBPF_SLT_VTERM]), stream,
+    ] + [b"\x00"] * 33)
+    track_peer_group_dmrd(ctx, hs, vhead, peer, pkt_time=now, from_ingress=True, voice_slot=2)
+    track_peer_group_dmrd(ctx, hs, vterm, peer, pkt_time=now + 3, from_ingress=True, voice_slot=2)
+    assert ctx.peer_voice_slots[hs][2].get("bridge_hold") is True
+    obp_vhead = b"".join([
+        b"DMRD", b"\x00", bytes_3(7140023), bytes_3(730504), b"\x00\x00\x00\x00",
+        bytes([0x80 | (HBPF_DATA_SYNC << 4) | HBPF_SLT_VHEAD]), bytes_4(0x22222222),
+    ] + [b"\x00"] * 33)
+    # Within GROUP_HANGTIME of the VTERM (age < 5s): blocked
+    assert peer_slot_blocks_downlink(ctx, hs, peer, obp_vhead, pkt_time=now + 4.0)
+    # After GROUP_HANGTIME (age > 5s): fresh PTT on a different TG is delivered
+    assert not peer_slot_blocks_downlink(ctx, hs, peer, obp_vhead, pkt_time=now + 9.0)
+
+
+def test_single0_listener_bridge_hold_expires_after_hangtime_allows_fresh_ptt() -> None:
+    """SINGLE=0 listener (downlink RX, not ingress TX): bridge_hold must expire after
+    GROUP_HANGTIME so a fresh PTT on a different TG is delivered.
+
+    Reproduces the hs1/hs2/hs3 rule: hs1 receives 730500; after it ends and hangtime
+    clears, a NEW call on 730501 must reach hs1 from the start (no stale bridge_hold).
+    """
+    from adn_server.application.routing.downlink import (
+        DownlinkContext,
+        peer_slot_blocks_downlink,
+        track_peer_group_dmrd,
+    )
+    from adn_server.application.subscription.routing_table_import import (
+        subscriptions_from_routing_table,
+    )
+    from adn_server.infrastructure.subscription_store import InMemorySubscriptionStore
+
+    def _row(*, system: str, ts: int, tgid: int) -> dict:
+        return {
+            "SYSTEM": system,
+            "TS": ts,
+            "TGID": bytes_3(tgid),
+            "ACTIVE": True,
+            "TIMEOUT": 3600.0,
+            "TO_TYPE": "OFF",
+            "ON": [bytes_3(tgid)],
+            "OFF": [],
+            "RESET": [],
+            "TIMER": 0.0,
+        }
+
+    sys_cfg = {"GROUP_HANGTIME": 5.0, "MODE": "MASTER", "MAX_PEERS": 8, "SINGLE_MODE": False}
+    config = {"SYSTEMS": {"MASTER-A": sys_cfg}}
+    hs = bytes_4(730039251)
+    peer = {"OPTIONS": b"TS2=730500,730501;"}
+    store = InMemorySubscriptionStore()
+    store.replace_all(
+        subscriptions_from_routing_table(
+            {
+                "730500": [_row(system="MASTER-A", ts=2, tgid=730500)],
+                "730501": [_row(system="MASTER-A", ts=2, tgid=730501)],
+            }
+        )
+    )
+    ctx = DownlinkContext(
+        config=config,
+        system_name="MASTER-A",
+        sys_cfg=sys_cfg,
+        peers={hs: peer},
+        status={2: {"RX_TYPE": HBPF_SLT_VTERM, "TX_TYPE": HBPF_SLT_VTERM}},
+        connected_count=5,
+        subscription_store=store,
+    )
+    now = 1_000_000.0
+    ref_stream = bytes_4(0xAAAAAAAA)
+    ref_vhead = b"".join([
+        b"DMRD", b"\x00", bytes_3(730039253), bytes_3(730500), b"\x00\x00\x00\x00",
+        bytes([0x80 | (HBPF_DATA_SYNC << 4) | HBPF_SLT_VHEAD]), ref_stream,
+    ] + [b"\x00"] * 33)
+    ref_vterm = b"".join([
+        b"DMRD", b"\x00", bytes_3(730039253), bytes_3(730500), b"\x00\x00\x00\x00",
+        bytes([0x80 | (HBPF_DATA_SYNC << 4) | HBPF_SLT_VTERM]), ref_stream,
+    ] + [b"\x00"] * 33)
+    track_peer_group_dmrd(ctx, hs, ref_vhead, peer, pkt_time=now, from_ingress=False, voice_slot=2)
+    track_peer_group_dmrd(ctx, hs, ref_vterm, peer, pkt_time=now + 8.0, from_ingress=False, voice_slot=2)
+    fresh_vhead = b"".join([
+        b"DMRD", b"\x00", bytes_3(730039252), bytes_3(730501), b"\x00\x00\x00\x00",
+        bytes([0x80 | (HBPF_DATA_SYNC << 4) | HBPF_SLT_VHEAD]), bytes_4(0xBBBBBBBB),
+    ] + [b"\x00"] * 33)
+    # During hangtime: fresh PTT on different TG must be blocked (listening on 730500).
+    assert peer_slot_blocks_downlink(ctx, hs, peer, fresh_vhead, pkt_time=now + 9.0)
+    # After hangtime clears: fresh PTT on different TG must be delivered.
+    assert not peer_slot_blocks_downlink(ctx, hs, peer, fresh_vhead, pkt_time=now + 20.0)
+
+
+def test_single0_listener_fresh_ptt_after_blocked_second_stream() -> None:
+    """Full hs1/hs2/hs3 flow: hs_a receives 730500; a second stream 730501 transits
+    the server (delivered to witness, blocked for hs_a); after 730500 ends and
+    hangtime clears, a fresh PTT on 730501 must reach hs_a from the start.
+
+    This reproduces the live scenario where a concurrent second stream leaves
+    residual slot state that blocked the fresh PTT in production.
+    """
+    from adn_server.application.routing.downlink import (
+        DownlinkContext,
+        peer_slot_blocks_downlink,
+        track_peer_group_dmrd,
+    )
+    from adn_server.application.subscription.routing_table_import import (
+        subscriptions_from_routing_table,
+    )
+    from adn_server.infrastructure.subscription_store import InMemorySubscriptionStore
+
+    def _row(*, system: str, ts: int, tgid: int) -> dict:
+        return {
+            "SYSTEM": system,
+            "TS": ts,
+            "TGID": bytes_3(tgid),
+            "ACTIVE": True,
+            "TIMEOUT": 3600.0,
+            "TO_TYPE": "OFF",
+            "ON": [bytes_3(tgid)],
+            "OFF": [],
+            "RESET": [],
+            "TIMER": 0.0,
+        }
+
+    sys_cfg = {"GROUP_HANGTIME": 5.0, "MODE": "MASTER", "MAX_PEERS": 8, "SINGLE_MODE": False}
+    config = {"SYSTEMS": {"MASTER-A": sys_cfg}}
+    hs = bytes_4(730039251)
+    peer = {"OPTIONS": b"TS2=730500,730501;"}
+    store = InMemorySubscriptionStore()
+    store.replace_all(
+        subscriptions_from_routing_table(
+            {
+                "730500": [_row(system="MASTER-A", ts=2, tgid=730500)],
+                "730501": [_row(system="MASTER-A", ts=2, tgid=730501)],
+            }
+        )
+    )
+    now = 1_000_000.0
+    ref_stream = bytes_4(0xAAAAAAAA)
+    second_stream = bytes_4(0xCCCCCCCC)
+    fresh_stream = bytes_4(0xDDDDDDDD)
+    status = {2: {"RX_TYPE": HBPF_SLT_VTERM, "TX_TYPE": HBPF_SLT_VTERM}}
+    ctx = DownlinkContext(
+        config=config,
+        system_name="MASTER-A",
+        sys_cfg=sys_cfg,
+        peers={hs: peer},
+        status=status,
+        connected_count=5,
+        subscription_store=store,
+    )
+    ref_vhead = b"".join([
+        b"DMRD", b"\x00", bytes_3(730039253), bytes_3(730500), b"\x00\x00\x00\x00",
+        bytes([0x80 | (HBPF_DATA_SYNC << 4) | HBPF_SLT_VHEAD]), ref_stream,
+    ] + [b"\x00"] * 33)
+    ref_vterm = b"".join([
+        b"DMRD", b"\x00", bytes_3(730039253), bytes_3(730500), b"\x00\x00\x00\x00",
+        bytes([0x80 | (HBPF_DATA_SYNC << 4) | HBPF_SLT_VTERM]), ref_stream,
+    ] + [b"\x00"] * 33)
+    second_vhead = b"".join([
+        b"DMRD", b"\x00", bytes_3(730039252), bytes_3(730501), b"\x00\x00\x00\x00",
+        bytes([0x80 | (HBPF_DATA_SYNC << 4) | HBPF_SLT_VHEAD]), second_stream,
+    ] + [b"\x00"] * 33)
+    second_vterm = b"".join([
+        b"DMRD", b"\x00", bytes_3(730039252), bytes_3(730501), b"\x00\x00\x00\x00",
+        bytes([0x80 | (HBPF_DATA_SYNC << 4) | HBPF_SLT_VTERM]), second_stream,
+    ] + [b"\x00"] * 33)
+    fresh_vhead = b"".join([
+        b"DMRD", b"\x00", bytes_3(730039252), bytes_3(730501), b"\x00\x00\x00\x00",
+        bytes([0x80 | (HBPF_DATA_SYNC << 4) | HBPF_SLT_VHEAD]), fresh_stream,
+    ] + [b"\x00"] * 33)
+    # t=0: hs_a starts receiving 730500.
+    track_peer_group_dmrd(ctx, hs, ref_vhead, peer, pkt_time=now, from_ingress=False, voice_slot=2)
+    # t=3: second stream 730501 arrives — blocked for hs_a (busy on 730500).
+    assert peer_slot_blocks_downlink(ctx, hs, peer, second_vhead, pkt_time=now + 3.0)
+    # While the second stream is active on the wire, STATUS reflects the second
+    # peer as RX owner of slot 2 (the ingress updates RX_PEER/TGID/TIME/TYPE).
+    status[2] = {
+        "RX_PEER": bytes_4(730039252),
+        "RX_TGID": bytes_3(730501),
+        "RX_TIME": now + 5.0,
+        "RX_TYPE": HBPF_SLT_VHEAD,
+        "RX_STREAM_ID": second_stream,
+        "TX_TYPE": HBPF_SLT_VTERM,
+        "TX_TIME": 0.0,
+    }
+    # t=8: 730500 ends for hs_a.
+    track_peer_group_dmrd(ctx, hs, ref_vterm, peer, pkt_time=now + 8.0, from_ingress=False, voice_slot=2)
+    # t=12: second stream 730501 still in progress — no mid-join (hangtime clear path).
+    assert peer_slot_blocks_downlink(ctx, hs, peer, second_vhead, pkt_time=now + 12.0)
+    # t=17: second stream ends. STATUS global still carries the second peer as RX_OWNER.
+    track_peer_group_dmrd(ctx, hs, second_vterm, peer, pkt_time=now + 17.0, from_ingress=False, voice_slot=2)
+    status[2]["RX_TYPE"] = HBPF_SLT_VTERM
+    status[2]["RX_TIME"] = now + 17.0
+    # t=20: fresh PTT on 730501 — must reach hs_a (all prior hangtime cleared).
+    blocked = peer_slot_blocks_downlink(ctx, hs, peer, fresh_vhead, pkt_time=now + 20.0)
+    assert not blocked, f"fresh 730501 PTT blocked after all streams ended: slots={ctx.peer_voice_slots.get(hs)}, status={status.get(2)}"
+
+
+def test_peer_stale_session_different_tg_expires_after_stream_to() -> None:
+    """A stale per-peer voice session (no VTERM seen) on TG A must not block a
+    fresh stream on TG B once ``STREAM_TO`` has elapsed.
+
+    Reproduces the production case where a listener's downlink session on 730500
+    was left in ``peer_voice_slots`` with a non-empty stream_id after the stream
+    ended without VTERM, and blocked a subsequent 730501 PTT indefinitely.
+    """
+    from adn_server.application.routing.downlink import (
+        DownlinkContext,
+        peer_slot_blocks_downlink,
+    )
+
+    sys_cfg = {"GROUP_HANGTIME": 5.0, "MODE": "MASTER", "MAX_PEERS": 8, "SINGLE_MODE": False}
+    config = {"SYSTEMS": {"MASTER-A": sys_cfg}}
+    hs = bytes_4(730039251)
+    peer = {"OPTIONS": b"TS2=730500,730501;"}
+    now = 1_000_000.0
+    status = {2: {"RX_TYPE": HBPF_SLT_VTERM, "TX_TYPE": HBPF_SLT_VTERM}}
+    ctx = DownlinkContext(
+        config=config,
+        system_name="MASTER-A",
+        sys_cfg=sys_cfg,
+        peers={hs: peer},
+        status=status,
+        connected_count=5,
+        subscription_store=None,
+    )
+    ctx.peer_voice_slots[hs] = {
+        2: {"stream_id": bytes_4(0x952AFD04), "tgid": 730500, "time": now},
+    }
+    fresh_vhead = b"".join([
+        b"DMRD", b"\x00", bytes_3(730039252), bytes_3(730501), b"\x00\x00\x00\x00",
+        bytes([0x80 | (HBPF_DATA_SYNC << 4) | HBPF_SLT_VHEAD]), bytes_4(0xDDDDDDDD),
+    ] + [b"\x00"] * 33)
+    # While within STREAM_TO window: different TG is blocked (active QSO).
+    assert peer_slot_blocks_downlink(ctx, hs, peer, fresh_vhead, pkt_time=now + 0.1)
+    # After the stale-session timeout elapses: dead session expires, fresh PTT on 730501 passes.
+    assert not peer_slot_blocks_downlink(ctx, hs, peer, fresh_vhead, pkt_time=now + 6.0)
+
+
+def test_single1_duplex_listen_lock_does_not_block_other_rf_slot() -> None:
+    """SINGLE=1 duplex hotspot: a listen lock on TS1 must not block TS2.
+
+    Reproduces the intermittent ``single1-overlap-second-longer`` failure where
+    ``hs_a`` (TS1=730500, TS2=730501, SINGLE=1) receives 730500 on TS1, then a
+    concurrent 730501 stream on TS2 was incorrectly blocked because
+    ``peer_single_blocks_group_voice`` iterated both RF slots instead of
+    scoping the lock to the peer's listen slot for the incoming TG.
+
+    Duplex hotspots have independent RF timeslots; a SINGLE listen lock on one
+    timeslot must not deny voice on the other.
+    """
+    from adn_server.application.routing.downlink import (
+        DownlinkContext,
+        track_peer_group_dmrd,
+    )
+    from adn_server.application.routing.helpers import (
+        peer_should_receive_group_voice,
+    )
+    from adn_server.application.subscription.routing_table_import import (
+        subscriptions_from_routing_table,
+    )
+    from adn_server.infrastructure.subscription_store import InMemorySubscriptionStore
+
+    def _row(*, system: str, ts: int, tgid: int) -> dict:
+        return {
+            "SYSTEM": system,
+            "TS": ts,
+            "TGID": bytes_3(tgid),
+            "ACTIVE": True,
+            "TIMEOUT": 3600.0,
+            "TO_TYPE": "OFF",
+            "ON": [bytes_3(tgid)],
+            "OFF": [],
+            "RESET": [],
+            "TIMER": 0.0,
+        }
+
+    sys_cfg = {"GROUP_HANGTIME": 5.0, "MODE": "MASTER", "MAX_PEERS": 8, "SINGLE_MODE": False}
+    hs = bytes_4(730039251)
+    peer = {"OPTIONS": b"TS1=730500;TS2=730501;SINGLE=1;TIMER=60;"}
+    store = InMemorySubscriptionStore()
+    store.replace_all(
+        subscriptions_from_routing_table(
+            {
+                "730500": [_row(system="MASTER-A", ts=1, tgid=730500)],
+                "730501": [_row(system="MASTER-A", ts=2, tgid=730501)],
+            }
+        )
+    )
+    ctx = DownlinkContext(
+        config={"SYSTEMS": {"MASTER-A": sys_cfg}},
+        system_name="MASTER-A",
+        sys_cfg=sys_cfg,
+        peers={hs: peer},
+        status={
+            1: {"RX_TYPE": HBPF_SLT_VTERM, "TX_TYPE": HBPF_SLT_VTERM},
+            2: {"RX_TYPE": HBPF_SLT_VTERM, "TX_TYPE": HBPF_SLT_VTERM},
+        },
+        connected_count=5,
+        subscription_store=store,
+    )
+    now = 1_000_000.0
+    ref_stream = bytes_4(0xAAAAAAAA)
+    ref_vhead = b"".join([
+        b"DMRD", b"\x00", bytes_3(730039253), bytes_3(730500), b"\x00\x00\x00\x00",
+        bytes([0x80 | (HBPF_DATA_SYNC << 4) | HBPF_SLT_VHEAD]), ref_stream,
+    ] + [b"\x00"] * 33)
+    # hs_a receives 730500 on TS1 — registers a SINGLE listen lock on slot 1.
+    track_peer_group_dmrd(ctx, hs, ref_vhead, peer, pkt_time=now, voice_slot=1)
+    assert peer["_UA_SESSION"][1]["tgid"] == 730500
+    # A 730501 stream arrives on TS2 — different RF slot, must not be blocked.
+    assert peer_should_receive_group_voice(
+        peer, 2, 730501, peer_id=hs, system="MASTER-A",
+        subscription_store=store, connected_count=5, sys_cfg=sys_cfg, now=now + 9.0,
+    )

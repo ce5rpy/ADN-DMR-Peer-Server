@@ -276,6 +276,7 @@ class RoutingUseCases(
         if frame_type == HBPF_DATA_SYNC and dtype_vseq == HBPF_SLT_VHEAD:
             if not _obp_grp:
                 _is_new_rx_stream = True
+                _suppress_uplink_rx = False
                 if not source_is_obp:
                     protocols = self._get_protocols() if self._get_protocols else {}
                     src_proto = protocols.get(system_name) if protocols else None
@@ -283,7 +284,8 @@ class RoutingUseCases(
                         slot_st = src_proto.STATUS.get(slot, {})
                         if isinstance(slot_st, dict):
                             _is_new_rx_stream = stream_id != slot_st.get("RX_STREAM_ID")
-                if _is_new_rx_stream:
+                            _suppress_uplink_rx = bool(slot_st.get("_suppress_uplink"))
+                if _is_new_rx_stream and not _suppress_uplink_rx:
                     _rx_report_peer = peer_id
                     if not source_is_obp:
                         _rx_report_peer = resolve_voice_peer_id(
@@ -305,6 +307,7 @@ class RoutingUseCases(
         elif frame_type == HBPF_DATA_SYNC and dtype_vseq == HBPF_SLT_VTERM:
             if not _obp_grp:
                 duration = 0.0
+                _suppress_uplink_vterm = False
                 protocols = self._get_protocols() if self._get_protocols else {}
                 src_proto = protocols.get(system_name) if protocols else None
                 if src_proto and getattr(src_proto, "STATUS", None):
@@ -315,25 +318,29 @@ class RoutingUseCases(
                         start = st.get(slot, {}).get("RX_START")
                     if start is not None:
                         duration = pkt_time - start
-                _rx_report_peer = peer_id
-                if not source_is_obp:
-                    _rx_report_peer = resolve_voice_peer_id(
-                        peer_id,
-                        rf_src,
-                        system_name,
-                        systems_cfg,
+                    slot_st_vterm = st.get(slot, {})
+                    if isinstance(slot_st_vterm, dict):
+                        _suppress_uplink_vterm = bool(slot_st_vterm.get("_suppress_uplink"))
+                if not _suppress_uplink_vterm:
+                    _rx_report_peer = peer_id
+                    if not source_is_obp:
+                        _rx_report_peer = resolve_voice_peer_id(
+                            peer_id,
+                            rf_src,
+                            system_name,
+                            systems_cfg,
+                        )
+                    self._send_routing_event(
+                        "GROUP VOICE,END,RX,{},{},{},{},{},{},{:.2f}".format(
+                            system_name,
+                            int_id(stream_id),
+                            int_id(_rx_report_peer),
+                            int_id(rf_src),
+                            slot,
+                            int_id(dst_id),
+                            duration,
+                        )
                     )
-                self._send_routing_event(
-                    "GROUP VOICE,END,RX,{},{},{},{},{},{},{:.2f}".format(
-                        system_name,
-                        int_id(stream_id),
-                        int_id(_rx_report_peer),
-                        int_id(rf_src),
-                        slot,
-                        int_id(dst_id),
-                        duration,
-                    )
-                )
         has_source = bool(
             self._voice_relay_tables_with_active_source(system_name, bridge_match_slot, dst_int)
         )
@@ -435,6 +442,15 @@ class RoutingUseCases(
                 resolve_voice_peer_id(peer_id, rf_src, system_name, systems_cfg)
             )
         forwarded = []
+        # When a TX arrived on a TG with an active QSO, the ingress gate set
+        # ``_suppress_uplink`` on the source slot status. The TG was activated dynamically
+        # (so downlink of the active QSO reaches this peer), but this stream's audio must
+        # not be forwarded upstream to avoid disrupting the in-progress conversation.
+        _suppress_uplink = False
+        if not source_is_obp and src_proto and getattr(src_proto, "STATUS", None):
+            _src_slot_st = src_proto.STATUS.get(slot, {})
+            if isinstance(_src_slot_st, dict) and _src_slot_st.get("_suppress_uplink"):
+                _suppress_uplink = True
         _leg_iter: list[tuple[str, dict[str, Any]]] = [
             (
                 forward_tables[0] if forward_tables else str(dst_int),
@@ -449,6 +465,8 @@ class RoutingUseCases(
         ]
 
         for _relay_table_key, entry in _leg_iter:
+                if _suppress_uplink:
+                    continue
                 if not systems_cfg.get(entry["SYSTEM"], {}).get("ENABLED", True):
                     continue
                 _target_system = systems_cfg.get(entry["SYSTEM"], {})
