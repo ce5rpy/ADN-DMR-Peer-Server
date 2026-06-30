@@ -75,6 +75,7 @@ nav:
           - Performance (2.x): server/development/performance.md
           - BRIDGES vs Subscriptions: server/development/bridges-vs-subscriptions.md
           - Behaviour and timers: server/development/behaviour-and-timers.md
+          - Voice routing and contention: server/development/routing-and-contention.md
           - Testing: server/development/testing.md
       - Contributing:
           - Translations: server/contributing/translations.md

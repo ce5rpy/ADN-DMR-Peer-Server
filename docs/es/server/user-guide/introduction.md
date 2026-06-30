@@ -34,6 +34,7 @@ Enrutado, temporizadores, control de bucle OpenBridge y manejo de protocolo est�
 
 - [Configuración](configuration.md) — ficheros, `GLOBAL`, **MASTER** / **PEER** / **OPENBRIDGE**, ACL, **`DATABASE`**, informes, **`PROXY`**, **`SELF_SERVICE`**, alias, fusión de voz.
 - [Bridges y talkgroups](bridges-and-talkgroups.md) — cómo funciona `BRIDGES`.
+- [Enrutado de voz y contención](../development/routing-and-contention.md) — el flujo completo de paquetes, reglas de contención, SINGLE, mapeo de slot y divergencias.
 - [Números especiales](special-numbers.md) — TG 4000, servicios de información, eco.
 - [Proxy hotspot](hotspot-proxy.md) — **`PROXY`** / **`SELF_SERVICE`** integrados en `adn-server.yaml`.
 - [ADN Monitor](../../monitor/index.md) — panel, `adn-monitor.yaml`, UI self-service (repo aparte, desplegado con el servidor).

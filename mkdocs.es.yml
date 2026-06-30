@@ -75,6 +75,7 @@ nav:
           - Rendimiento (2.x): server/development/performance.md
           - BRIDGES vs Subscriptions: server/development/bridges-vs-subscriptions.md
           - Comportamiento y temporizadores: server/development/behaviour-and-timers.md
+          - Enrutado de voz y contención: server/development/routing-and-contention.md
       - Contribuir:
           - Traducciones: server/contributing/translations.md
   - Monitor:

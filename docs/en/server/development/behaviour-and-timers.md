@@ -25,6 +25,18 @@ The following intervals are part of the current runtime behavior:
 
 If you change one of these intervals, document the operational impact for monitoring, loop behavior, and troubleshooting.
 
+## Voice contention constants
+
+These constants define per-packet and per-session behaviour. They are
+documented in detail in [Voice routing and contention](routing-and-contention.md).
+
+| Constant | Value | Role |
+|---|---|---|
+| `STREAM_TO` | **0.36 s** | Window to consider a stream "active" (between packets). |
+| `_STALE_PEER_SESSION_TIMEOUT` | **5.0 s** | A per-peer session with no frames is considered dead (lost VTERM). |
+| `GROUP_HANGTIME` | **5 s** (config default, per-system) | Blocking period after a QSO ends before another TG is accepted on that slot. |
+| `DEFAULT_UA_TIMER` | configurable (minutes, per-system) | Duration of dynamic (User Activated) bridges. |
+
 ## In-band VTERM scope
 
 In-band bridge signalling on voice terminator (VTERM) is intentionally scoped to:

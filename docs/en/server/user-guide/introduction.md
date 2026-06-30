@@ -34,6 +34,7 @@ Routing, timers, OpenBridge loop control, and protocol handling are implemented 
 
 - [Configuration](configuration.md) — files, `GLOBAL`, **MASTER** / **PEER** / **OPENBRIDGE**, ACLs, **`DATABASE`**, reports, **`PROXY`**, **`SELF_SERVICE`**, aliases, voice merge.
 - [Bridges and talkgroups](bridges-and-talkgroups.md) — how `BRIDGES` works.
+- [Voice routing and contention](../development/routing-and-contention.md) — the full packet flow, contention rules, SINGLE, slot mapping, and divergences.
 - [Special numbers](special-numbers.md) — TG 4000, information services, echo.
 - [Hotspot proxy](hotspot-proxy.md) — integrated **`PROXY`** / **`SELF_SERVICE`** in `adn-server.yaml`.
 - [ADN Monitor](../../monitor/index.md) — dashboard, `adn-monitor.yaml`, self-service UI (separate repo, deployed with the server).

@@ -98,7 +98,7 @@ The **audio** is sent with **source ID 5000** and **destination TG 9** in the ge
 
 **Purpose:** Bridge rows for **echo** often use **9990** with the **ECHO** system (see `BRIDGES` and options in your YAML).
 
-**`SINGLE=1`:** Keying **9990** does **not** create an exclusive listen session (same as **4000**). Downlink echo always returns to the calling hotspot even when another TG holds the SINGLE lock. See [Hotspot proxy](hotspot-proxy.md#behaviour-with-multiple-hotspots).
+**`SINGLE=1`:** Keying **9990** does **not** create an exclusive listen session (same as **4000**). Downlink echo always returns to the calling hotspot even when another TG holds the SINGLE lock. See [Hotspot proxy](hotspot-proxy.md#behaviour-with-multiple-hotspots) and [Voice routing and contention — SINGLE exceptions](../development/routing-and-contention.md#single-exceptions).
 
 **Note:** A **standalone echo** is also available as a separate process — [Echo](echo.md).
 

@@ -57,4 +57,7 @@ En OpenBridge, el **destino DMR** en el paquete puede diferir del **TGID** en un
 
 La voz de grupo usa **hang time**, **`STREAM_TO`** y estado de slot `TX_*` / `RX_*` para evitar transmisiones simultáneas en los mismos recursos.
 
+Para el conjunto completo de reglas de contención, comportamiento SINGLE,
+activación silenciosa y mapeo de slot, ver [Enrutado de voz y contención](../development/routing-and-contention.md).
+
 Ver también: [Números especiales](special-numbers.md), [Protocolo OpenBridge](../protocols/openbridge.md).

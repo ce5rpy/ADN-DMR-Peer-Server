@@ -57,4 +57,7 @@ For OpenBridge, the **DMR destination** in the packet may differ from the **TGID
 
 Group voice uses **hang time**, **`STREAM_TO`**, and slot `TX_*` / `RX_*` state to avoid colliding transmissions on the same resources.
 
+For the full contention rule set, SINGLE behaviour, silent activation, and
+slot mapping, see [Voice routing and contention](../development/routing-and-contention.md).
+
 See also: [Special numbers](special-numbers.md), [OpenBridge protocol](../protocols/openbridge.md).

@@ -25,6 +25,18 @@ Los siguientes intervalos forman parte del comportamiento actual en ejecución:
 
 Si cambias uno de estos intervalos, documenta el impacto operativo en monitorización, comportamiento de bucles y troubleshooting.
 
+## Constantes de contención de voz
+
+Estas constantes definen el comportamiento por paquete y por sesión. Están
+documentadas en detalle en [Enrutado de voz y contención](routing-and-contention.md).
+
+| Constante | Valor | Rol |
+|---|---|---|
+| `STREAM_TO` | **0.36 s** | Ventana para considerar un stream "activo" (entre paquetes). |
+| `_STALE_PEER_SESSION_TIMEOUT` | **5.0 s** | Una sesión per-peer sin frames se considera muerta (VTERM perdido). |
+| `GROUP_HANGTIME` | **5 s** (default config, por sistema) | Bloqueo tras fin de QSO antes de aceptar otro TG en ese slot. |
+| `DEFAULT_UA_TIMER` | configurable (minutos, por sistema) | Duración de bridges dinámicos (User Activated). |
+
 ## Alcance de VTERM in-band
 
 La señalización in-band en voice terminator (VTERM) está acotada a:
