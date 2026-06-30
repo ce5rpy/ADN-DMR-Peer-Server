@@ -18,11 +18,9 @@
 #   Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301  USA
 ###############################################################################
 
-"""RoutingTableLegacyView: subscription store → pickle BRIDGE_SND shim."""
+"""RoutingTableLegacyView: subscription store → legacy BRIDGES shim."""
 
 from __future__ import annotations
-
-import pickle
 
 from adn_server.application.subscription.routing_table_export import export_routing_table
 from adn_server.application.subscription.routing_table_legacy_view import RoutingTableLegacyView
@@ -38,8 +36,6 @@ from adn_server.domain.subscription import (
     TgId,
 )
 from adn_server.infrastructure.subscription_store import InMemorySubscriptionStore
-from adn_server.infrastructure.twisted_adapters.report.opcodes import REPORT_OPCODES
-from adn_server.infrastructure.twisted_adapters.report.pickle_legacy import encode_bridge_snd_frame
 
 
 def _sample_store() -> InMemorySubscriptionStore:
@@ -62,15 +58,3 @@ def test_generate_matches_export_routing_table():
     view = RoutingTableLegacyView(store)
     now = 1_700_000_000.0
     assert view.generate(now=now) == export_routing_table(store, now=now)
-
-
-def test_bridge_snd_frame_is_pickle_protocol_2():
-    store = _sample_store()
-    frame = encode_bridge_snd_frame(RoutingTableLegacyView(store).generate())
-    assert frame[:1] == REPORT_OPCODES["BRIDGE_SND"]
-    bridges = pickle.loads(frame[1:], encoding="bytes")
-    assert "730444" in bridges
-    row = bridges["730444"][0]
-    assert row["SYSTEM"] == "MASTER-A"
-    assert row["TGID"] == bytes_3(730444)
-    assert isinstance(row["ACTIVE"], bool)

@@ -107,24 +107,6 @@ class SubscriptionTableMixin:
             time.time(),
         )
 
-    def make_single_reflector(self, _tgid: bytes | int, _tmout: float, _sourcesystem: str) -> None:
-        """Legacy make_single_reflector: create reflector bridge #tgid with MASTERs and OBP."""
-        _tgid_s = str(int_id(_tgid) if not isinstance(_tgid, int) else _tgid)
-        _bridge = "#" + _tgid_s
-        _tgid_b = _tgid if isinstance(_tgid, bytes) and len(_tgid) >= 3 else bytes_3(int(_tgid_s))
-        if _tgid_s in ("9990", "9991", "9992", "9993", "9994", "9995", "9996", "9997", "9998", "9999"):
-            _tmout = 1.0 / 6.0
-        from ..subscription.subscription_table_ops import make_single_reflector_store
-
-        make_single_reflector_store(
-            self._subscription_store,
-            int(_tgid_s),
-            float(_tmout),
-            _sourcesystem,
-            self._config.get("SYSTEMS", {}),
-            time.time(),
-        )
-
     def make_default_reflector(self, reflector: int, _tmout: float, system: str) -> None:
         """Legacy make_default_reflector: ensure #reflector bridge exists and set system TS2 to ACTIVE/OFF."""
         from ..subscription.subscription_table_ops import make_default_reflector_store
@@ -179,11 +161,6 @@ class SubscriptionTableMixin:
             time.time(),
         )
 
-    def remove_bridge_system(self, system: str) -> None:
-        """Deactivate all legs for one system (legacy remove_bridge_system)."""
-        from ..subscription.subscription_reset_ops import deactivate_system_legs_store
-
-        deactivate_system_legs_store(self._subscription_store, system, time.time())
     def ensure_stat_relay(self, _tgid: bytes) -> None:
         """Legacy ensure_stat_relay: on-the-fly relay bridges for OBP traffic when GEN_STAT_BRIDGES is True."""
         _tgid_s = str(int_id(_tgid))
@@ -200,17 +177,6 @@ class SubscriptionTableMixin:
         from ..subscription.subscription_table_ops import deactivate_all_dynamic_relays_store
 
         deactivate_all_dynamic_relays_store(self._subscription_store, system_name)
-    def _readd_system_after_ua_timer_change(self, system: str, _tmout: float) -> None:
-        """After remove_bridge_system, re-add system to bridges that no longer have ts1/ts2 (legacy 1624-1639)."""
-        from ..subscription.subscription_table_ops import readd_system_after_ua_timer_change_store
-
-        readd_system_after_ua_timer_change_store(
-            self._subscription_store,
-            system,
-            float(_tmout),
-            time.time(),
-        )
-
     def apply_startup_subscriptions(self) -> None:
         """Legacy startup: set default reflectors and static TGs for each MASTER system."""
         prohibited_tgs = (0, 1, 2, 3, 4, 5, 9, 9990, 9991, 9992, 9993, 9994, 9995, 9996, 9997, 9998, 9999)

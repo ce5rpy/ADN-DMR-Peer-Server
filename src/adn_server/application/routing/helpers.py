@@ -98,13 +98,6 @@ def derive_peer_rf_mode(peer: dict[str, Any]) -> str:
     return RF_MODE_DUPLEX
 
 
-def apply_peer_rf_mode(peer: dict[str, Any]) -> str:
-    """Store derived ``RF_MODE`` on the peer after RPTC (or test harness setup)."""
-    mode = derive_peer_rf_mode(peer)
-    peer["RF_MODE"] = mode
-    return mode
-
-
 def peer_rf_mode(peer: dict[str, Any]) -> str:
     """Cached or derived simplex/duplex mode for downlink and monitor."""
     cached = peer.get("RF_MODE")
@@ -456,26 +449,6 @@ def inject_only_defer_obp_hbp_slot_contention(
     if source_is_obp:
         return True
     return source_is_hbp and connected_count > 1
-
-
-def _downlink_same_stream_for_peer(
-    slot_st: dict[str, Any],
-    peer_id: bytes,
-    stream_id: bytes,
-) -> bool:
-    """True when ``stream_id`` continues an RF leg owned by ``peer_id`` (downlink fan-out)."""
-    if not stream_id:
-        return False
-    pid = bytes_4(int_id(peer_id))
-    if stream_id == slot_st.get("RX_STREAM_ID"):
-        rx_peer = slot_st.get("RX_PEER")
-        if rx_peer is not None and bytes_4(int_id(rx_peer)) == pid:
-            return True
-    if stream_id == slot_st.get("TX_STREAM_ID"):
-        tx_peer = slot_st.get("TX_PEER")
-        if tx_peer is not None and bytes_4(int_id(tx_peer)) == pid:
-            return True
-    return False
 
 
 def hbp_slot_blocks_group_voice_for_peer(
@@ -1263,24 +1236,6 @@ def export_peer_ua_multi_tgs(
     return out
 
 
-def sync_peer_ua_memory_from_store(
-    peer: dict[str, Any],
-    peer_id: bytes,
-    sys_cfg: dict[str, Any],
-) -> None:
-    """Copy persisted UA rows from ``sys_cfg`` onto the live peer dict after DB restore."""
-    pk = bytes_4(int_id(peer_id))
-    store = sys_cfg.get("_PEER_UA_SESSIONS")
-    if isinstance(store, dict):
-        per_peer = store.get(pk)
-        if isinstance(per_peer, dict) and per_peer:
-            ua = peer.setdefault("_UA_SESSION", {})
-            ua.clear()
-            for slot, entry in per_peer.items():
-                if isinstance(entry, dict):
-                    ua[slot] = dict(entry)
-
-
 def restore_peer_ua_entries_to_memory(
     sys_cfg: dict[str, Any],
     peer_id: bytes,
@@ -1604,51 +1559,6 @@ def remap_dmrd_to_peer_static_slot(
     bits = packet[15]
     new_bits = bits ^ (1 << 7)
     return packet[:15] + bytes([new_bits]) + packet[16:]
-
-
-def repeat_downlink_report_slot(
-    wire_slot: int,
-    tgid: int,
-    peers: dict[Any, Any],
-    downlink_peer_ids: tuple[bytes, ...],
-    sys_cfg: dict[str, Any] | None,
-) -> int:
-    """Monitor timeslot for REPEAT downlink START/TX (OBP bridge uses target TS, not wire slot).
-
-    When every downlink peer maps the TG to the same OPTIONS or UA slot, use that slot so
-    CTABLE chips match RF (cross-slot static/dynamic). Otherwise fall back to wire slot.
-    """
-    display_slots: set[int] = set()
-    tgid_i = int(tgid)
-    for peer_id in downlink_peer_ids:
-        peer = peers.get(peer_id)
-        if not isinstance(peer, dict):
-            continue
-        display_slots.add(
-            peer_downlink_voice_slot(
-                peer, wire_slot, tgid_i, sys_cfg, peer_id=peer_id,
-            )
-        )
-    if len(display_slots) == 1:
-        return display_slots.pop()
-    return int(wire_slot)
-
-
-def peer_single_blocks_uplink(
-    peer: dict[str, Any],
-    peer_id: bytes,
-    slot: int,
-    tgid: int,
-    sys_cfg: dict[str, Any] | None,
-    *,
-    now: float | None = None,
-) -> bool:
-    """SINGLE=1 never blocks local TX; a new TG replaces the session (see ``register_peer_ua_session``).
-
-    Downlink exclusivity is enforced by :func:`peer_single_blocks_group_voice` only.
-    """
-    del peer, peer_id, slot, tgid, sys_cfg, now
-    return False
 
 
 def _peer_owns_dynamic_ua(

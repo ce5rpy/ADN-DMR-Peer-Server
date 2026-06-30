@@ -28,7 +28,8 @@ import pytest
 
 from adn_server.application.proxy import ProxyUseCases, peer_id_from_packet
 from adn_server.domain.proxy import ClientEndpoint
-from adn_server.domain.result import is_fail, is_ok
+from adn_server.domain.result import is_fail
+from adn_server.domain.result import Success
 from adn_server.domain.value_objects import bytes_4
 from adn_server.infrastructure.proxy import InMemoryPendingRptoQueue, InMemoryProxySlotStore
 
@@ -49,12 +50,12 @@ def _service(*, max_peers: int = _MAX_PEERS, black_list: tuple[int, ...] = ()) -
 def test_attach_creates_session_and_refreshes_client() -> None:
     svc = _service()
     first = svc.attach_client(_PEER_A, "10.0.0.1", 62031)
-    assert is_ok(first)
+    assert isinstance(first, Success)
     slot = first.value
     assert slot.client == ClientEndpoint(host="10.0.0.1", port=62031)
 
     again = svc.attach_client(_PEER_A, "10.0.0.2", 62032)
-    assert is_ok(again)
+    assert isinstance(again, Success)
     assert again.value.client == ClientEndpoint(host="10.0.0.2", port=62032)
     assert len(svc.list_slots()) == 1
 
@@ -69,7 +70,7 @@ def test_attach_fails_when_max_peers_exceeded() -> None:
     svc = _service(max_peers=4)
     for n in range(4):
         peer = bytes_4(1000 + n)
-        assert is_ok(svc.attach_client(peer, "10.0.0.1", 62031 + n))
+        assert isinstance(svc.attach_client(peer, "10.0.0.1", 62031 + n), Success)
     assert is_fail(svc.attach_client(bytes_4(9999), "10.0.0.9", 62099))
 
 
@@ -79,7 +80,7 @@ def test_detach_removes_session() -> None:
     removed = svc.detach_client(_PEER_A)
     assert removed == slot
     assert svc.resolve_client(_PEER_A) is None
-    assert is_ok(svc.attach_client(_PEER_B, "10.0.0.5", 62035))
+    assert isinstance(svc.attach_client(_PEER_B, "10.0.0.5", 62035), Success)
 
 
 def test_resolve_client_by_peer_id() -> None:
@@ -118,23 +119,10 @@ def test_attach_client_assigns_report_slot() -> None:
     svc = _service(max_peers=4)
     first = svc.attach_client(_PEER_A, "10.0.0.1", 62031)
     second = svc.attach_client(_PEER_B, "10.0.0.2", 62032)
-    assert is_ok(first)
-    assert is_ok(second)
+    assert isinstance(first, Success)
+    assert isinstance(second, Success)
     assert first.value.report_slot == 0
     assert second.value.report_slot == 1
-
-
-def test_schedule_and_dequeue_rpto() -> None:
-    svc = _service()
-    svc.attach_client(_PEER_A, "10.0.0.1", 62031)
-    payload = b"TS1=123;TS2=456;"
-    assert svc.schedule_rpto(_PEER_A, payload) is True
-    assert svc.schedule_rpto(bytes_4(999), payload) is False
-    pending = svc.next_pending_rpto()
-    assert pending is not None
-    assert pending.peer_id == _PEER_A
-    assert pending.payload == payload
-    assert pending.client == ClientEndpoint(host="10.0.0.1", port=62031)
 
 
 @pytest.mark.parametrize(

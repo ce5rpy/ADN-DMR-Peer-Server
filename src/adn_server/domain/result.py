@@ -52,13 +52,3 @@ Result = Success[T] | Fail[E]
 def is_fail(r: Result[T, E]) -> bool:
     """Return True if result is Fail."""
     return isinstance(r, Fail)
-
-
-def is_ok(r: Result[T, E]) -> bool:
-    """Return True if result is Success."""
-    return isinstance(r, Success)
-
-
-def unwrap_or(r: Result[T, E], default: T) -> T:
-    """Return value if Success, else default."""
-    return r.value if isinstance(r, Success) else default

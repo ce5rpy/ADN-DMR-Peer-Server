@@ -23,7 +23,6 @@
 from __future__ import annotations
 
 from adn_server.application.ports import SubscriptionStore
-from adn_server.domain.subscription import Subscription
 
 
 def store_has_table(store: SubscriptionStore, table_key: str) -> bool:
@@ -72,60 +71,3 @@ def active_system_slots_for_tg_in_store(
         if slot not in slots:
             slots.append(slot)
     return tuple(sorted(slots))
-
-
-def system_has_other_active_bridge_on_slot(
-    store: SubscriptionStore,
-    system: str,
-    slot: int,
-    incoming_tgid: int,
-) -> bool:
-    """True when another ACTIVE bridge leg occupies ``(system, slot)`` on a different TG.
-
-    Diagnostic / table export only — static OPTIONS bridges stay ACTIVE idle and must
-    not gate per-peer downlink (see ``peer_voice_slots`` / hangtime in ``downlink.py``).
-    """
-    incoming = int(incoming_tgid)
-    for sub in store.snapshot():
-        if sub.system.value != system:
-            continue
-        if int(sub.channel.slot) != int(slot):
-            continue
-        if not sub.is_active():
-            continue
-        if int(sub.target_tgid) != incoming:
-            return True
-    return False
-
-
-def bridge_timer_active_on_slot(
-    store: SubscriptionStore,
-    system: str,
-    slot: int,
-    tgid: int,
-    *,
-    now: float,
-) -> bool:
-    """True when an ACTIVE bridge leg for ``tgid`` on ``slot`` still has a live timer."""
-    tg = int(tgid)
-    for sub in store.snapshot():
-        if sub.system.value != system:
-            continue
-        if int(sub.channel.slot) != int(slot):
-            continue
-        if int(sub.target_tgid) != tg:
-            continue
-        if not sub.is_active():
-            continue
-        exp = sub.state.timer_expires_at
-        if exp is not None and float(exp) > float(now):
-            return True
-    return False
-
-
-def store_legs_for_table(
-    store: SubscriptionStore,
-    table_key: str,
-) -> tuple[Subscription, ...]:
-    """All subscription legs in a bridge table."""
-    return tuple(sub for sub in store.snapshot() if sub.table_key() == table_key)

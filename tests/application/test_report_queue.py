@@ -57,7 +57,8 @@ def test_enqueue_event_is_non_blocking():
     sender = QueuedReportSender(queue, inner)
     sender.send_routing_event("GROUP VOICE,START,RX,SYS,1,2,3,1,4")
     assert inner.events == []
-    assert queue.pending_count() == 1
+    assert queue.drain(inner) == 1
+    assert len(inner.events) == 1
 
 
 def test_drain_delivers_events_before_snapshots():

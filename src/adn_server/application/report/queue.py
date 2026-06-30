@@ -58,14 +58,6 @@ class BoundedReportQueue:
     def enqueue_bridge(self, bridges: dict[str, Any], *, incremental: bool = False) -> None:
         self._pending_bridge = (bridges, incremental)
 
-    def pending_count(self) -> int:
-        n = len(self._events)
-        if self._pending_config is not None:
-            n += 1
-        if self._pending_bridge is not None:
-            n += 1
-        return n
-
     def drain(self, sender: ReportSender) -> int:
         """Flush pending work to ``sender``; at most ``max_drain_per_tick`` voice events per call."""
         sent = 0

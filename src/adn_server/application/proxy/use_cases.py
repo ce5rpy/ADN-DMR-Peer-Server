@@ -139,25 +139,6 @@ class ProxyUseCases:
         slot = self._slots.get_by_peer(peer_id)
         return slot.client if slot else None
 
-    def schedule_rpto(self, peer_id: bytes, payload: bytes) -> bool:
-        """Queue RPTO body for a connected peer (self-service / login options)."""
-        slot = self._slots.get_by_peer(peer_id)
-        if slot is None:
-            return False
-        self._rpto_queue.enqueue(peer_id, payload)
-        return True
-
-    def next_pending_rpto(self) -> PendingRpto | None:
-        """Dequeue one pending RPTO with its client endpoint (for master inject loop)."""
-        item = self._rpto_queue.dequeue()
-        if item is None:
-            return None
-        peer_id, payload = item
-        slot = self._slots.get_by_peer(peer_id)
-        if slot is None:
-            return None
-        return PendingRpto(peer_id=peer_id, payload=payload, client=slot.client)
-
     def list_slots(self) -> tuple[ClientSlot, ...]:
         return self._slots.list_slots()
 

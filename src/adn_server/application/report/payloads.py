@@ -148,14 +148,6 @@ def peer_options_pass_only(options: Any) -> bool:
     return list(parsed.keys()) == ["PASS"] and bool(parsed["PASS"].strip())
 
 
-def peer_options_pass_valid(options: Any) -> bool:
-    """True when ``PASS=`` is absent or is the only key with a non-empty value."""
-    parsed = _parse_options_kv(options)
-    if "PASS" not in parsed:
-        return True
-    return peer_options_pass_only(options)
-
-
 def peer_options_static_valid(options: Any) -> bool:
     """False when TS1/TS2 static lists contain non-numeric tokens (legacy bridge_master parity).
 

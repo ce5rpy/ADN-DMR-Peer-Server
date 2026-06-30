@@ -24,11 +24,11 @@ from __future__ import annotations
 
 from adn_server.domain import bytes_4
 from adn_server.infrastructure.hbp_constants import BCKA, BCSQ, BCST, BCVE, DMRD
+from adn_server.infrastructure.mesh.obp_v1 import obp_hmac_sha1
 from adn_server.infrastructure.mesh.obp_v1 import (
     DMRD_V1_WIRE_LEN,
     build_bcka,
     build_bcsq,
-    build_bcst,
     build_bcve,
     build_dmrd_v1,
     verify_bcka,
@@ -73,7 +73,7 @@ def test_bcka_roundtrip() -> None:
 
 
 def test_bcst_roundtrip() -> None:
-    wire = build_bcst(_PASS)
+    wire = BCST + obp_hmac_sha1(_PASS, BCST)
     assert wire[:4] == BCST
     assert verify_bcst(wire, _PASS)
 

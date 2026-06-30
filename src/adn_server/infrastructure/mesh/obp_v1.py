@@ -102,10 +102,6 @@ def verify_bcsq(packet: bytes, passphrase: bytes) -> VerifiedBcsq | None:
     return VerifiedBcsq(tgid=packet[4:7], stream_id=packet[7:11])
 
 
-def build_bcst(passphrase: bytes) -> bytes:
-    return BCST + obp_hmac_sha1(passphrase, BCST)
-
-
 def verify_bcst(packet: bytes, passphrase: bytes) -> bool:
     if packet[:4] != BCST or len(packet) < 4 + OBP_HMAC_LEN:
         return False

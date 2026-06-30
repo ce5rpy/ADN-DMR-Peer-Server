@@ -30,7 +30,6 @@ from adn_server.application.routing.helpers import (
     peer_receives_group_tgid,
     peer_should_receive_group_voice,
     peer_single_blocks_group_voice,
-    peer_single_blocks_uplink,
     peer_single_exclusive_tgid,
     register_peer_ua_multi_tg,
     register_peer_ua_session,
@@ -223,7 +222,6 @@ def test_single_never_blocks_uplink_tx_switches_indigo() -> None:
     peer_id = _peer_id()
     now = 1_000_000.0
     register_peer_ua_session(peer, peer_id, 2, 7305, sys_cfg, now=now)
-    assert not peer_single_blocks_uplink(peer, peer_id, 2, 730, sys_cfg, now=now + 10)
     assert peer_single_blocks_group_voice(peer, 2, 730, sys_cfg, peer_id=peer_id, now=now + 10)
     register_peer_ua_session(peer, peer_id, 2, 730, sys_cfg, now=now + 120)
     assert not peer_single_blocks_group_voice(peer, 2, 730, sys_cfg, peer_id=peer_id, now=now + 121)

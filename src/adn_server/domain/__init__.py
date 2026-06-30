@@ -33,7 +33,7 @@ from .hbp_protocol import (
     STREAM_TO,
     VER,
 )
-from .result import Fail, Result, Success, is_fail, is_ok, unwrap_or
+from .result import Fail, Result, Success, is_fail
 from .subscription import (
     ActivationPolicy,
     AudioChannel,
@@ -78,8 +78,6 @@ __all__ = [
     "Success",
     "Fail",
     "is_fail",
-    "is_ok",
-    "unwrap_or",
     "HBPF_VOICE",
     "HBPF_VOICE_SYNC",
     "HBPF_DATA_SYNC",

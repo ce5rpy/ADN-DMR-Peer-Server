@@ -35,7 +35,6 @@ from twisted.protocols.basic import NetstringReceiver
 from adn_server.application.ports import ReportMqttPublisher, ReportWireEncoder
 from adn_server.application.report.monitor_topology import (
     expand_inject_proxy_systems,
-    remap_inject_proxy_voice_event_for_peer,
     remap_inject_proxy_voice_events,
 )
 from adn_server.application.routing.downlink import DownlinkContext
@@ -189,26 +188,3 @@ class ReportServerFactory(Factory):
             if self._mqtt is not None:
                 self._mqtt.publish_frames(frames)
 
-    def send_routing_event_for_peer(self, event: str, peer_key: bytes) -> None:
-        """Send one remapped voice event for a single hotspot (no fan-out)."""
-        peer_slots = self._peer_slot_map() if self._peer_slot_map is not None else None
-        downlink_ctx = None
-        if self._downlink_ctx_for_system is not None:
-            target = self._config.get("PROXY", {}).get("TARGET_SYSTEM")
-            if isinstance(target, str) and target:
-                downlink_ctx = self._downlink_ctx_for_system(target)
-        mapped = remap_inject_proxy_voice_event_for_peer(
-            event,
-            self._config,
-            self._systems,
-            peer_key,
-            peer_slots,
-            self._bridges,
-            downlink_ctx,
-        )
-        if not mapped:
-            return
-        frames = self._wire.bridge_event_frames(mapped)
-        self._broadcast_frames(frames)
-        if self._mqtt is not None:
-            self._mqtt.publish_frames(frames)

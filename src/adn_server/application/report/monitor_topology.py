@@ -119,18 +119,6 @@ def expand_inject_proxy_systems(
     return out
 
 
-def _slot_for_voice_peer(
-    peer_key: bytes,
-    *,
-    peers: dict[Any, dict[str, Any]],
-    peer_slots: dict[bytes, int] | None,
-    max_slots: int,
-) -> int | None:
-    connected = _connected_peers(peers)
-    slot_map = _resolve_slot_map(connected, peer_slots, max_slots=max_slots)
-    return slot_map.get(peer_key)
-
-
 def _peer_key_from_int(peer_key: Any) -> bytes:
     if isinstance(peer_key, bytes):
         return peer_key

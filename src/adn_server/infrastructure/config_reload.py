@@ -237,16 +237,6 @@ def reload_server_config(
     pending_stops: list[defer.Deferred] = []
     deferred_starts: list[tuple[str, dict[str, Any], Any, BindSpec | None]] = []
 
-    def _start_listener(name: str, sys_cfg: dict[str, Any], proto: Any) -> None:
-        if should_bind_udp is not None and not should_bind_udp(name, sys_cfg):
-            protocols[name] = proto
-            transports.pop(name, None)
-            log.info("(CONFIG-RELOAD) %s inject-only (no UDP bind)", name)
-            return
-        bind = bind_spec(sys_cfg)
-        transports[name] = listen_udp(name, bind, proto)
-        protocols[name] = proto
-
     def _schedule_start(name: str, sys_cfg: dict[str, Any], proto: Any, bind: BindSpec | None) -> None:
         deferred_starts.append((name, sys_cfg, proto, bind))
 

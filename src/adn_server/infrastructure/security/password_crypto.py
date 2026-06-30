@@ -66,24 +66,3 @@ def decrypt_password(encrypted_password: Optional[str], key_path: str = "config/
         return decrypted.decode("utf-8")
     except Exception:
         return encrypted_password
-
-
-def encrypt_password(password: Optional[str], key_path: str = "config/encryption_key.secret") -> Optional[str]:
-    """Encrypt a password for storage."""
-    if not password:
-        return password
-    fernet = get_fernet(key_path)
-    encrypted = fernet.encrypt(password.encode("utf-8"))
-    return encrypted.decode("utf-8")
-
-
-def is_encrypted(value: Optional[str], key_path: str = "config/encryption_key.secret") -> bool:
-    """Return True if value looks like Fernet-encrypted data."""
-    if not value:
-        return False
-    try:
-        fernet = get_fernet(key_path)
-        fernet.decrypt(value.encode("utf-8"))
-        return True
-    except Exception:
-        return False
