@@ -534,9 +534,22 @@ def peer_accepts_group_dmrd_packet(
     *,
     routed: bool = False,
 ) -> bool:
-    """True when group/vcsbk DMRD passes per-hotspot slot gate (OPTIONS checked separately)."""
+    """True when group/vcsbk DMRD passes per-hotspot slot gate (OPTIONS checked separately).
+
+    Special service TGs (9990–9999: echo/parrot/playback) are exempt from
+    per-peer slot contention. Their delivery is already gated by RX_PEER matching
+    in ``_peer_should_receive_dmrd``; applying the per-peer busy/hangtime gate
+    on top blocks the echo's own playback from reaching the loopback peer.
+    Legacy parity: ``bridge_master.to_target`` contention compares TGID + time
+    only, and these TGs have a short 10s timeout with no per-peer scoping.
+    """
     if not ctx.per_peer_contention():
         return True
+    parsed = parse_dmrd_route_fields(packet)
+    if parsed is not None:
+        _slot, tgid, _call_type = parsed
+        if is_special_tg(str(tgid)):
+            return True
     route_pkt = (
         packet
         if routed
