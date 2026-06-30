@@ -174,13 +174,20 @@ def hbp_slot_blocks_group_voice(
             return False
         if stream_id == slot_st.get("TX_STREAM_ID"):
             rx_stream = slot_st.get("RX_STREAM_ID")
-            # Bridge TX stamp must not preempt active RX on a different stream.
-            if slot_has_active_voice(slot_st, pkt_time):
-                if rx_stream and stream_id != rx_stream:
-                    pass
-                else:
-                    return False
-            elif is_vterm and rx_stream and int_id(rx_stream) != 0 and stream_id != rx_stream:
+            rx_stream_active = bool(rx_stream) and int_id(rx_stream) != 0
+            # RX leg is only "genuinely active" if it received voice within
+            # STREAM_TO — a stale RX_STREAM_ID from an earlier, ended stream
+            # must not block same-TX-stream packets (legacy contention compares
+            # TGID + time, never stream IDs).
+            rx_type = slot_st.get("RX_TYPE")
+            rx_genuinely_active = (
+                rx_stream_active
+                and stream_id != rx_stream
+                and rx_type is not None
+                and rx_type != HBPF_SLT_VTERM
+                and (pkt_time - float(slot_st.get("RX_TIME", 0) or 0)) < STREAM_TO
+            )
+            if rx_genuinely_active:
                 pass
             else:
                 return False
@@ -366,16 +373,14 @@ def peer_hotspot_voice_slot_busy(
         active_stream = active.get("stream_id")
         active_time = float(active.get("time", 0) or 0)
         age = pkt_time - active_time
-        if active.get("ingress"):
-            return True
-        if active.get("bridge_hold") and active_tgid and incoming_tgid != active_tgid:
-            # Bridge hold (ingress from own TX or listener) blocks a foreign TG only for
-            # GROUP_HANGTIME, matching legacy bridge_master contention on TX_TIME/RX_TIME.
-            if age <= group_hangtime:
-                return True
+        if isinstance(active, dict) and active_time > 0 and age >= _STALE_PEER_SESSION_TIMEOUT:
             peer_slots.pop(int(voice_slot), None)
             active = None
-        if isinstance(active, dict) and active_time > 0 and age >= _STALE_PEER_SESSION_TIMEOUT:
+        if isinstance(active, dict) and active.get("ingress"):
+            return True
+        if isinstance(active, dict) and active.get("bridge_hold") and active_tgid and incoming_tgid != active_tgid:
+            if age <= group_hangtime:
+                return True
             peer_slots.pop(int(voice_slot), None)
             active = None
         if isinstance(active, dict) and stream_id and active_stream:
@@ -404,7 +409,12 @@ def peer_hotspot_voice_slot_busy(
     ):
         return True
     if bytes_4(int_id(slot_st.get("RX_PEER", b""))) == pk:
-        if slot_has_active_voice(slot_st, pkt_time) and stream_id != slot_st.get("RX_STREAM_ID"):
+        rx_active = (
+            slot_st.get("RX_TYPE") is not None
+            and slot_st.get("RX_TYPE") != HBPF_SLT_VTERM
+            and (pkt_time - float(slot_st.get("RX_TIME", 0))) < STREAM_TO
+        )
+        if rx_active and stream_id != slot_st.get("RX_STREAM_ID"):
             return True
         if _peer_status_rx_hangtime_blocks(
             peer_id, slot_st, incoming_tgid_b, pkt_time, group_hangtime,
@@ -1236,6 +1246,46 @@ def export_peer_ua_multi_tgs(
     return out
 
 
+def master_dynamic_tg_slots(
+    sys_cfg: dict[str, Any],
+    tg_int: int,
+    *,
+    now: float | None = None,
+) -> set[int]:
+    """Slots where ``tg_int`` is an active dynamic UA session for any peer.
+
+    SINGLE=1 sessions come from ``_PEER_UA_SESSIONS``; SINGLE=0 multi-dynamic
+    sets from ``_PEER_UA_MULTI_TGS``. Used to activate SYSTEM bridge legs for
+    dynamic TGs (OBP/HBP inbound) the same way OPTIONS static TGs are activated.
+    """
+    if not is_ua_session_tgid(tg_int):
+        return set()
+    pkt_time = time.time() if now is None else now
+    slots: set[int] = set()
+    single_store = sys_cfg.get("_PEER_UA_SESSIONS")
+    if isinstance(single_store, dict):
+        for per_peer in single_store.values():
+            if not isinstance(per_peer, dict):
+                continue
+            for slot, entry in per_peer.items():
+                if not isinstance(entry, dict):
+                    continue
+                if int(entry.get("tgid", 0) or 0) != tg_int:
+                    continue
+                exp = float(entry.get("expires", 0) or 0)
+                if exp == 0.0 or exp > pkt_time:
+                    slots.add(int(slot))
+    multi_store = sys_cfg.get("_PEER_UA_MULTI_TGS")
+    if isinstance(multi_store, dict):
+        for per_peer in multi_store.values():
+            if not isinstance(per_peer, dict):
+                continue
+            for slot, tg_set in per_peer.items():
+                if isinstance(tg_set, set) and tg_int in {int(t) for t in tg_set}:
+                    slots.add(int(slot))
+    return slots
+
+
 def restore_peer_ua_entries_to_memory(
     sys_cfg: dict[str, Any],
     peer_id: bytes,
@@ -1403,6 +1453,11 @@ def peer_single_blocks_foreign_same_tg_downlink(
     Downlink listen locks (``source=listen``) only exclude other TGs via
     ``peer_single_blocks_group_voice``; same-TG stream overlap uses
     ``peer_hotspot_voice_slot_busy``.
+
+    A SINGLE=1 UA session for TG T is itself proof that the peer activated T
+    dynamically — the peer must receive downlink for T even when T is not in
+    the static OPTIONS list. Blocking it here would make dynamic TGs deaf to
+    their own activated TG once the local TX ends.
     """
     if not sys_cfg or not peer_single_mode(peer, sys_cfg):
         return False
@@ -1418,6 +1473,9 @@ def peer_single_blocks_foreign_same_tg_downlink(
     active = (peer_slots or {}).get(int(voice_slot))
     if isinstance(active, dict) and active.get("ingress"):
         return True
+    # UA session locked to this TG (dynamic activation) must hear its downlink.
+    if isinstance(entry, dict) and int(entry.get("tgid", 0) or 0) == incoming:
+        return False
     if isinstance(peer, dict) and peer_receives_group_tgid(peer, voice_slot, incoming):
         return False
     return True

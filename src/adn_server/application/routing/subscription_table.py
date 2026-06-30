@@ -766,23 +766,29 @@ class SubscriptionTableMixin:
         return (sorted(ts1_set), sorted(ts2_set))
 
     def apply_static_tg_to_bridge(self, tg_int: int) -> None:
-        """When a bridge was just created from OBP, mark MASTER systems that have this TG in static TS1/TS2 (runtime lists or OPTIONS) ACTIVE so the first OBP traffic reaches them."""
+        """Activate MASTER legs for a TG: static (OPTIONS/runtime) or dynamic UA sessions."""
+        from .helpers import master_dynamic_tg_slots
+
         systems_cfg = self._config.get("SYSTEMS", {})
         for _system in systems_cfg:
-            if systems_cfg.get(_system, {}).get("MODE") != "MASTER":
+            sys_cfg = systems_cfg.get(_system, {})
+            if sys_cfg.get("MODE") != "MASTER":
                 continue
-            if not systems_cfg.get(_system, {}).get("ENABLED", True):
+            if not sys_cfg.get("ENABLED", True):
                 continue
             parsed = self._merged_static_tg_lists_for_master(_system)
-            if not parsed:
-                continue
-            ts1_list, ts2_list = parsed
+            ts1_list, ts2_list = parsed or ([], [])
             ts1_timers, ts2_timers = self._static_tg_timer_maps_for_master(_system)
-            yaml_tmout = self._yaml_default_ua_timer(systems_cfg.get(_system, {}))
+            yaml_tmout = self._yaml_default_ua_timer(sys_cfg)
+            activated_slots: set[int] = set()
             if tg_int in ts1_list:
                 self.make_static_tg(tg_int, 1, ts1_timers.get(tg_int, yaml_tmout), _system)
+                activated_slots.add(1)
             if tg_int in ts2_list:
                 self.make_static_tg(tg_int, 2, ts2_timers.get(tg_int, yaml_tmout), _system)
+                activated_slots.add(2)
+            for slot in master_dynamic_tg_slots(sys_cfg, tg_int) - activated_slots:
+                self.make_static_tg(tg_int, slot, yaml_tmout, _system)
 
     def log_connected_systems_and_tgs(self) -> None:
         """Periodic debug: log each system, connection state, and static TGs (TS1/TS2). Only emits at DEBUG level."""

@@ -549,8 +549,13 @@ def test_single_lock_persists_after_vterm_until_timer_expires() -> None:
     )
 
 
-def test_single_blocks_foreign_same_tg_while_local_ua() -> None:
-    """J39JQ UA on 730502: slot gate blocks HP3ICC downlink on the same TG."""
+def test_single_allows_dynamic_same_tg_while_local_ua() -> None:
+    """SINGLE=1 UA on a dynamic TG: downlink on the same TG must pass.
+
+    A local PTT that activates a dynamic TG (not in OPTIONS) proves the peer
+    wants to listen to that TG. Blocking it would make the peer deaf to the
+    TG it just activated — the OBP/HBP round-trip regression.
+    """
     from adn_server.application.routing.helpers import peer_single_blocks_foreign_same_tg_downlink
 
     peer = {"OPTIONS": b"TS2=730500,730508;SINGLE=1;TIMER=60;"}
@@ -558,21 +563,8 @@ def test_single_blocks_foreign_same_tg_while_local_ua() -> None:
     peer_id = _peer_id()
     now = 1_000_000.0
     register_peer_ua_session(peer, peer_id, 2, 730502, sys_cfg, now=now)
-    assert peer_single_blocks_foreign_same_tg_downlink(
+    assert not peer_single_blocks_foreign_same_tg_downlink(
         peer, peer_id, 2, bytes_3(730502), None, sys_cfg, now=now + 10,
-    )
-    assert peer_hotspot_voice_slot_busy(
-        peer_id,
-        2,
-        bytes_4(0x22222222),
-        bytes_3(730502),
-        {"RX_TYPE": HBPF_SLT_VTERM, "TX_TYPE": HBPF_SLT_VTERM},
-        None,
-        None,
-        now + 0.1,
-        5.0,
-        peer=peer,
-        sys_cfg=sys_cfg,
     )
 
 

@@ -1700,3 +1700,43 @@ def test_single1_duplex_listen_lock_does_not_block_other_rf_slot() -> None:
         peer, 2, 730501, peer_id=hs, system="MASTER-A",
         subscription_store=store, connected_count=5, sys_cfg=sys_cfg, now=now + 9.0,
     )
+
+
+def test_stale_ingress_session_does_not_block_downlink_after_ptt_lost_vterm() -> None:
+    """Abandoned ingress session (MMDVM never sent VTERM) must expire after the
+    stale-session timeout, unblocking downlink again.
+
+    Reproduces the HP3ICC production case: the hotspot transmitted TG 7144 on
+    slot 1, the stream ended via stream_trimmer TIME OUT (no VTERM), and the
+    ``ingress`` flag in ``peer_voice_slots`` blocked every subsequent downlink
+    on that slot indefinitely — 287 dropped packets, slot 1 went silent.
+    """
+    from adn_server.application.routing.downlink import (
+        DownlinkContext,
+        peer_slot_blocks_downlink,
+    )
+
+    sys_cfg = {"GROUP_HANGTIME": 5.0, "MODE": "MASTER", "MAX_PEERS": 8, "SINGLE_MODE": False}
+    config = {"SYSTEMS": {"MASTER-A": sys_cfg}}
+    hs = bytes_4(714002301)
+    peer = {"OPTIONS": b"TS1=7144;"}
+    now = 1_000_000.0
+    ctx = DownlinkContext(
+        config=config,
+        system_name="MASTER-A",
+        sys_cfg=sys_cfg,
+        peers={hs: peer},
+        status={1: {"RX_TYPE": HBPF_SLT_VTERM, "TX_TYPE": HBPF_SLT_VTERM}},
+        connected_count=2,
+    )
+    ctx.peer_voice_slots[hs] = {
+        1: {"stream_id": bytes_4(0x4217547479), "tgid": 7144, "time": now, "ingress": True},
+    }
+    obp_vhead = b"".join([
+        b"DMRD", b"\x00", bytes_3(7140023), bytes_3(7144), b"\x00\x00\x00\x00",
+        bytes([0x00 | (HBPF_DATA_SYNC << 4) | HBPF_SLT_VHEAD]), bytes_4(0xDDDDDDDD),
+    ] + [b"\x00"] * 33)
+    # Within STREAM_TO: ingress is still active, downlink blocked.
+    assert peer_slot_blocks_downlink(ctx, hs, peer, obp_vhead, pkt_time=now + 0.1)
+    # After stale-session timeout: abandoned ingress session expires, downlink restored.
+    assert not peer_slot_blocks_downlink(ctx, hs, peer, obp_vhead, pkt_time=now + 6.0)

@@ -84,3 +84,54 @@ def test_ensure_dynamic_relay_store_obp_leg() -> None:
     ensure_dynamic_relay_store(store, 7305, "MASTER-A", 2, 10.0, config["SYSTEMS"], now=1.0)
     obp = next(s for s in store.snapshot() if s.system.value == "OBP-CL")
     assert obp.is_active()
+
+
+def test_master_dynamic_tg_slots_single_mode() -> None:
+    """SINGLE=1 UA session is detected for a dynamic TG not in OPTIONS."""
+    from adn_server.application.routing.helpers import master_dynamic_tg_slots
+    from adn_server.domain import bytes_4
+
+    sys_cfg = {"_PEER_UA_SESSIONS": {bytes_4(730039101): {2: {"tgid": 7300, "expires": 9999999.0}}}}
+    assert master_dynamic_tg_slots(sys_cfg, 7300, now=1000.0) == {2}
+
+
+def test_master_dynamic_tg_slots_multi_mode() -> None:
+    """SINGLE=0 multi-dynamic TG set is detected."""
+    from adn_server.application.routing.helpers import master_dynamic_tg_slots
+    from adn_server.domain import bytes_4
+
+    sys_cfg = {"_PEER_UA_MULTI_TGS": {bytes_4(730039101): {2: {7300, 7305}}}}
+    assert master_dynamic_tg_slots(sys_cfg, 7300, now=1000.0) == {2}
+
+
+def test_master_dynamic_tg_slots_expired_single() -> None:
+    """Expired SINGLE=1 session is not detected."""
+    from adn_server.application.routing.helpers import master_dynamic_tg_slots
+    from adn_server.domain import bytes_4
+
+    sys_cfg = {"_PEER_UA_SESSIONS": {bytes_4(730039101): {2: {"tgid": 7300, "expires": 500.0}}}}
+    assert master_dynamic_tg_slots(sys_cfg, 7300, now=1000.0) == set()
+
+
+def test_apply_static_tg_to_bridge_activates_dynamic_tg() -> None:
+    """A dynamic TG not in OPTIONS is activated when a peer has an active UA session for it."""
+    from tests.harness.deterministic import DeterministicScenario, add_openbridge_system
+    from adn_server.domain import bytes_4
+
+    config = minimal_config(("MASTER-A",))
+    add_openbridge_system(config, "OBP-CL")
+    config["SYSTEMS"]["MASTER-A"]["_PEER_UA_SESSIONS"] = {
+        bytes_4(730039101): {2: {"tgid": 7300, "expires": 9999999.0}}
+    }
+    scenario = DeterministicScenario(config)
+    scenario.routing.ensure_dynamic_relay(bytes_3(7300), "MASTER-A", 2, 10.0)
+    # Simulate OBP-CL/TS1 source active (as _ensure_obp_source_for_tg would do)
+    scenario.routing._ensure_obp_source_for_tg("OBP-CL", "7300", bytes_3(7300), 7300)
+    # Before fix: SYSTEM/7300/TS2 is IDLE, OBP traffic can't bridge
+    scenario.routing.apply_static_tg_to_bridge(7300)
+    legs = [
+        s for s in scenario.subscription_store.snapshot()
+        if s.system.value == "MASTER-A" and int(s.target_tgid) == 7300
+    ]
+    ts2 = next(s for s in legs if int(s.channel.slot) == 2)
+    assert ts2.is_active(), "SYSTEM TS2 leg for dynamic TG 7300 should be ACTIVE"
