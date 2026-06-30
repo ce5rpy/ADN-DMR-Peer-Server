@@ -25,7 +25,6 @@ from __future__ import annotations
 from adn_server.application.routing.helpers import (
     clear_peer_rx_status_slots,
     clear_peer_ua_sessions,
-    peer_hotspot_voice_slot_busy,
     peer_options_static_tg_slot,
     peer_receives_group_tgid,
     peer_should_receive_group_voice,

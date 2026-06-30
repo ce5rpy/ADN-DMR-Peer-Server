@@ -24,7 +24,6 @@ from __future__ import annotations
 
 from adn_server.application.subscription.routing_table_export import export_routing_table
 from adn_server.application.subscription.routing_table_legacy_view import RoutingTableLegacyView
-from adn_server.domain import bytes_3
 from adn_server.domain.subscription import (
     ActivationPolicy,
     AudioChannel,

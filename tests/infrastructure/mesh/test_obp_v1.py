@@ -24,13 +24,13 @@ from __future__ import annotations
 
 from adn_server.domain import bytes_4
 from adn_server.infrastructure.hbp_constants import BCKA, BCSQ, BCST, BCVE, DMRD
-from adn_server.infrastructure.mesh.obp_v1 import obp_hmac_sha1
 from adn_server.infrastructure.mesh.obp_v1 import (
     DMRD_V1_WIRE_LEN,
     build_bcka,
     build_bcsq,
     build_bcve,
     build_dmrd_v1,
+    obp_hmac_sha1,
     verify_bcka,
     verify_bcsq,
     verify_bcst,

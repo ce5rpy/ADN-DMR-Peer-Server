@@ -28,8 +28,7 @@ import pytest
 
 from adn_server.application.proxy import ProxyUseCases, peer_id_from_packet
 from adn_server.domain.proxy import ClientEndpoint
-from adn_server.domain.result import is_fail
-from adn_server.domain.result import Success
+from adn_server.domain.result import Success, is_fail
 from adn_server.domain.value_objects import bytes_4
 from adn_server.infrastructure.proxy import InMemoryPendingRptoQueue, InMemoryProxySlotStore
 

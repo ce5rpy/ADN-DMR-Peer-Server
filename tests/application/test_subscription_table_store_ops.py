@@ -116,6 +116,7 @@ def test_master_dynamic_tg_slots_expired_single() -> None:
 def test_apply_static_tg_to_bridge_activates_dynamic_tg() -> None:
     """A dynamic TG not in OPTIONS is activated when a peer has an active UA session for it."""
     from tests.harness.deterministic import DeterministicScenario, add_openbridge_system
+
     from adn_server.domain import bytes_4
 
     config = minimal_config(("MASTER-A",))

@@ -27,7 +27,7 @@ from collections.abc import Sequence
 
 from adn_server.application.ports import PendingRptoQueue, ProxyIpBlacklist, ProxySlotStore
 from adn_server.domain.errors import DomainError
-from adn_server.domain.proxy import ClientEndpoint, ClientSlot, PendingRpto, SessionTeardown
+from adn_server.domain.proxy import ClientEndpoint, ClientSlot, SessionTeardown
 from adn_server.domain.result import Fail, Result, Success
 from adn_server.domain.value_objects import int_id
 
