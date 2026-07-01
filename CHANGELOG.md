@@ -2,6 +2,166 @@
 
 All notable changes to **adn-server** are documented here.
 
+<!-- version list -->
+
+## v2.1.1 (2026-06-22)
+
+### Bug Fixes
+
+- Block downlink DMRD to busy hotspot RF slot per peer
+  ([`ecca56f`](https://github.com/ce5rpy/ADN-DMR-Peer-Server/commit/ecca56febdb6698aee939099d0c37f1205ee941c))
+
+
+## v2.1.0 (2026-06-22)
+
+### Bug Fixes
+
+- Allow same static TG on TS1 and TS2 for duplex routing
+  ([`e7d3dab`](https://github.com/ce5rpy/ADN-DMR-Peer-Server/commit/e7d3dab4c07000fec92a384c87f892d2d22affa3))
+
+- Inject-only contention, dynamic TG restore, and UA timer parity
+  ([#24](https://github.com/ce5rpy/ADN-DMR-Peer-Server/pull/24),
+  [`c5cbdb2`](https://github.com/ce5rpy/ADN-DMR-Peer-Server/commit/c5cbdb233112841c547bbc2ac3b4dfe5ed26d51f))
+
+- Inject-only slot contention, monitor events, and UA timer display
+  ([#24](https://github.com/ce5rpy/ADN-DMR-Peer-Server/pull/24),
+  [`c5cbdb2`](https://github.com/ce5rpy/ADN-DMR-Peer-Server/commit/c5cbdb233112841c547bbc2ac3b4dfe5ed26d51f))
+
+- Reject malformed peer OPTIONS for monitor and downlink
+  ([`08c648f`](https://github.com/ce5rpy/ADN-DMR-Peer-Server/commit/08c648fdc208822274ce50d0f8d3a64447e2972a))
+
+- Slot contention, simplex RF mode, and static TG dedup
+  ([`1931682`](https://github.com/ce5rpy/ADN-DMR-Peer-Server/commit/1931682337da141bd342cf9a65bd79ae3e78fcd6))
+
+### Documentation
+
+- Document simplex downlink TS2 choice (MMDVMHost DMO parity)
+  ([`49a9605`](https://github.com/ce5rpy/ADN-DMR-Peer-Server/commit/49a96055e93579870c38f7c7f152e17293f39406))
+
+### Features
+
+- Dynamic TG restore, OBP cross-slot downlink, and DB migration 005
+  ([#24](https://github.com/ce5rpy/ADN-DMR-Peer-Server/pull/24),
+  [`c5cbdb2`](https://github.com/ce5rpy/ADN-DMR-Peer-Server/commit/c5cbdb233112841c547bbc2ac3b4dfe5ed26d51f))
+
+
+## v2.0.6 (2026-06-22)
+
+### Bug Fixes
+
+- Tear down REPEAT and bridge TX per stream on concurrent duplex slots
+  ([#19](https://github.com/ce5rpy/ADN-DMR-Peer-Server/pull/19),
+  [`de05504`](https://github.com/ce5rpy/ADN-DMR-Peer-Server/commit/de05504a700193706dbae2acc0892b26daff3482))
+
+### Chores
+
+- **ci**: Require merge-commit release PRs for develop ff sync
+  ([#21](https://github.com/ce5rpy/ADN-DMR-Peer-Server/pull/21),
+  [`374cc68`](https://github.com/ce5rpy/ADN-DMR-Peer-Server/commit/374cc686efcdbae314e8b67d125032a0b1d22722))
+
+
+## v2.0.5 (2026-06-21)
+
+### Bug Fixes
+
+- Cross-slot DMRD remap and monitor TE slot
+  ([#18](https://github.com/ce5rpy/ADN-DMR-Peer-Server/pull/18),
+  [`5945d66`](https://github.com/ce5rpy/ADN-DMR-Peer-Server/commit/5945d6641b4056a77b678093f5fead8491263eb4))
+
+- Remap REPEAT DMRD slot to peer OPTIONS for cross-slot downlink
+  ([#18](https://github.com/ce5rpy/ADN-DMR-Peer-Server/pull/18),
+  [`5945d66`](https://github.com/ce5rpy/ADN-DMR-Peer-Server/commit/5945d6641b4056a77b678093f5fead8491263eb4))
+
+- Restore cross-slot downlink and REPEAT monitor activity
+  ([#18](https://github.com/ce5rpy/ADN-DMR-Peer-Server/pull/18),
+  [`5945d66`](https://github.com/ce5rpy/ADN-DMR-Peer-Server/commit/5945d6641b4056a77b678093f5fead8491263eb4))
+
+### Chores
+
+- **ci**: Sync develop via merge instead of force-push
+  ([#18](https://github.com/ce5rpy/ADN-DMR-Peer-Server/pull/18),
+  [`5945d66`](https://github.com/ce5rpy/ADN-DMR-Peer-Server/commit/5945d6641b4056a77b678093f5fead8491263eb4))
+
+
+## v2.0.4 (2026-06-21)
+
+### Bug Fixes
+
+- Cross-slot downlink and REPEAT monitor activity
+  ([`f561b26`](https://github.com/ce5rpy/ADN-DMR-Peer-Server/commit/f561b2685c53b8625b87ce73d599c0276fba8fa1))
+
+### Chores
+
+- **ci**: Sync develop via merge after release
+  ([`e05dc00`](https://github.com/ce5rpy/ADN-DMR-Peer-Server/commit/e05dc003185b49522d0838ed33c8074303f3600c))
+
+
+## v2.0.3 (2026-06-21)
+
+### Bug Fixes
+
+- **ci**: Force-with-lease when syncing develop after release
+  ([#13](https://github.com/ce5rpy/ADN-DMR-Peer-Server/pull/13),
+  [`5fad3b5`](https://github.com/ce5rpy/ADN-DMR-Peer-Server/commit/5fad3b515fe17ca94f33b49f540956ea0e2ae178))
+
+
+## v2.0.2 (2026-06-21)
+
+### Bug Fixes
+
+- Keep YAML SINGLE_MODE on multi-peer masters for dynamic TGs
+  ([#12](https://github.com/ce5rpy/ADN-DMR-Peer-Server/pull/12),
+  [`47c7e33`](https://github.com/ce5rpy/ADN-DMR-Peer-Server/commit/47c7e33c7adc98abc6134547f0539f6cd9f54b59))
+
+- SINGLE=0 multi-dynamic TGs and YAML SINGLE_MODE defaults
+  ([#12](https://github.com/ce5rpy/ADN-DMR-Peer-Server/pull/12),
+  [`47c7e33`](https://github.com/ce5rpy/ADN-DMR-Peer-Server/commit/47c7e33c7adc98abc6134547f0539f6cd9f54b59))
+
+### Chores
+
+- Run releases on master only, not develop
+  ([#12](https://github.com/ce5rpy/ADN-DMR-Peer-Server/pull/12),
+  [`47c7e33`](https://github.com/ce5rpy/ADN-DMR-Peer-Server/commit/47c7e33c7adc98abc6134547f0539f6cd9f54b59))
+
+
+## v2.0.1 (2026-06-20)
+
+### Bug Fixes
+
+- Filter standalone DMRA downlink by TG subscription
+  ([#10](https://github.com/ce5rpy/ADN-DMR-Peer-Server/pull/10),
+  [`0dcdf54`](https://github.com/ce5rpy/ADN-DMR-Peer-Server/commit/0dcdf54a07328f7203b02809cd7e26255987258e))
+
+### Chores
+
+- Run releases on master only, not develop
+  ([#10](https://github.com/ce5rpy/ADN-DMR-Peer-Server/pull/10),
+  [`0dcdf54`](https://github.com/ce5rpy/ADN-DMR-Peer-Server/commit/0dcdf54a07328f7203b02809cd7e26255987258e))
+
+
+## v2.0.0 (2026-06-19)
+
+### Chores
+
+- Add release workflow and semver versioning (semver from 2.0.0; no RC phase)
+  ([`013b766`](https://github.com/ce5rpy/ADN-DMR-Peer-Server/commit/013b766a30dca0128daf35c116385cf234410b99))
+
+
+## [2.0.0-rc.4] - 2026-06-18
+
+### Added
+
+- **Docs (MkDocs EN/ES):** bridges vs subscriptions, performance notes, report-proxy guide for legacy dashboards, Mermaid diagrams in architecture/monitoring pages.
+
+### Fixed
+
+- **Echo TG 9990** — excluded from SINGLE/UA session locks; inject-only monitor remap for echo TX legs; bridge TX report field 5 resolves hotspot radio id for ECHO/hotspot live chips.
+- **Dynamic TG restore** — `sync_restored_dynamic_tgs` passes `now=` as keyword (fixes TypeError on echo startup after DB restore).
+
+### Compatibility
+
+- **Monitor:** adn-monitor **2.0.0-rc.5**.
+
 ## [2.0.0-rc.3] - 2026-06-17
 
 ### Added
