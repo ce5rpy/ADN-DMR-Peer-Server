@@ -81,6 +81,13 @@ class ProxySelfServiceRepository(ProxySelfServiceStore):
             ).addErrback(
                 lambda f: logger.error("(SELF_SERVICE) psswd: %s", f.getTraceback())
             )
+        elif action == "clear_psswd":
+            self._pool.runOperation(
+                "UPDATE Clients SET psswd=NULL WHERE dmr_id=%s",
+                (peer_id_bytes,),
+            ).addErrback(
+                lambda f: logger.error("(SELF_SERVICE) clear_psswd: %s", f.getTraceback())
+            )
         elif action == "opt_rcvd":
             self._pool.runOperation(
                 "UPDATE Clients SET opt_rcvd=1 WHERE dmr_id=%s",

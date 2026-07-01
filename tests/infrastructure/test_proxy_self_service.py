@@ -135,15 +135,44 @@ def test_self_service_settings_reads_database_and_self_service_keys() -> None:
     assert ss["pbkdf2_iterations"] == 2000
 
 
-def test_rptc_login_opt_skips_without_pass() -> None:
-    bridge, sink, store, _sender = _bridge()
+def test_rptc_schedules_fallback_when_no_pass() -> None:
+    """RPTC without prior PASS schedules a fallback timer to fetch DB options."""
+    bridge, _sink, store, _sender = _bridge()
     peer = bytes_4(7300444)
     store.options_by_peer[peer] = "TS2=730444;"
     packet = RPTC + peer + b"CE1ILI  " + b"\x00" * 85 + b"4"
     bridge.before_inject(packet, ("192.168.1.10", 62031), peer)
     assert ("ins_conf", peer) in store.actions
-    _run_deferred(bridge._login_opt(peer))
-    assert sink.injected == []
+    assert peer in bridge._opt_timers
+
+
+def test_rptc_fallback_fetches_db_options() -> None:
+    """When the fallback timer fires (no RPTO), DB options are fetched and injected."""
+    bridge, sink, store, _sender = _bridge()
+    peer = bytes_4(7300444)
+    store.options_by_peer[peer] = "TS2=730444;SINGLE=1;"
+    packet = RPTC + peer + b"CE1ILI  " + b"\x00" * 85 + b"4"
+    bridge.before_inject(packet, ("192.168.1.10", 62031), peer)
+    # Simulate the timer firing
+    bridge._rptc_fallback_fire(peer)
+    assert peer in bridge._mysql_option_peers
+    assert sink.injected
+    assert sink.injected[0][0] == RPTO + peer + b"TS2=730444;SINGLE=1;"
+
+
+def test_rpto_cancels_rptc_fallback() -> None:
+    """RPTO with content cancels the RPTC fallback timer."""
+    bridge, _sink, _store, _sender = _bridge()
+    peer = bytes_4(7300444)
+    packet = RPTC + peer + b"CE1ILI  " + b"\x00" * 85 + b"4"
+    bridge.before_inject(packet, ("192.168.1.10", 62031), peer)
+    assert peer in bridge._opt_timers
+    bridge.before_inject(
+        RPTO + peer + b"TS2=730;SINGLE=0;",
+        ("192.168.1.10", 62031),
+        peer,
+    )
+    assert peer not in bridge._opt_timers
 
 
 def test_rptc_after_pass_reinjects_rpto() -> None:
@@ -192,7 +221,58 @@ def test_rpto_pass_fetches_options_immediately() -> None:
     assert sink.injected[0][0] == RPTO + peer + b"TS2=730444;SINGLE=1;"
 
 
+def test_rpto_empty_fetches_options_from_db() -> None:
+    """Empty RPTO payload: BD is the authority (like PASS). Password cleared."""
+    bridge, sink, store, sender = _bridge()
+    peer = bytes_4(7300444)
+    store.options_by_peer[peer] = "TS2=730444;SINGLE=1;"
+    skip = bridge.before_inject(
+        RPTO + peer,
+        ("192.168.1.10", 62031),
+        peer,
+    )
+    assert skip is True
+    assert ("clear_psswd", peer) in store.actions
+    assert sender.sent and sender.sent[0][0][:6] == b"RPTACK"
+    assert sink.injected
+    assert sink.injected[0][0] == RPTO + peer + b"TS2=730444;SINGLE=1;"
+
+
+def test_rpto_empty_no_db_options_skips_inject() -> None:
+    """Empty RPTO + empty BD: no inject; server YAML defaults apply."""
+    bridge, sink, store, sender = _bridge()
+    peer = bytes_4(7300444)
+    skip = bridge.before_inject(
+        RPTO + peer,
+        ("192.168.1.10", 62031),
+        peer,
+    )
+    assert skip is True
+    assert ("clear_psswd", peer) in store.actions
+    assert sender.sent and sender.sent[0][0][:6] == b"RPTACK"
+    assert sink.injected == []
+
+
+def test_rpto_with_content_clears_password_and_passes_through() -> None:
+    """OPTIONS with content (no PASS): hotspot is authority; password cleared
+    so only IP auto-login works; user cannot login by password (NULL hash)."""
+    bridge, sink, store, sender = _bridge()
+    peer = bytes_4(7300444)
+    skip = bridge.before_inject(
+        RPTO + peer + b"TS2=730;SINGLE=0;",
+        ("192.168.1.10", 62031),
+        peer,
+    )
+    assert skip is False
+    assert ("clear_psswd", peer) in store.actions
+    assert ("opt_rcvd", peer) in store.actions
+    assert sender.sent and sender.sent[0][0][:6] == b"RPTACK"
+    assert sink.injected == []
+    assert peer not in bridge._mysql_option_peers
+
+
 def test_send_opts_skips_without_pass() -> None:
+    """Peer that sent OPTIONS with content (not in _mysql_option_peers) is skipped by send_opts."""
     bridge, sink, store, _sender = _bridge()
     peer = bytes_4(7300444)
     store.pending_modified = [(peer, "TS2=730444;")]

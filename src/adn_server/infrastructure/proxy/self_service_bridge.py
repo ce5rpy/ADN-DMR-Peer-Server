@@ -27,6 +27,7 @@ import struct
 from hashlib import pbkdf2_hmac
 from typing import Any
 
+from twisted.internet import reactor
 from twisted.internet.defer import inlineCallbacks
 from twisted.internet.interfaces import IDelayedCall
 from twisted.internet.task import LoopingCall
@@ -40,6 +41,9 @@ from adn_server.application.proxy import ProxyUseCases
 from adn_server.domain.proxy import ClientEndpoint
 from adn_server.domain.value_objects import int_id
 from adn_server.infrastructure.hbp_constants import RPTACK, RPTC, RPTCL, RPTO
+from adn_server.infrastructure.options_redaction import redact_pass_in_options
+
+_RPTC_FALLBACK_DELAY = 10.0
 
 
 def _peer_id_from_db(value: Any) -> bytes | None:
@@ -114,6 +118,11 @@ class ProxySelfServiceBridge:
         command = data[:4]
         host, port = addr
         if command == RPTO:
+            self._log.info(
+                "(SELF_SERVICE) RPTO from %s:%s peer=%s len=%d payload=%s",
+                host, port, int_id(peer_id), len(data),
+                redact_pass_in_options(data[8:8 + 40]),
+            )
             return self._handle_rpto(data, peer_id, host, port)
         if command == RPTC and len(data) >= 5 and data[:5] != RPTCL:
             self._handle_rptc(data, peer_id, host)
@@ -125,13 +134,22 @@ class ProxySelfServiceBridge:
         self._store.updt_tbl("log_out", peer_id)
 
     def _handle_rptc(self, data: bytes, peer_id: bytes, host: str) -> None:
-        if self._use_cases.resolve_client(peer_id) is None:
+        client = self._use_cases.resolve_client(peer_id)
+        if client is None:
+            self._log.debug(
+                "(SELF_SERVICE) RPTC from %s peer=%s but peer NOT in proxy slots",
+                host, int_id(peer_id),
+            )
             return
         mode = data[97:98].decode("utf-8", errors="replace") if len(data) >= 98 else "4"
         callsign = data[8:16].rstrip().decode("utf-8", errors="replace")
         self._store.ins_conf(int_id(peer_id), peer_id, callsign, host, mode)
         if peer_id in self._mysql_option_peers:
             self._fetch_options_now(peer_id)
+            return
+        # Schedule a fallback fetch: if the hotspot does not send an RPTO within the
+        # delay window, treat it the same as an empty RPTO (BD is the authority).
+        self._schedule_rptc_fallback(peer_id)
 
     def _handle_rpto(
         self,
@@ -140,36 +158,100 @@ class ProxySelfServiceBridge:
         host: str,
         port: int,
     ) -> bool:
-        if self._use_cases.resolve_client(peer_id) is None:
+        client = self._use_cases.resolve_client(peer_id)
+        if client is None:
+            self._log.warning(
+                "(SELF_SERVICE) RPTO from %s:%s peer=%s but peer NOT in proxy slots — "
+                "cannot process PASS/OPTIONS",
+                host, port, int_id(peer_id),
+            )
             return False
-        if data[8:].upper().startswith(b"PASS=") and len(data) >= 13:
-            psswd_raw = data[13:]
-            if len(psswd_raw) >= 6:
-                dk = pbkdf2_hmac(
-                    "sha256",
-                    psswd_raw,
-                    self._pbkdf2_salt.encode("utf-8"),
-                    self._pbkdf2_iterations,
-                ).hex()
-                self._store.updt_tbl("psswd", peer_id, psswd=dk)
-                self._client_sender.send_to_client(
-                    RPTACK + peer_id,
-                    ClientEndpoint(host=host, port=port),
+        payload = data[8:].rstrip(b"\x00")
+        if payload.upper().startswith(b"PASS="):
+            psswd_raw = payload[5:]
+            if len(psswd_raw) < 6:
+                self._log.warning(
+                    "(SELF_SERVICE) RPTO PASS= from %s (peer=%s) too short (%d bytes) — "
+                    "skipped, packet NOT injected to master",
+                    host, int_id(peer_id), len(psswd_raw),
                 )
-                self._log.info("(SELF_SERVICE) Password stored for: %s", int_id(peer_id))
-                self._mysql_option_peers.add(peer_id)
-                self._fetch_options_now(peer_id)
+                return True
+            dk = pbkdf2_hmac(
+                "sha256",
+                psswd_raw,
+                self._pbkdf2_salt.encode("utf-8"),
+                self._pbkdf2_iterations,
+            ).hex()
+            self._store.updt_tbl("psswd", peer_id, psswd=dk)
+            self._client_sender.send_to_client(
+                RPTACK + peer_id,
+                ClientEndpoint(host=host, port=port),
+            )
+            self._log.info("(SELF_SERVICE) Password stored for: %s", int_id(peer_id))
+            self._mysql_option_peers.add(peer_id)
+            self._fetch_options_now(peer_id)
             return True
-        self._mysql_option_peers.discard(peer_id)
-        self._store.updt_tbl("opt_rcvd", peer_id)
-        self._cancel_opt_timer(peer_id)
-        self._log.info("(SELF_SERVICE) Options received from: %s", int_id(peer_id))
-        return False
+        if payload:
+            # Hotspot sent OPTIONS directly (e.g. TS2=730;SINGLE=0;): it is the authority.
+            # Clear any stored password so only IP auto-login works (no password login).
+            self._clear_password(peer_id, host, port)
+            self._mysql_option_peers.discard(peer_id)
+            self._store.updt_tbl("opt_rcvd", peer_id)
+            self._cancel_opt_timer(peer_id)
+            self._log.info("(SELF_SERVICE) Options received from: %s", int_id(peer_id))
+            return False
+        # Empty payload: BD is the authority. Same treatment as PASS (password cleared).
+        self._clear_password(peer_id, host, port)
+        self._mysql_option_peers.add(peer_id)
+        self._fetch_options_now(peer_id)
+        self._log.info(
+            "(SELF_SERVICE) Empty OPTIONS from %s (peer=%s) — BD is authority",
+            host, int_id(peer_id),
+        )
+        return True
+
+    def _clear_password(
+        self, peer_id: bytes, host: str, port: int
+    ) -> None:
+        """Clear stored password (NULL) when the hotspot does not send PASS.
+        IP auto-login still works; password login is impossible with a NULL hash."""
+        self._store.updt_tbl("clear_psswd", peer_id)
+        self._client_sender.send_to_client(
+            RPTACK + peer_id,
+            ClientEndpoint(host=host, port=port),
+        )
 
     def _cancel_opt_timer(self, peer_id: bytes) -> None:
         timer = self._opt_timers.pop(peer_id, None)
         if timer is not None and timer.active():
             timer.cancel()
+
+    def _schedule_rptc_fallback(self, peer_id: bytes) -> None:
+        """If the hotspot does not send RPTO within the delay, fetch OPTIONS from DB.
+
+        Mirrors the legacy proxy 10s ``login_opt`` timer: when no RPTO arrives
+        after RPTC, the server treats it as "BD is the authority" and fetches
+        OPTIONS from MySQL so the peer gets its configured static TGs.
+        """
+        self._cancel_opt_timer(peer_id)
+        timer = reactor.callLater(
+            _RPTC_FALLBACK_DELAY, self._rptc_fallback_fire, peer_id
+        )
+        self._opt_timers[peer_id] = timer
+
+    def _rptc_fallback_fire(self, peer_id: bytes) -> None:
+        """Called by the RPTC fallback timer if no RPTO was received."""
+        self._opt_timers.pop(peer_id, None)
+        if self._use_cases.resolve_client(peer_id) is None:
+            return
+        if peer_id in self._mysql_option_peers:
+            return
+        self._log.info(
+            "(SELF_SERVICE) No RPTO from peer=%s after %.0fs — fetching DB options",
+            int_id(peer_id), _RPTC_FALLBACK_DELAY,
+        )
+        self._mysql_option_peers.add(peer_id)
+        self._fetch_options_now(peer_id)
 
     def _fetch_options_now(self, peer_id: bytes) -> None:
         """Load OPTIONS from MySQL and inject RPTO to the server (no legacy 10s delay)."""
@@ -202,15 +284,33 @@ class ProxySelfServiceBridge:
     def _login_opt(self, peer_id: bytes) -> None:
         self._opt_timers.pop(peer_id, None)
         if peer_id not in self._mysql_option_peers:
+            self._log.debug(
+                "(SELF_SERVICE) _login_opt skip: peer=%s not in mysql_option_peers",
+                int_id(peer_id),
+            )
             return
         if self._use_cases.resolve_client(peer_id) is None:
+            self._log.warning(
+                "(SELF_SERVICE) _login_opt skip: peer=%s no longer in proxy slots",
+                int_id(peer_id),
+            )
             return
         try:
             rows = yield self._store.slct_opt(peer_id)
             if not rows or not rows[0]:
+                self._log.info(
+                    "(SELF_SERVICE) _login_opt: peer=%s — no options in DB; "
+                    "server YAML defaults will apply",
+                    int_id(peer_id),
+                )
                 return
             options = rows[0][0]
             if not options:
+                self._log.info(
+                    "(SELF_SERVICE) _login_opt: peer=%s — options column empty in DB; "
+                    "server YAML defaults will apply",
+                    int_id(peer_id),
+                )
                 return
             self._inject_rpto(peer_id, options)
             self._log.info("(SELF_SERVICE) Options sent at login for: %s", int_id(peer_id))
@@ -226,9 +326,19 @@ class ProxySelfServiceBridge:
                     continue
                 pid = _peer_id_from_db(row[0])
                 options = row[1]
-                if pid is None or not options:
+                if pid is None:
+                    continue
+                if not options:
+                    self._log.debug(
+                        "(SELF_SERVICE) send_opts: peer=%s has modified=1 but OPTIONS is EMPTY in DB",
+                        int_id(pid),
+                    )
                     continue
                 if self._use_cases.resolve_client(pid) is None:
+                    self._log.debug(
+                        "(SELF_SERVICE) send_opts: peer=%s has modified=1 but is NOT connected",
+                        int_id(pid),
+                    )
                     continue
                 if pid not in self._mysql_option_peers:
                     continue
