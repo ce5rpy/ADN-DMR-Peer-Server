@@ -135,16 +135,44 @@ def test_self_service_settings_reads_database_and_self_service_keys() -> None:
     assert ss["pbkdf2_iterations"] == 2000
 
 
-def test_rptc_login_opt_skips_without_pass() -> None:
-    """RPTC without prior PASS/empty RPTO does not fetch options (peer not in set)."""
-    bridge, sink, store, _sender = _bridge()
+def test_rptc_schedules_fallback_when_no_pass() -> None:
+    """RPTC without prior PASS schedules a fallback timer to fetch DB options."""
+    bridge, _sink, store, _sender = _bridge()
     peer = bytes_4(7300444)
     store.options_by_peer[peer] = "TS2=730444;"
     packet = RPTC + peer + b"CE1ILI  " + b"\x00" * 85 + b"4"
     bridge.before_inject(packet, ("192.168.1.10", 62031), peer)
     assert ("ins_conf", peer) in store.actions
-    _run_deferred(bridge._login_opt(peer))
-    assert sink.injected == []
+    assert peer in bridge._opt_timers
+
+
+def test_rptc_fallback_fetches_db_options() -> None:
+    """When the fallback timer fires (no RPTO), DB options are fetched and injected."""
+    bridge, sink, store, _sender = _bridge()
+    peer = bytes_4(7300444)
+    store.options_by_peer[peer] = "TS2=730444;SINGLE=1;"
+    packet = RPTC + peer + b"CE1ILI  " + b"\x00" * 85 + b"4"
+    bridge.before_inject(packet, ("192.168.1.10", 62031), peer)
+    # Simulate the timer firing
+    bridge._rptc_fallback_fire(peer)
+    assert peer in bridge._mysql_option_peers
+    assert sink.injected
+    assert sink.injected[0][0] == RPTO + peer + b"TS2=730444;SINGLE=1;"
+
+
+def test_rpto_cancels_rptc_fallback() -> None:
+    """RPTO with content cancels the RPTC fallback timer."""
+    bridge, _sink, _store, _sender = _bridge()
+    peer = bytes_4(7300444)
+    packet = RPTC + peer + b"CE1ILI  " + b"\x00" * 85 + b"4"
+    bridge.before_inject(packet, ("192.168.1.10", 62031), peer)
+    assert peer in bridge._opt_timers
+    bridge.before_inject(
+        RPTO + peer + b"TS2=730;SINGLE=0;",
+        ("192.168.1.10", 62031),
+        peer,
+    )
+    assert peer not in bridge._opt_timers
 
 
 def test_rptc_after_pass_reinjects_rpto() -> None:

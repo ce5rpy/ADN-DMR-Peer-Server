@@ -27,6 +27,7 @@ import struct
 from hashlib import pbkdf2_hmac
 from typing import Any
 
+from twisted.internet import reactor
 from twisted.internet.defer import inlineCallbacks
 from twisted.internet.interfaces import IDelayedCall
 from twisted.internet.task import LoopingCall
@@ -41,6 +42,8 @@ from adn_server.domain.proxy import ClientEndpoint
 from adn_server.domain.value_objects import int_id
 from adn_server.infrastructure.hbp_constants import RPTACK, RPTC, RPTCL, RPTO
 from adn_server.infrastructure.options_redaction import redact_pass_in_options
+
+_RPTC_FALLBACK_DELAY = 10.0
 
 
 def _peer_id_from_db(value: Any) -> bytes | None:
@@ -143,6 +146,10 @@ class ProxySelfServiceBridge:
         self._store.ins_conf(int_id(peer_id), peer_id, callsign, host, mode)
         if peer_id in self._mysql_option_peers:
             self._fetch_options_now(peer_id)
+            return
+        # Schedule a fallback fetch: if the hotspot does not send an RPTO within the
+        # delay window, treat it the same as an empty RPTO (BD is the authority).
+        self._schedule_rptc_fallback(peer_id)
 
     def _handle_rpto(
         self,
@@ -218,6 +225,33 @@ class ProxySelfServiceBridge:
         timer = self._opt_timers.pop(peer_id, None)
         if timer is not None and timer.active():
             timer.cancel()
+
+    def _schedule_rptc_fallback(self, peer_id: bytes) -> None:
+        """If the hotspot does not send RPTO within the delay, fetch OPTIONS from DB.
+
+        Mirrors the legacy proxy 10s ``login_opt`` timer: when no RPTO arrives
+        after RPTC, the server treats it as "BD is the authority" and fetches
+        OPTIONS from MySQL so the peer gets its configured static TGs.
+        """
+        self._cancel_opt_timer(peer_id)
+        timer = reactor.callLater(
+            _RPTC_FALLBACK_DELAY, self._rptc_fallback_fire, peer_id
+        )
+        self._opt_timers[peer_id] = timer
+
+    def _rptc_fallback_fire(self, peer_id: bytes) -> None:
+        """Called by the RPTC fallback timer if no RPTO was received."""
+        self._opt_timers.pop(peer_id, None)
+        if self._use_cases.resolve_client(peer_id) is None:
+            return
+        if peer_id in self._mysql_option_peers:
+            return
+        self._log.info(
+            "(SELF_SERVICE) No RPTO from peer=%s after %.0fs — fetching DB options",
+            int_id(peer_id), _RPTC_FALLBACK_DELAY,
+        )
+        self._mysql_option_peers.add(peer_id)
+        self._fetch_options_now(peer_id)
 
     def _fetch_options_now(self, peer_id: bytes) -> None:
         """Load OPTIONS from MySQL and inject RPTO to the server (no legacy 10s delay)."""
