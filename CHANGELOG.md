@@ -4,6 +4,35 @@ All notable changes to **adn-server** are documented here.
 
 <!-- version list -->
 
+## v2.2.1 (2026-07-01)
+
+### Bug Fixes
+
+- Add shared PASS= redaction for OPTIONS log lines
+  ([#28](https://github.com/ce5rpy/ADN-DMR-Peer-Server/pull/28),
+  [`9de26ea`](https://github.com/ce5rpy/ADN-DMR-Peer-Server/commit/9de26eab991fbdeee8db4542a16d005538d1d2e0))
+
+- Elevate proxy attach rejection to WARNING for RPTC/RPTO
+  ([#28](https://github.com/ce5rpy/ADN-DMR-Peer-Server/pull/28),
+  [`9de26ea`](https://github.com/ce5rpy/ADN-DMR-Peer-Server/commit/9de26eab991fbdeee8db4542a16d005538d1d2e0))
+
+- Fetch DB options when hotspot sends no RPTO after RPTC
+  ([#28](https://github.com/ce5rpy/ADN-DMR-Peer-Server/pull/28),
+  [`9de26ea`](https://github.com/ce5rpy/ADN-DMR-Peer-Server/commit/9de26eab991fbdeee8db4542a16d005538d1d2e0))
+
+- Remove noisy CALL RX log on OBP DMRE voice header
+  ([#28](https://github.com/ce5rpy/ADN-DMR-Peer-Server/pull/28),
+  [`9de26ea`](https://github.com/ce5rpy/ADN-DMR-Peer-Server/commit/9de26eab991fbdeee8db4542a16d005538d1d2e0))
+
+- Rework self-service RPTO to distinguish PASS, empty, and OPTIONS
+  ([#28](https://github.com/ce5rpy/ADN-DMR-Peer-Server/pull/28),
+  [`9de26ea`](https://github.com/ce5rpy/ADN-DMR-Peer-Server/commit/9de26eab991fbdeee8db4542a16d005538d1d2e0))
+
+- Self-service RPTO handling, PASS redaction, and proxy log cleanup
+  ([#28](https://github.com/ce5rpy/ADN-DMR-Peer-Server/pull/28),
+  [`9de26ea`](https://github.com/ce5rpy/ADN-DMR-Peer-Server/commit/9de26eab991fbdeee8db4542a16d005538d1d2e0))
+
+
 ## v2.1.1 (2026-06-22)
 
 ### Bug Fixes
