@@ -31,11 +31,14 @@ from twisted.internet.protocol import DatagramProtocol
 from adn_server.application.ports import ProxyMasterSink
 from adn_server.application.proxy import ProxyUseCases, peer_id_from_packet
 from adn_server.domain.result import is_fail
+from adn_server.infrastructure.hbp_constants import RPTC, RPTO
 
 if TYPE_CHECKING:
     from .self_service_bridge import ProxySelfServiceBridge
 
 _logger = logging.getLogger(__name__)
+
+_CONTROL_COMMANDS = frozenset({RPTC, RPTO})
 
 
 class _DatagramWriter(Protocol):
@@ -86,13 +89,14 @@ class ProxyFanInProtocol(DatagramProtocol):
         new_session = self._proxy.resolve_client(peer_id) is None
         result = self._proxy.attach_client(peer_id, host, port)
         if is_fail(result):
-            if self.debug:
-                self._log.debug(
-                    "(PROXY) attach rejected peer=%s from %s:%s: %s",
+            if self.debug or command in _CONTROL_COMMANDS:
+                self._log.warning(
+                    "(PROXY) attach rejected peer=%s from %s:%s: %s (cmd=%r)",
                     peer_id.hex(),
                     host,
                     port,
                     result.error,
+                    command,
                 )
             return
         if self._on_attached is not None:

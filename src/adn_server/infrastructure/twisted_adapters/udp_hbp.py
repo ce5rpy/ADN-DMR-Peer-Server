@@ -129,6 +129,7 @@ from ..mesh.obp_v1 import (
     verify_bcve,
 )
 from ..mesh.registry import MeshCodecRegistry
+from ..options_redaction import redact_pass_in_options
 
 logger = logging.getLogger(__name__)
 
@@ -1521,7 +1522,8 @@ class HBPProtocol(DatagramProtocol):
                 invalidate_peer_options_cache(_this_peer)
                 self._mark_downlink_index_dirty()
                 self.send_peer(_peer_id, b"".join([RPTACK, _peer_id]))
-                logger.info("(%s) Peer %s has sent options %s", self._system, _this_peer["CALLSIGN"], _this_peer["OPTIONS"])
+                _opt_log = redact_pass_in_options(_this_peer["OPTIONS"])
+                logger.info("(%s) Peer %s has sent options %s", self._system, _this_peer["CALLSIGN"], _opt_log)
                 # Inject-only multi-hotspot: OPTIONS live on each peer; do not let last RPTO
                 # overwrite the shared SYSTEM row (legacy had one peer per virtual master).
                 if not is_proxy_inject_only(self._CONFIG, self._system):
@@ -2198,8 +2200,6 @@ class HBPProtocol(DatagramProtocol):
                         self._obp_send_bcsq(_dst_id, _stream_id)
                         self._laststrid.append(_stream_id)
                     return
-            if _call_type == "group" and _frame_type == HBPF_DATA_SYNC and _dtype_vseq == HBPF_SLT_VHEAD:
-                logger.info("(%s) CALL RX (OBP DMRE) src %s -> TG %s slot %s", self._system, int_id(_rf_src), int_id(_dst_id), _slot)
             self.note_dmrd_stream(_peer_id, _rf_src, _stream_id)
             if (
                 _call_type in ("group", "vcsbk")
