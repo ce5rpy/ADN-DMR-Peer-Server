@@ -65,6 +65,14 @@ sequenceDiagram
 
 Importante: el proxy envía **RPTO solo al master**, no al hotspot directamente. Si el proxy no está en el camino, necesitas otro mecanismo que aplique **OPTIONS** o ejecutas el servidor sin este camino proxy.
 
+> **Prerrequisito:** el hotspot debe enviar `PASS=` en su línea OPTIONS para
+> login por contraseña y sincronización bidireccional con la BD. Si el hotspot
+> envía contenido explícito (TGs, SINGLE, etc.) **sin** `PASS=`, el servidor
+> toma las opciones directamente de esa línea y la fila de la BD se ignora. Si
+> el hotspot no envía RPTO (el timer expira) o envía OPTIONS vacío, el servidor
+> hace fallback a la base de datos.
+> Ver [Proxy hotspot — comportamiento de la línea OPTIONS](../server/user-guide/hotspot-proxy.md#comportamiento-de-la-linea-options).
+
 ---
 
 ## Hash de contraseñas
