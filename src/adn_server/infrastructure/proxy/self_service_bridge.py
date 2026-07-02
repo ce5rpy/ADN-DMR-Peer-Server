@@ -81,18 +81,17 @@ class ProxySelfServiceBridge:
         self._mysql_option_peers: set[bytes] = set()
 
     def start_loops(self) -> None:
-        """Legacy timers: send_opts 10s, lst_seen 120s, clean_tbl 3600s."""
-        for interval, fn in (
-            (10.0, self.send_opts),
-            (120.0, self.lst_seen),
-            (3600.0, self._clean_tbl),
+        """Timers: send_opts 10s, lst_seen+reconcile 120s (now=True for startup clean slate)."""
+        for interval, fn, now in (
+            (10.0, self.send_opts, False),
+            (120.0, self.lst_seen, True),
         ):
             call = LoopingCall(fn)
-            call.start(interval, now=False)
+            call.start(interval, now=now)
             self._loop_calls.append(call)
         self._log.info(
             "(SELF_SERVICE) DB options on PASS= (immediate), send_opts every 10s, "
-            "clean_tbl every 1h, lst_seen every 2min"
+            "lst_seen + reconcile_logged_in every 2min"
         )
 
     def stop_loops(self) -> None:
@@ -349,9 +348,8 @@ class ProxySelfServiceBridge:
             self._log.warning("(SELF_SERVICE) send_opts error: %s", err)
 
     def lst_seen(self) -> None:
-        dmrid_list = [(slot.peer_id,) for slot in self._use_cases.list_slots()]
+        slots = self._use_cases.list_slots()
+        dmrid_list = [(slot.peer_id,) for slot in slots]
         if dmrid_list:
             self._store.updt_lstseen(dmrid_list)
-
-    def _clean_tbl(self) -> None:
-        self._store.clean_tbl()
+        self._store.reconcile_logged_in([slot.peer_id for slot in slots])

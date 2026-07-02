@@ -22,6 +22,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 from twisted.internet.defer import Deferred
 
 from adn_server.application.proxy import ProxyUseCases
@@ -56,6 +58,7 @@ class _FakeStore(NullProxySelfServiceStore):
         self.actions: list[tuple[str, bytes]] = []
         self.options_by_peer: dict[bytes, str] = {}
         self.pending_modified: list[tuple[bytes, str]] = []
+        self.reconcile_calls: list[list[bytes]] = []
 
     def ins_conf(
         self,
@@ -88,6 +91,15 @@ class _FakeStore(NullProxySelfServiceStore):
         from twisted.internet.defer import succeed
 
         return succeed([(pid, opt) for pid, opt in self.pending_modified])
+
+    def updt_lstseen(self, dmrid_list: list[tuple[bytes, ...]]) -> None:
+        self.actions.append(("updt_lstseen", b""))
+
+    def reconcile_logged_in(self, connected_peer_ids: list[bytes]) -> Any:
+        from twisted.internet.defer import succeed
+
+        self.reconcile_calls.append(list(connected_peer_ids))
+        return succeed(None)
 
 
 def _bridge() -> tuple[ProxySelfServiceBridge, _RecordingSink, _FakeStore, _RecordingSender]:
@@ -300,6 +312,33 @@ def test_session_expired_logs_out() -> None:
     peer = bytes_4(7300444)
     bridge.on_session_expired(peer)
     assert ("log_out", peer) in store.actions
+
+
+def test_lst_seen_reconciles_connected_peers() -> None:
+    """lst_seen calls reconcile_logged_in with the connected peer IDs."""
+    bridge, _sink, store, _sender = _bridge()
+    peer = bytes_4(7300444)
+    bridge.lst_seen()
+    assert store.reconcile_calls == [[peer]]
+
+
+def test_lst_seen_reconciles_empty_when_no_peers() -> None:
+    """lst_seen with no slots calls reconcile_logged_in([]) — startup clean slate."""
+    from adn_server.application.proxy import ProxyUseCases
+    from adn_server.infrastructure.proxy.rpto_queue import InMemoryPendingRptoQueue
+    from adn_server.infrastructure.proxy.slot_store import InMemoryProxySlotStore
+
+    store = _FakeStore()
+    sink = _RecordingSink()
+    sender = _RecordingSender()
+    use_cases = ProxyUseCases(
+        InMemoryProxySlotStore(), InMemoryPendingRptoQueue(), max_peers=4
+    )
+    bridge = ProxySelfServiceBridge(
+        store, use_cases, sink, sender, pbkdf2_salt="ADN", pbkdf2_iterations=2000
+    )
+    bridge.lst_seen()
+    assert store.reconcile_calls == [[]]
 
 
 def test_yaml_loader_preserves_self_service_block(tmp_path) -> None:
