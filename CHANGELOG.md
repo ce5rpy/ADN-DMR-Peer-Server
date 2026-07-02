@@ -4,6 +4,22 @@ All notable changes to **adn-server** are documented here.
 
 <!-- version list -->
 
+## v2.2.2 (2026-07-02)
+
+### Bug Fixes
+
+- Correct broken hotspot-proxy anchor link in special-numbers (EN)
+  ([`2ec900b`](https://github.com/ce5rpy/ADN-DMR-Peer-Server/commit/2ec900b2608f40d434ebcd776324027df5fdf670))
+
+- Reconcile logged_in against connected peers every 120s
+  ([`ab63a8c`](https://github.com/ce5rpy/ADN-DMR-Peer-Server/commit/ab63a8ceb1e9632cbc8b41a7369a60e61d7c6015))
+
+### Chores
+
+- Document OPTIONS line behaviour and self-service dashboard login (EN/ES)
+  ([`81cf74d`](https://github.com/ce5rpy/ADN-DMR-Peer-Server/commit/81cf74d4d50378a3074a33bcaabea84983a4949b))
+
+
 ## v2.2.1 (2026-07-01)
 
 ### Bug Fixes
