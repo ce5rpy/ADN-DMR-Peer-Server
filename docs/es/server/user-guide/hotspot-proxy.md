@@ -96,6 +96,38 @@ Detalle del flujo en el panel: [Self-service](../../monitor/self-service.md).
 
 ---
 
+## Comportamiento de la línea OPTIONS
+
+Tras el login (RPTL → RPTK → RPTC), el proxy arranca un **timer de 10 s**
+esperando el paquete **RPTO** del hotspot con su línea **OPTIONS**. Lo que el
+hotspot envíe (o no envíe) en ese RPTO determina **quién es la fuente de
+verdad** de los TG estáticos del peer:
+
+| El hotspot envía en el RPTO | Quién define los TG | Comportamiento |
+|---|---|---|
+| `OPTIONS=PASS=xxxxxx;` | **Auto-servicio** (panel web) | El proxy procesa el `PASS=`, verifica la contraseña individual (PBKDF2 contra `Clients.psswd`), marca al peer como autenticado, cancela el timer de 10 s y empuja los TG de la BD al master. El usuario **puede** hacer login por contraseña y auto-login por IP en el dashboard. |
+| `OPTIONS=` (vacío) | **Auto-servicio** (panel web) | El proxy lee los TG de la BD y los inyecta al master. El usuario **solo** puede usar auto-login por IP en el dashboard (sin contraseña). |
+| **No envía RPTO** (el timer de 10 s expira) | **Auto-servicio** (panel web) | El proxy asume que el hotspot no tiene OPTIONS propias y hace fallback a la BD. Mismo efecto que `OPTIONS=` vacío. |
+| `OPTIONS=TS2=730444;SINGLE=0;` (contenido sin `PASS=`) | **El propio hotspot** | El master toma los TG **directamente de la línea OPTIONS**. Se ignora la BD. El usuario **solo** puede usar auto-login por IP en el dashboard (sin contraseña). |
+
+**Regla clave:** el auto-servicio es la fuente de verdad **excepto** cuando el
+hotspot envía contenido explícito (TGs, SINGLE, TIMER, etc.) en su línea
+OPTIONS. En ese caso, lo que dice el hotspot **priman** y el auto-servicio se ignora.
+
+### Contraseña individual y login por dashboard
+
+- Si el hotspot **nunca** envía `PASS=` en su RPTO, el usuario **no** podrá
+  entrar al dashboard con contraseña. Solo podrá usar **auto-login por IP**
+  (si su IP coincide con `Clients.host`).
+- Para habilitar el login por contraseña en el dashboard, el hotspot debe enviar
+  `OPTIONS=PASS=tu_contraseña;` en su configuración (Pi-Star / WPSD / MMDVM
+  `optsfile`). La contraseña debe coincidir con el hash PBKDF2 almacenado en
+  `Clients.psswd`.
+- El flujo `PASS=` es lo que activa la sincronización bidireccional: el proxy
+  almacena el hash, registra el flag `modified` y empuja los TG de la BD al master.
+
+---
+
 ## Recarga en caliente (`SIGHUP`)
 
 **Se aplica sin reiniciar** (las sesiones activas del proxy se mantienen):

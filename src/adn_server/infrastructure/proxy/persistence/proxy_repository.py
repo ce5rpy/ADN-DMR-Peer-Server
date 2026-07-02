@@ -141,8 +141,28 @@ class ProxySelfServiceRepository(ProxySelfServiceStore):
                 )
             )
 
-    @inlineCallbacks
-    def clean_tbl(self) -> Any:
-        yield self._pool.runOperation(
-            "UPDATE Clients SET logged_in=0 WHERE logged_in=1 AND last_seen < UNIX_TIMESTAMP() - 86400"
-        ).addErrback(lambda f: logger.error("(SELF_SERVICE) clean_tbl: %s", f.getTraceback()))
+    def reconcile_logged_in(self, connected_peer_ids: list[bytes]) -> Any:
+        if connected_peer_ids:
+            ph = ",".join(["%s"] * len(connected_peer_ids))
+            self._pool.runOperation(
+                f"UPDATE Clients SET logged_in=1 WHERE dmr_id IN ({ph})",
+                tuple(connected_peer_ids),
+            ).addErrback(
+                lambda f: logger.error(
+                    "(SELF_SERVICE) reconcile set 1: %s", f.getTraceback()
+                )
+            )
+            self._pool.runOperation(
+                f"UPDATE Clients SET logged_in=0 WHERE dmr_id NOT IN ({ph})",
+                tuple(connected_peer_ids),
+            ).addErrback(
+                lambda f: logger.error(
+                    "(SELF_SERVICE) reconcile set 0: %s", f.getTraceback()
+                )
+            )
+        else:
+            self._pool.runOperation("UPDATE Clients SET logged_in=0").addErrback(
+                lambda f: logger.error(
+                    "(SELF_SERVICE) reconcile clear: %s", f.getTraceback()
+                )
+            )

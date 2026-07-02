@@ -67,7 +67,7 @@ class NullProxySelfServiceStore(ProxySelfServiceStore):
     def updt_lstseen(self, dmrid_list: list[tuple[bytes, ...]]) -> None:
         pass
 
-    def clean_tbl(self) -> Any:
+    def reconcile_logged_in(self, connected_peer_ids: list[bytes]) -> Any:
         from twisted.internet.defer import succeed
 
         return succeed(None)

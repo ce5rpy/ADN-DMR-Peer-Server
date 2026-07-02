@@ -96,6 +96,37 @@ Details of the dashboard flow: [Self-service](../../monitor/self-service.md).
 
 ---
 
+## OPTIONS line behaviour
+
+After login (RPTL → RPTK → RPTC), the proxy starts a **10 s timer** waiting for
+the hotspot's **RPTO** packet with its **OPTIONS** line. What the hotspot sends
+(or does not send) determines **who is the source of truth** for the peer's
+static talkgroups:
+
+| Hotspot sends in the RPTO | Who defines the TGs | Behaviour |
+|---|---|---|
+| `OPTIONS=PASS=xxxxxx;` | **Self-service** (dashboard) | The proxy processes the `PASS=`, verifies the individual password (PBKDF2 against `Clients.psswd`), marks the peer as authenticated, cancels the 10 s timer, and pushes the DB-configured TGs to the master. The user **can** log in by password and auto-login by IP on the dashboard. |
+| `OPTIONS=` (empty) | **Self-service** (dashboard) | The proxy reads the TGs from the DB and injects them to the master. The user can **only** use auto-login by IP on the dashboard (no password). |
+| **No RPTO at all** (10 s timer expires) | **Self-service** (dashboard) | The proxy assumes the hotspot has no OPTIONS of its own and falls back to the DB. Same effect as `OPTIONS=` empty. |
+| `OPTIONS=TS2=730444;SINGLE=0;` (content without `PASS=`) | **The hotspot itself** | The master takes the TGs **directly from the OPTIONS line**. The DB is ignored. The user can **only** use auto-login by IP on the dashboard (no password). |
+
+**Key rule:** self-service is the source of truth **unless** the hotspot sends
+explicit content (TGs, SINGLE, TIMER, etc.) in its OPTIONS line. In that case,
+what the hotspot says **takes precedence** and self-service is ignored.
+
+### Individual password and dashboard login
+
+- If the hotspot **never** sends `PASS=` in its RPTO, the user **cannot** log in
+  to the dashboard with a password. They can only use **auto-login by IP**
+  (if their IP matches `Clients.host`).
+- To enable password login on the dashboard, the hotspot must send
+  `OPTIONS=PASS=your_password;` in its configuration (Pi-Star / WPSD / MMDVM
+  `optsfile`). The password must match the PBKDF2 hash stored in `Clients.psswd`.
+- The `PASS=` flow is what activates bidirectional sync: the proxy stores the
+  hash, notes the `modified` flag, and pushes the DB-configured TGs to the master.
+
+---
+
 ## Hot reload (`SIGHUP`)
 
 **Applied without restart** (active proxy sessions stay up):

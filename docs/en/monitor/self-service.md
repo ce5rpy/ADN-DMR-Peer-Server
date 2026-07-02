@@ -65,6 +65,14 @@ sequenceDiagram
 
 Important: the proxy sends **RPTO to the master only**, not to the hotspot directly. If the proxy is not in the path, you must ensure another mechanism applies **OPTIONS** or you run the server without this proxy path.
 
+> **Prerequisite:** the hotspot must send `PASS=` in its OPTIONS line for
+> password login and bidirectional DB sync. If the hotspot sends explicit
+> content (TGs, SINGLE, etc.) **without** `PASS=`, the server takes options
+> directly from that line and the DB row is ignored. If the hotspot sends no
+> RPTO at all (timer expires) or an empty OPTIONS, the server falls back to
+> the database.
+> See [Hotspot proxy — OPTIONS line behaviour](../server/user-guide/hotspot-proxy.md#options-line-behaviour).
+
 ---
 
 ## Password hashing
