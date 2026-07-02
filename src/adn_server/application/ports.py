@@ -363,8 +363,8 @@ class ProxySelfServiceStore(ABC):
         ...
 
     @abstractmethod
-    def clean_tbl(self) -> Any:
-        """Returns Deferred."""
+    def reconcile_logged_in(self, connected_peer_ids: list[bytes]) -> Any:
+        """logged_in=1 for connected peers, 0 for the rest. Returns Deferred."""
 
 
 class DynamicTgStore(ABC):
