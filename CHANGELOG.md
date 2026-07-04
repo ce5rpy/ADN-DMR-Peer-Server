@@ -4,6 +4,15 @@ All notable changes to **adn-server** are documented here.
 
 <!-- version list -->
 
+## v2.2.3 (2026-07-04)
+
+### Bug Fixes
+
+- Echo TG 9990 isolation for multi-peer inject proxy
+  ([#32](https://github.com/ce5rpy/ADN-DMR-Peer-Server/pull/32),
+  [`8698359`](https://github.com/ce5rpy/ADN-DMR-Peer-Server/commit/86983597b2f23f4dbcc3b0bc7dc1b9b11cd7dc28))
+
+
 ## v2.2.2 (2026-07-02)
 
 ### Bug Fixes
