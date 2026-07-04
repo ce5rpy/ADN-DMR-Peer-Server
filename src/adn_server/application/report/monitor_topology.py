@@ -267,12 +267,32 @@ def _peers_receiving_tgid(
     return out
 
 
-def _echo_tx_target_peer(parts: list[str], peers: dict[Any, Any]) -> bytes | None:
-    """Echo/service downlink TX: field 5 may be 9990 or hotspot id; field 8 is 9990–9999."""
+def _echo_tx_target_peer(
+    parts: list[str],
+    peers: dict[Any, Any],
+    *,
+    status: dict[int, dict[str, Any]] | None = None,
+) -> bytes | None:
+    """Echo/service downlink TX: field 5 may be 9990 or hotspot id; field 8 is 9990–9999.
+
+    For special TGs (9990–9999) the audio is point-to-point: the downlink goes only to
+    the peer that originated the call. The runtime ``STATUS[slot]["RX_PEER"]`` holds that
+    exact peer id, so we prefer it. Fuzzy matching on ``rf_src`` (field 6) resolves the
+    wrong hotspot when a user has several radios sharing a DMR-id prefix (e.g.
+    rf_src 7140023 matches peer 714002301 via ``// 100`` instead of the real 714000103).
+    """
     tgid_slot = _voice_event_tgid_slot(parts)
     if tgid_slot is not None:
-        tgid, _ = tgid_slot
+        tgid, voice_slot = tgid_slot
         if is_special_tg(str(tgid)):
+            if status is not None:
+                slot_st = status.get(voice_slot, {})
+                rx_peer = slot_st.get("RX_PEER", b"")
+                if rx_peer and rx_peer != b"\x00\x00\x00\x00":
+                    rx_b = bytes_4(int_id(rx_peer))
+                    connected = _connected_peer_keys(peers)
+                    if rx_b in connected:
+                        return rx_b
             return _peer_key_from_voice_csv(parts, peers)
     if len(parts) <= 5:
         return None
@@ -350,7 +370,9 @@ def remap_inject_proxy_voice_events(
 
     if trx == "TX":
         tgid_slot = _voice_event_tgid_slot(parts)
-        echo_peer = _echo_tx_target_peer(parts, peers)
+        echo_peer = _echo_tx_target_peer(
+            parts, peers, status=downlink_ctx.status if downlink_ctx else None
+        )
         if echo_peer is not None:
             slot = slot_map.get(echo_peer)
             if slot is not None:
