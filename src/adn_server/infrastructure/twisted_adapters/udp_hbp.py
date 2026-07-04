@@ -569,15 +569,16 @@ class HBPProtocol(DatagramProtocol):
             if rx_peer and rx_peer != b"\x00\x00\x00\x00":
                 return bytes_4(int_id(peer_id)) == bytes_4(int_id(rx_peer))
             return self._cached_connected_peer_count() == 1
-        # Parrot / echo (9990–9999): not in per-hotspot OPTIONS; deliver to last RX peer on slot.
+        # Parrot / echo (9990–9999): point-to-point echo — deliver ONLY to the exact peer
+        # that originated the call (RX_PEER), never to other hotspots of the same user.
+        # Legacy parity: each MASTER had a single peer, so echo naturally returned only
+        # to the caller. Multi-peer inject-only proxy must enforce the same explicitly.
         if is_special_tg(str(tgid)):
             slot_st = self.STATUS.get(slot, {})
             if int_id(slot_st.get("RX_TGID", b"\x00\x00\x00")) == tgid:
                 rx_peer = slot_st.get("RX_PEER", b"")
                 if rx_peer and rx_peer != b"\x00\x00\x00\x00":
                     return bytes_4(int_id(peer_id)) == bytes_4(int_id(rx_peer))
-            if len(packet) >= 8 and peer_matches_rf_source(peer_id, packet[5:8], self._peers):
-                return True
             return self._cached_connected_peer_count() == 1
         if len(packet) >= 8 and peer_matches_rf_source(peer_id, packet[5:8], self._peers):
             ctx = self._downlink_ctx()

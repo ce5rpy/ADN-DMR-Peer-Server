@@ -372,3 +372,61 @@ def test_non_proxy_systems_pass_through_unchanged() -> None:
         "ECHO": {"MODE": "MASTER", "ENABLED": True, "PEERS": {}},
     }
     assert expand_inject_proxy_systems({"PROXY": {"TARGET_SYSTEM": "SYSTEM"}}, systems) is systems
+
+
+def test_echo_tx_uses_rx_peer_when_rf_src_fuzzy_matches_sibling() -> None:
+    """Echo TX must resolve to RX_PEER from STATUS, not fuzzy-match rf_src.
+
+    Reproduces the monitor display bug: user 7140023 has two hotspots,
+    714000103 (base 7140001) and 714002301 (base 7140023). The echo playback
+    arrives with peer_id=9990, rf_src=7140023. Fuzzy matching (// 100) resolves
+    714002301 instead of the true originator 714000103 held in STATUS.RX_PEER.
+    """
+    from adn_server.application.routing.downlink import DownlinkContext
+
+    peer_origin = bytes_4(714000103)  # hotspot that transmitted to 9990
+    peer_sibling = bytes_4(714002301)  # same user, base == rf_src
+    peers = {peer_origin: _peer(), peer_sibling: _peer()}
+    config = _proxy_config(peers)
+    peer_slots = {peer_origin: 1, peer_sibling: 5}
+    status = {
+        2: {
+            "RX_PEER": peer_origin,
+            "RX_TGID": bytes_4(9990)[1:],
+        }
+    }
+    ctx = DownlinkContext(
+        config=config,
+        system_name="SYSTEM",
+        sys_cfg=config["SYSTEMS"]["SYSTEM"],
+        peers=peers,
+        status=status,
+        connected_count=2,
+    )
+    # Echo playback TX: peer_id=9990, rf_src=7140023 (user DMR ID), dst=9990 slot 2
+    raw = "GROUP VOICE,START,TX,SYSTEM,2693411696,9990,7140023,2,9990"
+    events = remap_inject_proxy_voice_events(
+        raw, config, config["SYSTEMS"], peer_slots, downlink_ctx=ctx,
+    )
+    assert len(events) == 1
+    parts = events[0].split(",")
+    # Must remap to SYSTEM-1 (peer_origin slot), NOT SYSTEM-5 (peer_sibling)
+    assert parts[3] == "SYSTEM-1"
+    assert parts[5] == "9990"  # echo id preserved for TX chip display
+
+
+def test_echo_tx_falls_back_without_downlink_ctx() -> None:
+    """Without STATUS (no downlink_ctx), echo TX cannot resolve when rf_src
+    does not fuzzy-match any connected peer — event passes through unchanged."""
+    peer = bytes_4(714000103)
+    peers = {peer: _peer()}
+    config = _proxy_config(peers)
+    peer_slots = {peer: 1}
+    raw = "GROUP VOICE,START,TX,SYSTEM,2693411696,9990,7140023,2,9990"
+    events = remap_inject_proxy_voice_events(
+        raw, config, config["SYSTEMS"], peer_slots,
+    )
+    # rf_src 7140023 does not match peer 714000103 via // 100 or prefix;
+    # legacy leaves the event unchanged when the hotspot cannot be resolved.
+    assert len(events) == 1
+    assert events[0] == raw
