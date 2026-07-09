@@ -92,7 +92,7 @@ Details of the dashboard flow: [Self-service](../../monitor/self-service.md).
 ## Multi-hotspot behaviour
 
 - Each authenticated hotspot is a **peer** on the inject-only MASTER with its own **OPTIONS** (static TGs). **Repeat** and monitor fan-out respect **per-peer OPTIONS** — traffic for a TG is not sent to peers that did not select it.
-- **Parrot / echo** talkgroups **9990–9999** bypass the OPTIONS filter and return to the **calling** hotspot (see [Special numbers](special-numbers.md)).
+- **Parrot / echo** talkgroups **9990–9999** are **point-to-point**: they bypass the OPTIONS filter and return **only** to the exact peer that originated the call (`RX_PEER` on the slot), never to other hotspots of the same user. With a single connected peer, it is delivered to that peer (legacy behaviour). See [Echo — Multi-hotspot behaviour](echo.md#multi-hotspot-behaviour-inject-only-proxy) and [Special numbers](special-numbers.md).
 
 ---
 

@@ -37,6 +37,27 @@ sudo systemctl enable --now adn-echo
 
 El servidor principal expone un master **ECHO** en **TG 9990** para el bridge de eco. El servicio **echo** independiente es un proceso aparte con su propia config que se conecta a ese master.
 
+## Comportamiento con varios hotspots (proxy inject-only)
+
+Cuando los hotspots se conectan a través del **proxy integrado** (`PROXY`),
+varios radios pueden compartir el mismo MASTER como peers. En el legado
+`adn-dmr-server` cada MASTER tenía un solo peer, así que el eco volvía
+naturalmente sólo al llamante. El proxy inject-only multi-peer lo impone
+explícitamente:
+
+- **Entrega punto-a-punto.** La reproducción del eco (TG 9990) y los TG de
+  servicio bajo demanda (**9991–9999**) se entregan **sólo** al peer exacto
+  que originó la llamada (`RX_PEER` en el slot activo), **nunca** a otros
+  hotspots del mismo usuario. No hay matching difuso del ID DMR de origen.
+- **Fallback a peer único.** Cuando sólo hay un peer conectado, el paquete se
+  le entrega (comportamiento legado de peer único).
+- Esto aplica tanto al **plano de datos** (enrutado de audio) como al **plano
+  de reportes** (`BRDG_EVENT` enviado al monitor): el monitor muestra el chip
+  de eco en el hotspot originador, no en un hermano.
+
+Ver [Enrutado de voz y contención — Gate de downlink](../development/routing-and-contention.md#gate-de-downlink-un-peer-recibe-el-paquete)
+y [Proxy hotspot — Comportamiento con varios hotspots](hotspot-proxy.md#comportamiento-con-varios-hotspots).
+
 ## Documentación
 
 Esta página es el resumen incluido en el repositorio; amplía las notas de despliegue localmente según necesites.
