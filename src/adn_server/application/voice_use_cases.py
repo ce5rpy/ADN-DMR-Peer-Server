@@ -27,7 +27,6 @@
 from __future__ import annotations
 
 import logging
-import os
 import time
 from datetime import datetime
 from typing import Any, Callable
@@ -72,7 +71,6 @@ class VoiceUseCases:
         self._tts_running: dict[int, bool] = {}
         self._announcement_last_hour: dict[int, int] = {}
         self._tts_last_hour: dict[int, int] = {}
-        self._config_file_mtime: float = 0.0
         self._broadcast_queue: list[dict[str, Any]] = []
         self._broadcast_active_tgs: set[str] = set()
 
@@ -718,17 +716,8 @@ class VoiceUseCases:
             self._call_from_reactor(protocol.send_voice_packet, pkt, bytes_3(5000), bytes_3(9), _slot)
         logger.debug("(%s) disconnected voice thread end", system)
 
-    def check_voice_config_reload(self, config_file_path: str | None = None) -> None:
-        """Check adn-voice.yaml mtime and reload if changed (15s loop). Start/stop announcement LoopingCalls."""
-        if config_file_path and os.path.isfile(config_file_path):
-            try:
-                mtime = os.path.getmtime(config_file_path)
-            except OSError:
-                return
-            if mtime == self._config_file_mtime:
-                return
-            self._config_file_mtime = mtime
-            logger.info("(VOICE-RELOAD) config file change detected, reloading configuration...")
+    def apply_voice_config(self) -> None:
+        """Start/stop announcement and TTS LoopingCalls from ``config["VOICE"]``."""
         g = self._config.get("VOICE", {})
         if not self._start_looping_call:
             return
@@ -796,5 +785,3 @@ class VoiceUseCases:
                 "(VOICE-RELOAD) %s enabled - mode: %s, file: %s, TG: %s",
                 label, mode, item.get("FILE"), item.get("TG"),
             )
-        if config_file_path and self._config_file_mtime:
-            logger.info("(VOICE-RELOAD) config reload completed")

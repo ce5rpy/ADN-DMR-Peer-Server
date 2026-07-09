@@ -27,7 +27,8 @@ from unittest.mock import patch
 from tests.harness.deterministic import DeterministicScenario, PacketSpec
 from tests.harness.playback_helpers import (
     FakePlaybackProtocol,
-    install_reactor_capture,
+    make_capture_call_later,
+    noop_call_later,
     run_scheduled,
     send_playback,
 )
@@ -37,22 +38,21 @@ from adn_server.application.playback_use_cases import _RECORD_IDLE_S, PlaybackUs
 
 def test_idle_timeout_appends_synthetic_vterm_and_schedules_playback() -> None:
     proto = FakePlaybackProtocol()
-    pb = PlaybackUseCases("ECHO", get_protocol=lambda: proto)
+    call_later, scheduled = make_capture_call_later()
+    pb = PlaybackUseCases("ECHO", call_later=call_later, get_protocol=lambda: proto)
     base = PacketSpec(dst_id=9990, stream_id=0x55555555, slot=2)
-    mock_reactor, scheduled = install_reactor_capture()
 
-    with patch("adn_server.application.playback_use_cases.reactor", mock_reactor):
-        with patch("adn_server.application.playback_use_cases.time", return_value=200.0):
-            send_playback(pb, "ECHO", DeterministicScenario.voice_head_spec(base))
-            send_playback(
-                pb, "ECHO", DeterministicScenario.voice_burst_spec(base, seq=1, dtype_vseq=1),
-            )
+    with patch("adn_server.application.playback_use_cases.time", return_value=200.0):
+        send_playback(pb, "ECHO", DeterministicScenario.voice_head_spec(base))
+        send_playback(
+            pb, "ECHO", DeterministicScenario.voice_burst_spec(base, seq=1, dtype_vseq=1),
+        )
 
-        idle_calls = [item for item in scheduled if item[0] == _RECORD_IDLE_S]
-        assert idle_calls
+    idle_calls = [item for item in scheduled if item[0] == _RECORD_IDLE_S]
+    assert idle_calls
 
-        with patch("adn_server.application.playback_use_cases.time", return_value=200.0 + _RECORD_IDLE_S):
-            run_scheduled(scheduled, delay=_RECORD_IDLE_S)
+    with patch("adn_server.application.playback_use_cases.time", return_value=200.0 + _RECORD_IDLE_S):
+        run_scheduled(scheduled, delay=_RECORD_IDLE_S)
 
     assert not pb._recording_active
     assert pb._playback_busy is True
@@ -60,7 +60,7 @@ def test_idle_timeout_appends_synthetic_vterm_and_schedules_playback() -> None:
 
 
 def test_vterm_commit_does_not_require_synthetic_vterm() -> None:
-    pb = PlaybackUseCases("ECHO")
+    pb = PlaybackUseCases("ECHO", call_later=noop_call_later)
     base = PacketSpec(dst_id=9990, stream_id=0x66666666, slot=2)
     recorded = [
         DeterministicScenario.voice_head_spec(base).data(),

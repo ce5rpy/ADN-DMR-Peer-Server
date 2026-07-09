@@ -27,7 +27,7 @@ from typing import Any
 from adn_server.application.subscription.routing_table_export import export_routing_table
 from adn_server.application.subscription.store_sync import replace_store_from_routing_table
 from adn_server.domain import bytes_3, int_id
-from adn_server.infrastructure.bootstrap.peer_server import _seed_echo_routing_table
+from adn_server.application.subscription.echo_seed import seed_echo_routing_table
 from adn_server.infrastructure.subscription_store import InMemorySubscriptionStore
 
 
@@ -59,7 +59,7 @@ def test_replace_store_from_echo_bridges_round_trip():
             "MASTER-B": {"MODE": "MASTER", "DEFAULT_UA_TIMER": 15},
         }
     }
-    bridges = _seed_echo_routing_table(config)
+    bridges = seed_echo_routing_table(config)
     store = InMemorySubscriptionStore()
     replace_store_from_routing_table(store, bridges)
 

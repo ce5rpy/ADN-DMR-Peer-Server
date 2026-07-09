@@ -31,9 +31,6 @@ class SubscriptionRouter:
 
     def __init__(self, store: SubscriptionStore) -> None:
         self._store = store
-        self._indexed = hasattr(store, "relay_tables_with_active_source") and hasattr(
-            store, "legs_in_table"
-        )
 
     def resolve(self, ingress: VoiceIngress) -> tuple[ForwardLeg, ...]:
         """Return active forward legs when the source has an ACTIVE row on the dst TG (legacy to_target)."""
@@ -50,16 +47,7 @@ class SubscriptionRouter:
         legs: list[ForwardLeg] = []
         seen_obp: set[tuple[str, int]] = set()
         for table_key in tables:
-            subs = (
-                self._store.legs_in_table(table_key)
-                if self._indexed
-                else tuple(
-                    sub
-                    for sub in self._store.snapshot()
-                    if sub.table_key() == table_key
-                )
-            )
-            for sub in subs:
+            for sub in self._store.legs_in_table(table_key):
                 if sub.system.value == ingress.source_system:
                     continue
                 if not sub.is_active():
@@ -80,21 +68,4 @@ class SubscriptionRouter:
 
     def relay_tables_with_active_source(self, system: str, slot: int, dst_tgid: int) -> tuple[str, ...]:
         """Mirror legacy ``relay_tables_with_active_source`` on subscription rows."""
-        if self._indexed:
-            return self._store.relay_tables_with_active_source(system, slot, dst_tgid)
-        tables: list[str] = []
-        seen: set[str] = set()
-        for sub in self._store.snapshot():
-            if sub.system.value != system:
-                continue
-            if int(sub.channel.slot) != int(slot):
-                continue
-            if not sub.is_active():
-                continue
-            if int(sub.target_tgid) != int(dst_tgid):
-                continue
-            key = sub.table_key()
-            if key not in seen:
-                seen.add(key)
-                tables.append(key)
-        return tuple(sorted(tables))
+        return self._store.relay_tables_with_active_source(system, slot, dst_tgid)

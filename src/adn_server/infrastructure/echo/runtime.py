@@ -100,7 +100,11 @@ def run_echo(config: dict[str, Any], *, logger: logging.Logger) -> None:
             logger.debug("(ECHO) skip %s (MODE=%s; echo only runs PEER systems)", system_name, sys_cfg.get("MODE"))
             continue
 
-        pb = PlaybackUseCases(system_name, get_protocol=lambda sn=system_name: protocols.get(sn))
+        pb = PlaybackUseCases(
+            system_name,
+            call_later=reactor.callLater,
+            get_protocol=lambda sn=system_name: protocols.get(sn),
+        )
 
         protocol = HBPProtocolFactory(
             system_name,

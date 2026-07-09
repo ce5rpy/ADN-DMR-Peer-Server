@@ -37,19 +37,7 @@ def system_has_active_leg_in_store(
     tgid: int,
 ) -> bool:
     """True when an ACTIVE subscription leg exists for ``(system, slot, tgid)``."""
-    indexed = getattr(store, "has_active_target_leg", None)
-    if callable(indexed):
-        return bool(indexed(system, slot, tgid))
-    for sub in store.snapshot():
-        if sub.system.value != system:
-            continue
-        if int(sub.channel.slot) != int(slot):
-            continue
-        if int(sub.target_tgid) != int(tgid):
-            continue
-        if sub.is_active():
-            return True
-    return False
+    return store.has_active_target_leg(system, slot, tgid)
 
 
 def active_system_slots_for_tg_in_store(

@@ -44,7 +44,6 @@ from adn_server.application.proxy.deployment import (
     proxy_target_system,
 )
 from adn_server.application.report.queue import BoundedReportQueue, QueuedReportSender
-from adn_server.infrastructure.udp_rcvbuf import apply_udp_rcvbuf, udp_rcvbuf_bytes
 from adn_server.application.runtime_context import (
     ConfigProxy,
     RuntimeContext,
@@ -52,8 +51,8 @@ from adn_server.application.runtime_context import (
     prepare_reload_config,
     swap_runtime_config,
 )
+from adn_server.application.subscription.echo_seed import seed_echo_routing_table
 from adn_server.application.subscription.store_sync import replace_store_from_routing_table
-from adn_server.domain import bytes_3
 from adn_server.domain.dmr.bptc import encode_emblc
 from adn_server.infrastructure.acl_router import InMemoryAclRouter
 from adn_server.infrastructure.config_normalizer import (
@@ -92,6 +91,7 @@ from adn_server.infrastructure.twisted_adapters.report.mqtt_publisher import (
 from adn_server.infrastructure.twisted_adapters.report.worker import start_report_queue_worker
 from adn_server.infrastructure.twisted_adapters.report_server import ReportServerFactory
 from adn_server.infrastructure.twisted_adapters.udp_hbp import HBPProtocolFactory
+from adn_server.infrastructure.udp_rcvbuf import apply_udp_rcvbuf, udp_rcvbuf_bytes
 from adn_server.infrastructure.voice import DefaultVoiceProvider, StubVoiceProvider
 from adn_server.infrastructure.voice.recording import RecordingHandler
 
@@ -161,39 +161,6 @@ def _wire_monitor_downlink_ctx(
         return None
 
     report_factory.set_downlink_ctx_for_system(_ctx_for)
-
-
-def _seed_echo_routing_table(config: dict) -> dict:
-    """Initial BRIDGES for ECHO system (legacy make_bridges 9990 + MASTER expansion)."""
-    now = time.time()
-    timeout_sec = 2 * 60
-    tgid_b = bytes_3(9990)
-    bridges: dict = {
-        "9990": [
-            {
-                "SYSTEM": "ECHO",
-                "TS": 2,
-                "TGID": tgid_b,
-                "ACTIVE": True,
-                "TIMEOUT": timeout_sec,
-                "TO_TYPE": "NONE",
-                "ON": [],
-                "OFF": [],
-                "RESET": [],
-                "TIMER": now + timeout_sec,
-            }
-        ]
-    }
-    systems_cfg = config.get("SYSTEMS", {})
-    for _system, sys_cfg in systems_cfg.items():
-        if _system == "ECHO":
-            continue
-        if sys_cfg.get("MODE") != "MASTER":
-            continue
-        _tmout = float(sys_cfg.get("DEFAULT_UA_TIMER", 10))
-        bridges["9990"].append({"SYSTEM": _system, "TS": 1, "TGID": tgid_b, "ACTIVE": False, "TIMEOUT": _tmout * 60, "TO_TYPE": "ON", "OFF": [], "ON": [tgid_b], "RESET": [], "TIMER": now})
-        bridges["9990"].append({"SYSTEM": _system, "TS": 2, "TGID": tgid_b, "ACTIVE": False, "TIMEOUT": _tmout * 60, "TO_TYPE": "ON", "OFF": [], "ON": [tgid_b], "RESET": [], "TIMER": now})
-    return bridges
 
 
 def _looping_errback(logger: logging.Logger, failure):
@@ -279,7 +246,7 @@ def run_peer_server(
     systems_cfg = config.get("SYSTEMS", {})
     subscription_store = InMemorySubscriptionStore()
     if "ECHO" in systems_cfg and systems_cfg["ECHO"].get("MODE") in ("PEER", "MASTER"):
-        replace_store_from_routing_table(subscription_store, _seed_echo_routing_table(config))
+        replace_store_from_routing_table(subscription_store, seed_echo_routing_table(config))
     _ctx = runtime_holder.get()
     runtime_holder.swap(
         RuntimeContext(
@@ -376,7 +343,7 @@ def run_peer_server(
         start_looping_call=_start_voice_loop,
         defer_to_thread=threads.deferToThread,
     )
-    voice_use_cases.check_voice_config_reload(voice_config_path)
+    voice_use_cases.apply_voice_config()
     ident_use_cases = IdentUseCases(
         config,
         voice_use_cases,
@@ -670,10 +637,29 @@ def run_peer_server(
     reactor.addSystemEventTrigger("before", "shutdown", shutdown_handler)
 
     # Voice config reload (15s): re-read adn-voice.yaml, start/stop announcement LoopingCalls on change
-    def voice_reload_loop():
+    voice_config_mtime = 0.0
+    if voice_config_path and os.path.isfile(voice_config_path):
         try:
+            voice_config_mtime = os.path.getmtime(voice_config_path)
+        except OSError:
+            voice_config_mtime = 0.0
+
+    def voice_reload_loop():
+        nonlocal voice_config_mtime
+        try:
+            if voice_config_path and os.path.isfile(voice_config_path):
+                try:
+                    mtime = os.path.getmtime(voice_config_path)
+                except OSError:
+                    return
+                if mtime == voice_config_mtime:
+                    return
+                voice_config_mtime = mtime
+                logger.info("(VOICE-RELOAD) config file change detected, reloading configuration...")
             loader.reload_voice_config(config, voice_config_path)
-            voice_use_cases.check_voice_config_reload(voice_config_path)
+            voice_use_cases.apply_voice_config()
+            if voice_config_path and voice_config_mtime:
+                logger.info("(VOICE-RELOAD) config reload completed")
         except Exception as e:
             logger.debug("(VOICE-RELOAD) %s", e)
 
