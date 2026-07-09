@@ -216,6 +216,13 @@ class HbpForwardMixin:
             _slot_st["lastSeq"] = False
             _slot_st["lastData"] = False
             _slot_st["RX_START"] = pkt_time
+        if _slot_st.get("lastData") and _slot_st["lastData"] == data and seq > 1:
+            _slot_st["loss"] = _slot_st.get("loss", 0) + 1
+            logger.debug(
+                "(%s) *PacketControl* last packet is a complete duplicate, discarding. Stream ID: %s TGID: %s",
+                system_name, int_id(stream_id), int_id(dst_id),
+            )
+            return False
         _slot_st["packets"] = _slot_st.get("packets", 0) + 1
         _pkts = _slot_st["packets"]
         _rx_start = _slot_st.get("RX_START", pkt_time)
@@ -279,13 +286,6 @@ class HbpForwardMixin:
                             src_proto._obp_send_bcsq(dst_id, stream_id)
                         _slot_st["_bcsq"] = True
                     return False
-        if _slot_st.get("lastData") and _slot_st["lastData"] == data and seq > 1:
-            _slot_st["loss"] = _slot_st.get("loss", 0) + 1
-            logger.debug(
-                "(%s) *PacketControl* last packet is a complete duplicate, discarding. Stream ID: %s TGID: %s",
-                system_name, int_id(stream_id), int_id(dst_id),
-            )
-            return False
         if seq and seq == _slot_st.get("lastSeq"):
             _slot_st["loss"] = _slot_st.get("loss", 0) + 1
             return False
