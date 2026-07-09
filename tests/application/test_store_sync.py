@@ -28,7 +28,7 @@ from adn_server.application.subscription.echo_seed import seed_echo_routing_tabl
 from adn_server.application.subscription.routing_table_export import export_routing_table
 from adn_server.application.subscription.store_sync import replace_store_from_routing_table
 from adn_server.domain import bytes_3, int_id
-from adn_server.infrastructure.subscription_store import InMemorySubscriptionStore
+from fakes.subscription_store import InMemorySubscriptionStore
 
 
 def _row_fingerprint(row: dict[str, Any]) -> tuple[Any, ...]:

@@ -26,7 +26,7 @@ from adn_server.application.subscription.stat_trimmer_ops import apply_stat_trim
 from adn_server.application.subscription.subscription_queries import store_has_table
 from adn_server.application.subscription.subscription_table_ops import ensure_stat_relay_store
 from adn_server.domain import bytes_3
-from adn_server.infrastructure.subscription_store import InMemorySubscriptionStore
+from fakes.subscription_store import InMemorySubscriptionStore
 
 
 def test_stat_trimmer_keeps_obp_stat_bridge_with_inactive_system_legs() -> None:

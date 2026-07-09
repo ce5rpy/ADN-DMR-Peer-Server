@@ -35,7 +35,7 @@ from adn_server.domain.subscription import (
     SystemId,
     TgId,
 )
-from adn_server.infrastructure.subscription_store import InMemorySubscriptionStore
+from fakes.subscription_store import InMemorySubscriptionStore
 
 
 def test_build_voice_ingress_hbp_group():

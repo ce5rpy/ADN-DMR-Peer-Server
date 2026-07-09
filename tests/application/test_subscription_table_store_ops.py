@@ -31,7 +31,7 @@ from adn_server.application.subscription.subscription_table_ops import (
     make_static_tg_store,
 )
 from adn_server.domain import bytes_3
-from adn_server.infrastructure.subscription_store import InMemorySubscriptionStore
+from fakes.subscription_store import InMemorySubscriptionStore
 
 
 def _store(bridges: dict | None = None) -> InMemorySubscriptionStore:

@@ -27,7 +27,7 @@ from tests.harness.deterministic import active_routing_table
 from adn_server.application.subscription.rule_timer_ops import apply_rule_timer_store
 from adn_server.application.subscription.store_sync import replace_store_from_routing_table
 from adn_server.domain.subscription import SubscriptionPhase
-from adn_server.infrastructure.subscription_store import InMemorySubscriptionStore
+from fakes.subscription_store import InMemorySubscriptionStore
 
 
 def test_apply_rule_timer_store_deactivates_expired_on() -> None:
