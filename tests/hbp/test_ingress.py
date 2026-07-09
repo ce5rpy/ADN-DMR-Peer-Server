@@ -53,6 +53,29 @@ def test_hbp_ingress_sets_rx_start_on_new_stream() -> None:
     assert slot_st.get("RX_STREAM_ID") == base.data()[16:20]
 
 
+def test_hbp_rate_limit_ignores_byte_identical_duplicates() -> None:
+    """Compressed duplicate bursts must not inflate the ingress rate counter."""
+    bridges = active_routing_table(91, (("MASTER-A", 2), ("MASTER-B", 2)))
+    scenario = DeterministicScenario(routing_table=bridges)
+    base = PacketSpec(dst_id=91, stream_id=0x90909090)
+    t0 = scenario.clock.time()
+
+    scenario.inject_hbp(
+        "MASTER-A",
+        DeterministicScenario.voice_head_spec(base),
+        ingress_pkt_time=t0,
+    )
+    for seq in range(1, 25):
+        burst = DeterministicScenario.voice_burst_spec(base, seq=seq, dtype_vseq=min(seq, 4))
+        pkt_time = t0 + seq * 0.06
+        ok = scenario.inject_hbp("MASTER-A", burst, ingress_pkt_time=pkt_time)
+        assert ok is not False
+        scenario.inject_hbp("MASTER-A", burst, ingress_pkt_time=pkt_time + 0.003)
+
+    forwarded = len(scenario.capture.for_system("MASTER-B"))
+    assert forwarded >= 20
+
+
 def test_hbp_rate_drop_prevents_bridge_forward() -> None:
     """After ingress RATE DROP, no further packets are bridged."""
     bridges = active_routing_table(91, (("MASTER-A", 2), ("MASTER-B", 2)))

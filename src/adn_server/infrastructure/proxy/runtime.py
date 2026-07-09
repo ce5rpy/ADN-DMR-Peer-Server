@@ -282,6 +282,7 @@ def start_proxy_service(
         debug=runtime["debug"],
         logger=logger,
         protocol=fanin,
+        config=config,
     )
     state.udp_port = udp_port
     state.client_sender = FanInClientSender(fanin_proto.transport)

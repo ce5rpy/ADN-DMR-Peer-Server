@@ -92,7 +92,7 @@ Detalle del flujo en el panel: [Self-service](../../monitor/self-service.md).
 ## Comportamiento con varios hotspots
 
 - Cada hotspot autenticado es un **peer** en el MASTER de inyección con sus **OPTIONS** (TG estáticas). **Repeat** y el fan-out del monitor respetan **OPTIONS por peer** — el tráfico de un TG no se envía a peers que no lo tienen seleccionado.
-- Los talkgroups **eco 9990–9999** omiten el filtro OPTIONS y vuelven al hotspot **llamante** (ver [Números especiales](special-numbers.md)).
+- Los talkgroups **eco 9990–9999** son **punto-a-punto**: omiten el filtro OPTIONS y vuelven **sólo** al peer exacto que originó la llamada (`RX_PEER` en el slot), nunca a otros hotspots del mismo usuario. Con un único peer conectado, se le entrega a ése (comportamiento legado). Ver [Echo — Comportamiento con varios hotspots](echo.md#comportamiento-con-varios-hotspots-proxy-inject-only) y [Números especiales](special-numbers.md).
 
 ---
 

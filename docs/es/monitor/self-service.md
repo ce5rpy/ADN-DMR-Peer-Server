@@ -75,6 +75,25 @@ Importante: el proxy envía **RPTO solo al master**, no al hotspot directamente.
 
 ---
 
+## Reconciliación de `logged_in`
+
+El flag **`logged_in`** controla tanto el login por **contraseña** como por
+**IP**: sólo las filas con `logged_in = 1` pueden autenticarse en el dashboard.
+El **peer server** mantiene este flag preciso reconciliándolo contra los peers
+realmente conectados cada **120 s** (el bucle `lst_seen`):
+
+- Los peers actualmente conectados al MASTER inject-only quedan `logged_in = 1`.
+- Las demás filas quedan `logged_in = 0`.
+- El bucle arranca con `now=True`, de modo que el **primer tick al arrancar
+  limpia todos los flags obsoletos inmediatamente** — tras un reinicio del
+  servidor, los hotspots que no se reconectaron no pueden autenticarse vía
+  login-by-IP.
+
+Esto reemplazó el `clean_tbl` horario del legado (barrido de 24 h de inactividad),
+que dejaba `logged_in = 1` en peers ya desconectados tras un reinicio.
+
+---
+
 ## Hash de contraseñas
 
 **`AuthenticateUser`** usa:

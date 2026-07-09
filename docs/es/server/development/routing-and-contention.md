@@ -285,7 +285,7 @@ flowchart TD
     PKT[DMRD hacia peer] --> F1{OPTIONS tiene TG<br/>o dinámico activo?}
     F1 -->|No| DROP[No entrega]
     F1 -->|Sí| F2{TG especial 9990-9999?}
-    F2 -->|Sí| PASS1[Bypass slot contention]
+    F2 -->|Sí| PASS1[Punto-a-punto:<br/>sólo RX_PEER (o peer único)]
     F2 -->|No| F3{¿Slot destino<br/>libre?}
     F3 -->|Peer TXing ingress| DROP
     F3 -->|Bridge hold activo<br/>TG distinto| DROP
@@ -308,6 +308,24 @@ flowchart TD
 | **GROUP_HANGTIME** | Si el último TG en ese slot fue distinto y está dentro del hangtime → bloquea. |
 | **SINGLE lock incompatible** | SINGLE=1 con lock en otro TG → bloquea salvo que sea el TG del lock o el peer lo activara. |
 | **Sesión stale** | Si la sesión per-peer lleva `_STALE_PEER_SESSION_TIMEOUT` sin frames, se purga y el slot se libera. |
+
+### TG especiales (9990–9999): entrega punto-a-punto
+
+El eco (9990) y los TG de servicio bajo demanda (9991–9999) **omiten** la
+contención de slot per-peer y los filtros OPTIONS descritos arriba, pero **no**
+se difunden a todos los peers. En un MASTER inject-only multi-peer se entregan
+**punto-a-punto**:
+
+- El paquete va **sólo** a `RX_PEER` — el peer exacto que originó la llamada
+  en ese slot — cuando `RX_TGID` coincide con el TG especial.
+- Si `RX_TGID` aún no coincide (p. ej. el primer VHEAD de una transmisión a
+  9990 llega antes de que se actualice `RX_TGID`) y sólo hay un peer conectado,
+  se entrega a ese peer único (fallback legado).
+- **No hay matching difuso** del ID DMR de origen: otros hotspots del mismo
+  usuario nunca reciben el eco ni la reproducción de servicio.
+
+Esto coincide con el legado `adn-dmr-server`, donde cada MASTER tenía un solo
+peer y el eco volvía naturalmente sólo al llamante. Ver [Echo](../user-guide/echo.md).
 
 ### Mid-call join
 

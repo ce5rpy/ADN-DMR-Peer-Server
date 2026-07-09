@@ -44,6 +44,7 @@ from adn_server.application.proxy.deployment import (
     proxy_target_system,
 )
 from adn_server.application.report.queue import BoundedReportQueue, QueuedReportSender
+from adn_server.infrastructure.udp_rcvbuf import apply_udp_rcvbuf, udp_rcvbuf_bytes
 from adn_server.application.runtime_context import (
     ConfigProxy,
     RuntimeContext,
@@ -583,6 +584,7 @@ def run_peer_server(
 
     def _listen_system(_name: str, bind: BindSpec, protocol: Any) -> Any:
         port = reactor.listenUDP(bind.port, protocol, interface=bind.ip or "0.0.0.0")
+        apply_udp_rcvbuf(port.socket, udp_rcvbuf_bytes(config), label=_name, logger=logger)
         logger.info("(GLOBAL) UDP %s listening on %s:%s", _name, bind.ip or "*", bind.port)
         return port
 

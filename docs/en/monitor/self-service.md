@@ -75,6 +75,24 @@ Important: the proxy sends **RPTO to the master only**, not to the hotspot direc
 
 ---
 
+## `logged_in` reconciliation
+
+The **`logged_in`** flag gates both **password** and **IP-based** login: only
+rows with `logged_in = 1` can authenticate on the dashboard. The **peer
+server** keeps this flag accurate by reconciling it against actually connected
+peers every **120 s** (the `lst_seen` loop):
+
+- Peers currently connected to the inject-only MASTER get `logged_in = 1`.
+- All other rows get `logged_in = 0`.
+- The loop starts with `now=True`, so the **first tick at boot clears every
+  stale flag immediately** — after a server restart, hotspots that did not
+  reconnect cannot authenticate via login-by-IP.
+
+This replaced the legacy hourly `clean_tbl` (24 h idle sweep), which left
+`logged_in = 1` for peers no longer connected after a restart.
+
+---
+
 ## Password hashing
 
 **`AuthenticateUser`** uses:
