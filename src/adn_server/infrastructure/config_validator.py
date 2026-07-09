@@ -131,7 +131,7 @@ def _section_string_keys(section_name: str, section: dict[str, Any], keys: froze
 
 def _validate_global(global_cfg: dict[str, Any], errors: list[str]) -> None:
     _section_string_keys("GLOBAL", global_cfg, GLOBAL_STRING_KEYS, errors)
-    for key in ("PING_TIME", "MAX_MISSED", "SERVER_ID"):
+    for key in ("PING_TIME", "MAX_MISSED", "SERVER_ID", "UDP_RCVBUF"):
         if key in global_cfg:
             _expect_int(f"GLOBAL.{key}", global_cfg[key], errors)
     for key in (
