@@ -26,8 +26,8 @@ import pytest
 from tests.harness.assertions import assert_forwarded
 from tests.harness.deterministic import DeterministicScenario, PacketSpec, minimal_config
 
-from adn_server.domain import ID_MAX, PEER_MAX
 from adn_server.application.subscription.echo_seed import seed_echo_routing_table
+from adn_server.domain import ID_MAX, PEER_MAX
 from adn_server.infrastructure.config_loader import acl_build
 
 
