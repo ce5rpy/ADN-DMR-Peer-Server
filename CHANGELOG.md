@@ -4,6 +4,33 @@ All notable changes to **adn-server** are documented here.
 
 <!-- version list -->
 
+## v2.2.4 (2026-07-09)
+
+### Bug Fixes
+
+- Duplicate-safe TA embed phase and REPEAT VHEAD DMRA (B)
+  ([#34](https://github.com/ce5rpy/ADN-DMR-Peer-Server/pull/34),
+  [`1567314`](https://github.com/ce5rpy/ADN-DMR-Peer-Server/commit/156731447c62cd9fe5f31562900cfba2d6c5d7ca))
+
+- Exclude byte-identical duplicates from HBP rate counter (A.2)
+  ([#34](https://github.com/ce5rpy/ADN-DMR-Peer-Server/pull/34),
+  [`1567314`](https://github.com/ce5rpy/ADN-DMR-Peer-Server/commit/156731447c62cd9fe5f31562900cfba2d6c5d7ca))
+
+- Production ingress mitigations (UDP rcvbuf, rate limiter, TA embed)
+  ([#34](https://github.com/ce5rpy/ADN-DMR-Peer-Server/pull/34),
+  [`1567314`](https://github.com/ce5rpy/ADN-DMR-Peer-Server/commit/156731447c62cd9fe5f31562900cfba2d6c5d7ca))
+
+- Raise UDP SO_RCVBUF on voice listeners (C-LOCAL)
+  ([#34](https://github.com/ce5rpy/ADN-DMR-Peer-Server/pull/34),
+  [`1567314`](https://github.com/ce5rpy/ADN-DMR-Peer-Server/commit/156731447c62cd9fe5f31562900cfba2d6c5d7ca))
+
+### Chores
+
+- Document echo point-to-point and logged_in reconciliation (EN/ES)
+  ([#34](https://github.com/ce5rpy/ADN-DMR-Peer-Server/pull/34),
+  [`1567314`](https://github.com/ce5rpy/ADN-DMR-Peer-Server/commit/156731447c62cd9fe5f31562900cfba2d6c5d7ca))
+
+
 ## v2.2.3 (2026-07-04)
 
 ### Bug Fixes
