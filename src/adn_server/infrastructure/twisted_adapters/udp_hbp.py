@@ -1553,8 +1553,13 @@ class HBPProtocol(DatagramProtocol):
                 if self._on_options_received:
                     try:
                         self._on_options_received(self._system, _this_peer["OPTIONS"])
-                    except Exception:
-                        pass
+                    except Exception as e:
+                        logger.warning(
+                            "(%s) on_options_received failed for peer %s: %s",
+                            self._system,
+                            int_id(_peer_id),
+                            e,
+                        )
                 if is_proxy_inject_only(self._CONFIG, self._system):
                     for _slot in (1, 2):
                         if _slot in self.STATUS:

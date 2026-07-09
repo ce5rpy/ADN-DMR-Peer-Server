@@ -134,8 +134,8 @@ class RoutingUseCases(
             return
         try:
             self._reporting.send_routing_table(self._routing_table_for_report(), incremental=incremental)
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning("(ROUTER) send_routing_table failed: %s", e)
 
     def routing_table_for_report(self) -> dict[str, list[dict[str, Any]]]:
         """Return BRIDGES export for monitor/report only (routing uses ``SubscriptionStore``)."""

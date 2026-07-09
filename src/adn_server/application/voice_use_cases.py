@@ -247,8 +247,8 @@ class VoiceUseCases:
                         for sid in list(obj.STATUS.keys()):
                             if sid not in (1, 2):
                                 del obj.STATUS[sid]
-                except Exception:
-                    pass
+                except Exception as e:
+                    logger.warning("(%s) slot STATUS cleanup failed: %s", label, e)
             self._announcement_running[ann_idx] = False
             if not targets:
                 logger.info(
@@ -521,7 +521,8 @@ class VoiceUseCases:
         self._tts_running[tts_idx] = False
         try:
             msg = failure.getErrorMessage()
-        except Exception:
+        except Exception as e:
+            logger.warning("(%s) failure.getErrorMessage unavailable: %s", label, e)
             msg = str(failure)
         logger.error("(%s) TTS conversion error: %s", label, msg)
 
@@ -548,8 +549,8 @@ class VoiceUseCases:
                         for sid in list(obj.STATUS.keys()):
                             if sid not in (1, 2):
                                 del obj.STATUS[sid]
-                except Exception:
-                    pass
+                except Exception as e:
+                    logger.warning("(%s) slot STATUS cleanup failed: %s", label, e)
             self._tts_running[tts_idx] = False
             if not targets:
                 logger.info(
@@ -729,8 +730,8 @@ class VoiceUseCases:
                 try:
                     if getattr(self._ann_tasks[ann_idx], "running", False):
                         self._ann_tasks[ann_idx].stop()
-                except Exception:
-                    pass
+                except Exception as e:
+                    logger.warning("(VOICE-RELOAD) stop announcement task %s failed: %s", ann_idx + 1, e)
                 del self._ann_tasks[ann_idx]
                 logger.info("(VOICE-RELOAD) ANNOUNCEMENT-%s stopped", ann_idx + 1)
         for ann_idx, item in enumerate(announcements):
@@ -741,8 +742,8 @@ class VoiceUseCases:
                 try:
                     if getattr(self._ann_tasks[ann_idx], "running", False):
                         self._ann_tasks[ann_idx].stop()
-                except Exception:
-                    pass
+                except Exception as e:
+                    logger.warning("(VOICE-RELOAD) stop %s failed: %s", label, e)
                 del self._ann_tasks[ann_idx]
                 logger.info("(VOICE-RELOAD) %s stopped", label)
             mode = item.get("MODE", "interval")
@@ -761,8 +762,8 @@ class VoiceUseCases:
                 try:
                     if getattr(self._tts_tasks[tts_idx], "running", False):
                         self._tts_tasks[tts_idx].stop()
-                except Exception:
-                    pass
+                except Exception as e:
+                    logger.warning("(VOICE-RELOAD) stop TTS task %s failed: %s", tts_idx + 1, e)
                 del self._tts_tasks[tts_idx]
                 logger.info("(VOICE-RELOAD) TTS-%s stopped", tts_idx + 1)
         for tts_idx, item in enumerate(tts_list):
@@ -773,8 +774,8 @@ class VoiceUseCases:
                 try:
                     if getattr(self._tts_tasks[tts_idx], "running", False):
                         self._tts_tasks[tts_idx].stop()
-                except Exception:
-                    pass
+                except Exception as e:
+                    logger.warning("(VOICE-RELOAD) stop %s failed: %s", label, e)
                 del self._tts_tasks[tts_idx]
                 logger.info("(VOICE-RELOAD) %s stopped", label)
             mode = item.get("MODE", "interval")
