@@ -21,6 +21,7 @@ The following intervals are part of the current runtime behavior:
 | `bridge_reset` | **6s** | Bridge reset flag cleanup and pending reset completion. |
 | OPTIONS refresh | **event-driven** | Static TG / reflector from **RPTO**, **startup/reload** (`apply_startup_bridges`), **dmrd** no-source fallback. No periodic 26s loop (**D-28**). |
 | `dynamic_tg_purge_loop` | **60s** | Purge expired **SINGLE=1** rows from `peer_dynamic_tgs` and in-memory `_PEER_UA_SESSIONS`. |
+| `lst_seen` (self-service reconcile) | **120s** | Reconcile `Clients.logged_in` against currently connected peers: connected peers get `logged_in=1`, the rest `0`. Runs with `now=True` on first tick so stale flags clear immediately after a server restart. Prevents the monitor from authenticating disconnected hotspots via login-by-IP. |
 | `statTrimmer` | **303s** | Trim stale STAT bridges and transient status entries. |
 
 If you change one of these intervals, document the operational impact for monitoring, loop behavior, and troubleshooting.

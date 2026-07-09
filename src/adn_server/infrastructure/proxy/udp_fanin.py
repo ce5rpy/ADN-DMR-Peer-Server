@@ -32,6 +32,7 @@ from adn_server.application.ports import ProxyMasterSink
 from adn_server.application.proxy import ProxyUseCases, peer_id_from_packet
 from adn_server.domain.result import is_fail
 from adn_server.infrastructure.hbp_constants import RPTC, RPTO
+from adn_server.infrastructure.udp_rcvbuf import apply_udp_rcvbuf, udp_rcvbuf_bytes
 
 if TYPE_CHECKING:
     from .self_service_bridge import ProxySelfServiceBridge
@@ -118,10 +119,15 @@ def listen_proxy_fanin(
     debug: bool = False,
     logger: logging.Logger | None = None,
     protocol: ProxyFanInProtocol | None = None,
+    config: dict[str, Any] | None = None,
+    udp_rcvbuf: int | None = None,
 ) -> tuple[ProxyFanInProtocol, Any]:
     """Bind LISTEN_PORT and return ``(protocol, udp_port)``."""
-    fanin = protocol or ProxyFanInProtocol(proxy, master_sink, debug=debug, logger=logger)
+    log = logger or _logger
+    fanin = protocol or ProxyFanInProtocol(proxy, master_sink, debug=debug, logger=log)
     udp_port = reactor.listenUDP(listen_port, fanin, interface=listen_ip or "0.0.0.0")
+    buf_size = udp_rcvbuf if udp_rcvbuf is not None else udp_rcvbuf_bytes(config)
+    apply_udp_rcvbuf(udp_port.socket, buf_size, label="PROXY", logger=log)
     return fanin, udp_port
 
 

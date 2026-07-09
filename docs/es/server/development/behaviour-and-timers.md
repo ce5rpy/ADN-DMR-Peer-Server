@@ -21,6 +21,7 @@ Los siguientes intervalos forman parte del comportamiento actual en ejecución:
 | `bridge_reset` | **6s** | Limpieza de flags de reset y cierre de resets pendientes. |
 | OPTIONS refresh | **por evento** | TG estáticas / reflector vía **RPTO**, **startup/reload** (`apply_startup_bridges`), fallback **dmrd** sin source. Sin loop periódico de 26s (**D-28**). |
 | `dynamic_tg_purge_loop` | **60s** | Purga filas **SINGLE=1** expiradas de `peer_dynamic_tgs` y `_PEER_UA_SESSIONS` en memoria. |
+| `lst_seen` (reconcile self-service) | **120s** | Reconcilia `Clients.logged_in` contra los peers conectados actualmente: los conectados quedan `logged_in=1`, el resto `0`. Corre con `now=True` en el primer tick para limpiar flags obsoletos inmediatamente tras un reinicio del servidor. Evita que el monitor autentique hotspots desconectados vía login-by-IP. |
 | `statTrimmer` | **303s** | Limpieza de bridges STAT obsoletos y estados transitorios. |
 
 Si cambias uno de estos intervalos, documenta el impacto operativo en monitorización, comportamiento de bucles y troubleshooting.

@@ -321,6 +321,7 @@ class LcTaMixin:
         tgid: int | None = None,
         force: bool = False,
         fallback_inject: bool = False,
+        repeat_vhead: bool = False,
     ) -> None:
         """Emit DMRA to an HBP target on VHEAD (once per target stream)."""
         if not self._send_dmra_to_system:
@@ -334,9 +335,9 @@ class LcTaMixin:
             if force:
                 if not self._talker_alias.should_resend_passthrough_dmra(target_system, stream_id):
                     return
-            elif not self._talker_alias.should_send_on_vhead(target_system, stream_id):
+            elif not repeat_vhead and not self._talker_alias.should_send_on_vhead(target_system, stream_id):
                 return
-        elif not self._talker_alias.should_send_on_vhead(target_system, stream_id):
+        elif not repeat_vhead and not self._talker_alias.should_send_on_vhead(target_system, stream_id):
             return
         if not have_passthrough:
             # Legacy resolve_ta (both): inject at VHEAD when the buffer is still empty.
@@ -400,6 +401,7 @@ class LcTaMixin:
         self._send_talker_alias_to_target(
             system_name, system_name, rf_src, stream_id, source_peer,
             wire_slot=wire_slot, tgid=tgid,
+            repeat_vhead=True,
         )
 
     def prepare_talker_alias_local_repeat(
@@ -526,6 +528,8 @@ class LcTaMixin:
         st.pop("TX_TA_EMB", None)
         st.pop("TX_TA_PHASE", None)
         st.pop("TX_TA_ON", None)
+        st.pop("_ta_last_embed_burst", None)
+        st.pop("_ta_last_embed_frag", None)
         emblcs = self._talker_alias.embedded_emblc_for_stream(
             source_system,
             rf_src,
@@ -562,6 +566,15 @@ class LcTaMixin:
         """
         if dtype_vseq not in (1, 2, 3, 4):
             return
+        dmrpkt = dmrbits.tobytes()
+        burst_key = (dtype_vseq, dmrpkt)
+        # Duplicated uplink bursts (same B–E payload) must not advance the TA phase
+        # machine; REPEAT runs before ingress duplicate drops (legacy lastData parity).
+        if burst_key == st.get("_ta_last_embed_burst"):
+            last_frag = st.get("_ta_last_embed_frag")
+            if last_frag is not None:
+                dmrbits[EMB_LC_SLICE] = last_frag
+            return
         ta_emb = st.get("TX_TA_EMB")
         if ta_emb is not None and st.get("TX_TA_ON"):
             phase = st.get("TX_TA_PHASE", 0)
@@ -575,6 +588,8 @@ class LcTaMixin:
             if dtype_vseq == 4 and ta_emb is not None:
                 st["TX_TA_ON"] = True
         dmrbits[EMB_LC_SLICE] = frag
+        st["_ta_last_embed_burst"] = burst_key
+        st["_ta_last_embed_frag"] = frag
 
     def _clear_talker_alias_embed(self, st: dict[str, Any]) -> None:
         st.pop("TX_TA_EMB", None)
@@ -582,3 +597,5 @@ class LcTaMixin:
         st.pop("TX_TA_BLOCK_COUNT", None)
         st.pop("TX_TA_ON", None)
         st.pop("_ta_embed_kind", None)
+        st.pop("_ta_last_embed_burst", None)
+        st.pop("_ta_last_embed_frag", None)

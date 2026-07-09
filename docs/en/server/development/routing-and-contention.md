@@ -285,7 +285,7 @@ flowchart TD
     PKT[DMRD toward peer] --> F1{OPTIONS has TG<br/>or dynamic active?}
     F1 -->|No| DROP[Do not deliver]
     F1 -->|Yes| F2{Special TG 9990-9999?}
-    F2 -->|Yes| PASS1[Bypass slot contention]
+    F2 -->|Yes| PASS1[Point-to-point:<br/>only RX_PEER (or single peer)]
     F2 -->|No| F3{Target slot<br/>free?}
     F3 -->|Peer TXing ingress| DROP
     F3 -->|Bridge hold active<br/>different TG| DROP
@@ -308,6 +308,24 @@ flowchart TD
 | **GROUP_HANGTIME** | If the last TG on that slot was different and is within hangtime → block. |
 | **Incompatible SINGLE lock** | SINGLE=1 with a lock on another TG → block, unless it is the lock TG or the peer activated it. |
 | **Stale session** | If the per-peer session has had no frames for `_STALE_PEER_SESSION_TIMEOUT`, it is purged and the slot frees. |
+
+### Special TGs (9990–9999): point-to-point delivery
+
+Echo (9990) and on-demand service TGs (9991–9999) **bypass** the per-peer slot
+contention and OPTIONS filters described above, but they are **not** broadcast
+to all peers. On a multi-peer inject-only MASTER they are delivered
+**point-to-point**:
+
+- The packet goes **only** to `RX_PEER` — the exact peer that originated the
+  call on that slot — when `RX_TGID` matches the special TG.
+- If `RX_TGID` does not yet match (e.g. the very first VHEAD of a 9990
+  transmission arrives before `RX_TGID` is updated) and only one peer is
+  connected, it is delivered to that single peer (legacy fallback).
+- There is **no fuzzy matching** on the source DMR ID: other hotspots of the
+  same user never receive echo or service playback.
+
+This matches legacy `adn-dmr-server`, where each MASTER had a single peer so
+echo naturally returned only to the caller. See [Echo](../user-guide/echo.md).
 
 ### Mid-call join
 
