@@ -46,6 +46,7 @@ from .routing.helpers import (
     inject_only_defer_obp_hbp_slot_contention,
     is_private_subscriber_dst,
     is_unit_data_ingress,
+    master_slot_holds_server_broadcast,
     obp_clear_deferred_bridge_tx_leg,
     obp_deferred_bridge_tx_leg,
     obp_flat_bridge_tx_idle,
@@ -678,8 +679,12 @@ class RoutingUseCases(
                         )
                         if not _obp_deferred_bridge:
                             _ts_st["TX_TYPE"] = HBPF_SLT_VTERM
-                    if (
+                    _apply_master_slot_contention = (
                         not _defer_slot_contention
+                        or master_slot_holds_server_broadcast(_ts_st, pkt_time)
+                    )
+                    if (
+                        _apply_master_slot_contention
                         and hbp_slot_blocks_group_voice(
                             _ts_st,
                             entry_tgid_b,
