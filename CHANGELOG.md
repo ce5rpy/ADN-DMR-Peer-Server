@@ -4,6 +4,51 @@ All notable changes to **adn-server** are documented here.
 
 <!-- version list -->
 
+## v2.2.5 (2026-07-10)
+
+### Bug Fixes
+
+- Add ReportWire contract tests against report-v2 schema
+  ([#36](https://github.com/ce5rpy/ADN-DMR-Peer-Server/pull/36),
+  [`c15430a`](https://github.com/ce5rpy/ADN-DMR-Peer-Server/commit/c15430a3e0905f9b87ca2f32c98ee7cf26a0cd48))
+
+- Add tests/fakes shim for application test decoupling
+  ([#36](https://github.com/ce5rpy/ADN-DMR-Peer-Server/pull/36),
+  [`c15430a`](https://github.com/ce5rpy/ADN-DMR-Peer-Server/commit/c15430a3e0905f9b87ca2f32c98ee7cf26a0cd48))
+
+- Align OPTIONS static validity checks across routing and report
+  ([#36](https://github.com/ce5rpy/ADN-DMR-Peer-Server/pull/36),
+  [`c15430a`](https://github.com/ce5rpy/ADN-DMR-Peer-Server/commit/c15430a3e0905f9b87ca2f32c98ee7cf26a0cd48))
+
+- Audit items 11-13 coverage, infra tests, and warning logs
+  ([#36](https://github.com/ce5rpy/ADN-DMR-Peer-Server/pull/36),
+  [`c15430a`](https://github.com/ce5rpy/ADN-DMR-Peer-Server/commit/c15430a3e0905f9b87ca2f32c98ee7cf26a0cd48))
+
+- Audit refactors, report contract, and concurrent OBP downlink
+  ([#36](https://github.com/ce5rpy/ADN-DMR-Peer-Server/pull/36),
+  [`c15430a`](https://github.com/ce5rpy/ADN-DMR-Peer-Server/commit/c15430a3e0905f9b87ca2f32c98ee7cf26a0cd48))
+
+- Audit wave 1 server hygiene refactors
+  ([#36](https://github.com/ce5rpy/ADN-DMR-Peer-Server/pull/36),
+  [`c15430a`](https://github.com/ce5rpy/ADN-DMR-Peer-Server/commit/c15430a3e0905f9b87ca2f32c98ee7cf26a0cd48))
+
+- Document dashboard_state in report-v2 schema
+  ([#36](https://github.com/ce5rpy/ADN-DMR-Peer-Server/pull/36),
+  [`c15430a`](https://github.com/ce5rpy/ADN-DMR-Peer-Server/commit/c15430a3e0905f9b87ca2f32c98ee7cf26a0cd48))
+
+- OBP DMRE source-server validation without ALLOW_UNREG_ID bypass
+  ([#36](https://github.com/ce5rpy/ADN-DMR-Peer-Server/pull/36),
+  [`c15430a`](https://github.com/ce5rpy/ADN-DMR-Peer-Server/commit/c15430a3e0905f9b87ca2f32c98ee7cf26a0cd48))
+
+- Per-stream OBP bridge TX legs for concurrent MASTER downlink
+  ([#36](https://github.com/ce5rpy/ADN-DMR-Peer-Server/pull/36),
+  [`c15430a`](https://github.com/ce5rpy/ADN-DMR-Peer-Server/commit/c15430a3e0905f9b87ca2f32c98ee7cf26a0cd48))
+
+- Ruff lint in OBP concurrent streams downlink test
+  ([#36](https://github.com/ce5rpy/ADN-DMR-Peer-Server/pull/36),
+  [`c15430a`](https://github.com/ce5rpy/ADN-DMR-Peer-Server/commit/c15430a3e0905f9b87ca2f32c98ee7cf26a0cd48))
+
+
 ## v2.2.4 (2026-07-09)
 
 ### Bug Fixes
