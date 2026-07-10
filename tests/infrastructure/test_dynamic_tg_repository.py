@@ -89,9 +89,22 @@ def test_purge_expired(repo: MysqlDynamicTgRepository) -> None:
     assert args == (1_000_000,)
 
 
+def test_select_need_reload(repo: MysqlDynamicTgRepository) -> None:
+    repo._pool.runQuery.return_value = succeed([(730039101, "MASTER-A")])  # noqa: SLF001
+    result: list = []
+    d = repo.select_need_reload()
+    d.addCallback(result.append)
+    from twisted.internet import reactor
+
+    reactor.runUntilCurrent()
+    assert result[0] == [(730039101, "MASTER-A")]
+    sql = repo._pool.runQuery.call_args[0][0]  # noqa: SLF001
+    assert "need_reload=1" in sql
+
+
 def test_load_peer_maps_rows(repo: MysqlDynamicTgRepository) -> None:
     repo._pool.runQuery.return_value = succeed(  # noqa: SLF001
-        [(730039101, "MASTER-A", 2, 7304, 0, None, 1_000_000.0)]
+        [(730039101, "MASTER-A", 2, 7304, 0, None, 1_000_000.0, 0)]
     )
     result: list = []
     d = repo.load_peer(730039101, "MASTER-A")

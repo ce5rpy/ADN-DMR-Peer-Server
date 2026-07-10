@@ -408,6 +408,10 @@ class DynamicTgStore(ABC):
         """Returns Deferred firing with ``list[DynamicTgEntry]``."""
 
     @abstractmethod
+    def select_need_reload(self) -> Any:
+        """Returns Deferred firing with ``list[tuple[int, str]]`` (int_id, system_name)."""
+
+    @abstractmethod
     def purge_expired(self, now: float) -> None:
         ...
 

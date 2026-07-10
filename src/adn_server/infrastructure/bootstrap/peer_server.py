@@ -590,7 +590,14 @@ def run_peer_server(
             apply_proxy_config_reload(proxy_state, config, logger=logger)
             _wire_proxy_report_slots(report_factory, proxy_state)
         elif proxy_enabled and proxy_target_system(config):
-            proxy_state = start_proxy_service(config, protocols, logger=logger)
+            proxy_state = start_proxy_service(
+                config,
+                protocols,
+                logger=logger,
+                mysql_pool=mysql_pool,
+                dynamic_tg_uc=dynamic_tg_uc,
+                purge_peer_dynamic=_purge_peer_dynamic_tgs,
+            )
             _wire_proxy_report_slots(report_factory, proxy_state)
         else:
             _wire_proxy_report_slots(report_factory, None)
@@ -708,10 +715,33 @@ def run_peer_server(
 
     _wire_monitor_downlink_ctx(report_factory, protocols)
 
+    def _purge_peer_dynamic_tgs(peer_id: bytes, system_name: str) -> bool:
+        proto = protocols.get(system_name)
+        if proto is None:
+            return False
+        purge = getattr(proto, "purge_peer_dynamic_tgs", None)
+        if not callable(purge):
+            return False
+        return bool(purge(peer_id))
+
+    def _try_purge_dynamic_reload(peer_int: int, system_name: str, peer_id: bytes) -> bool:
+        proto = protocols.get(system_name)
+        if proto is None:
+            return False
+        peers = getattr(proto, "_peers", None)
+        if not isinstance(peers, dict) or peer_id not in peers:
+            return False
+        return _purge_peer_dynamic_tgs(peer_id, system_name)
+
     if proxy_enabled:
         try:
             proxy_state = start_proxy_service(
-                config, protocols, logger=logger, mysql_pool=mysql_pool,
+                config,
+                protocols,
+                logger=logger,
+                mysql_pool=mysql_pool,
+                dynamic_tg_uc=dynamic_tg_uc,
+                purge_peer_dynamic=_purge_peer_dynamic_tgs,
             )
         except Exception as exc:
             logger.error("(PROXY) failed to start integrated proxy: %s", exc)
@@ -723,6 +753,13 @@ def run_peer_server(
 
         reactor.addSystemEventTrigger("before", "shutdown", _stop_proxy)
         _wire_proxy_report_slots(report_factory, proxy_state)
+
+    if proxy_state is None or proxy_state.self_service is None:
+        def dynamic_reload_loop() -> None:
+            dynamic_tg_uc.process_reload_queue(try_purge=_try_purge_dynamic_reload)
+
+        task.LoopingCall(dynamic_reload_loop).start(10).addErrback(_looping_errback, logger)
+        logger.info("(DYNAMIC_TG) need_reload poll loop started (every 10 seconds)")
 
     logger.info("(GLOBAL) ADN DMR Peer Server started. Use adn-dmr-server as reference.")
     reactor.suggestThreadPoolSize(100)

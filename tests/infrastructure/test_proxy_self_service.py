@@ -307,6 +307,24 @@ def test_send_opts_pushes_modified_rows_after_pass() -> None:
     assert sink.injected[0][0] == RPTO + peer + b"TS2=730444;"
 
 
+def test_send_opts_processes_need_reload() -> None:
+    bridge, _sink, store, _sender = _bridge()
+    peer = bytes_4(7300444)
+    purged: list[bytes] = []
+
+    class _DynUc:
+        def process_reload_queue(self, *, try_purge):
+            try_purge(7300444, "MASTER-A", peer)
+            from twisted.internet.defer import succeed
+
+            return succeed(None)
+
+    bridge._dynamic_tg_uc = _DynUc()
+    bridge._purge_peer_dynamic = lambda pid, _sys: purged.append(pid) or True
+    _run_deferred(bridge.send_opts())
+    assert purged == [peer]
+
+
 def test_session_expired_logs_out() -> None:
     bridge, _sink, store, _sender = _bridge()
     peer = bytes_4(7300444)

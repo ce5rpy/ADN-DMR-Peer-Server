@@ -37,7 +37,8 @@ from adn_server.application.routing.helpers import (
     restore_peer_ua_entries_to_memory,
 )
 from adn_server.domain import int_id
-from adn_server.domain.dynamic_tg import DynamicTgEntry
+from adn_server.domain.dynamic_tg import DynamicTgEntry, is_persisted_dynamic_row
+from adn_server.domain.value_objects import bytes_4
 
 logger = logging.getLogger(__name__)
 
@@ -109,7 +110,8 @@ class DynamicTgUseCases:
         def _apply(entries: list[DynamicTgEntry]) -> list[int]:
             active = [
                 e for e in entries
-                if not e.single_mode or e.expires_at is None or float(e.expires_at) > now
+                if is_persisted_dynamic_row(e)
+                and (not e.single_mode or e.expires_at is None or float(e.expires_at) > now)
             ]
             tgids = restore_peer_ua_entries_to_memory(sys_cfg, peer_id, active, now=now)
             if self._on_restored is not None:
@@ -129,3 +131,30 @@ class DynamicTgUseCases:
         for sys_cfg in config.get("SYSTEMS", {}).values():
             if isinstance(sys_cfg, dict):
                 purge_expired_peer_ua_sessions(sys_cfg, now=now)
+
+    def process_reload_queue(
+        self,
+        *,
+        try_purge: Callable[[int, str, bytes], bool],
+    ) -> Any:
+        """Poll ``need_reload`` rows and apply TG-4000-equivalent purge when peer is online."""
+
+        def _on_rows(rows: list[tuple[int, str]] | None) -> None:
+            for peer_int, system_name in rows or []:
+                peer_id = bytes_4(peer_int)
+                try:
+                    if try_purge(peer_int, system_name, peer_id):
+                        logger.info(
+                            "(DYNAMIC_TG) Applied monitor reload for peer %s on %s",
+                            peer_int,
+                            system_name,
+                        )
+                except Exception as err:
+                    logger.warning(
+                        "(DYNAMIC_TG) reload for peer %s on %s failed: %s",
+                        peer_int,
+                        system_name,
+                        err,
+                    )
+
+        return self._store.select_need_reload().addCallback(_on_rows)

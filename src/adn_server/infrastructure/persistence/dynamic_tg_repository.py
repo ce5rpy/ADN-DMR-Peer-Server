@@ -34,6 +34,10 @@ from adn_server.domain.dynamic_tg import DynamicTgEntry
 
 logger = logging.getLogger(__name__)
 
+_SELECT_COLS = (
+    "int_id, system_name, slot, tgid, single_mode, expires_at, updated_at, need_reload"
+)
+
 
 def _row_to_entry(row: tuple[Any, ...]) -> DynamicTgEntry:
     return DynamicTgEntry(
@@ -44,6 +48,7 @@ def _row_to_entry(row: tuple[Any, ...]) -> DynamicTgEntry:
         single_mode=bool(int(row[4])),
         expires_at=float(row[5]) if row[5] is not None else None,
         updated_at=float(row[6]),
+        need_reload=bool(int(row[7])) if len(row) > 7 else False,
     )
 
 
@@ -58,12 +63,13 @@ class MysqlDynamicTgRepository(DynamicTgStore):
         expires = int(entry.expires_at) if entry.expires_at is not None else None
         self._pool.runOperation(
             """INSERT INTO peer_dynamic_tgs
-               (int_id, system_name, slot, tgid, single_mode, expires_at, updated_at)
-               VALUES (%s, %s, %s, %s, %s, %s, %s)
+               (int_id, system_name, slot, tgid, single_mode, expires_at, updated_at, need_reload)
+               VALUES (%s, %s, %s, %s, %s, %s, %s, 0)
                ON DUPLICATE KEY UPDATE
                  single_mode=VALUES(single_mode),
                  expires_at=VALUES(expires_at),
-                 updated_at=VALUES(updated_at)""",
+                 updated_at=VALUES(updated_at),
+                 need_reload=0""",
             (
                 entry.int_id,
                 entry.system_name,
@@ -102,12 +108,19 @@ class MysqlDynamicTgRepository(DynamicTgStore):
     @inlineCallbacks
     def load_peer(self, int_id: int, system_name: str) -> Any:
         rows = yield self._pool.runQuery(
-            """SELECT int_id, system_name, slot, tgid, single_mode, expires_at, updated_at
+            f"""SELECT {_SELECT_COLS}
                FROM peer_dynamic_tgs
                WHERE int_id=%s AND system_name=%s""",
             (int_id, system_name),
         )
         returnValue([_row_to_entry(row) for row in (rows or [])])
+
+    @inlineCallbacks
+    def select_need_reload(self) -> Any:
+        rows = yield self._pool.runQuery(
+            "SELECT DISTINCT int_id, system_name FROM peer_dynamic_tgs WHERE need_reload=1"
+        )
+        returnValue([(int(row[0]), str(row[1])) for row in (rows or [])])
 
     def purge_expired(self, now: float) -> None:
         cutoff = int(now)
