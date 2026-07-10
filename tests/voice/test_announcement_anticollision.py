@@ -68,3 +68,17 @@ def test_broadcast_aborts_when_qso_starts_mid_transmission() -> None:
 
     assert uc._announcement_running[0] is False
     assert master.sent == []
+
+
+def test_mark_slots_busy_stamps_server_voice_tx_row() -> None:
+    scenario, master = voice_master_scenario()
+    uc = make_voice_uc(scenario, master)
+    slot = master.STATUS[2]
+    slot["TX_TYPE"] = HBPF_SLT_VTERM
+    targets = [{"sys_obj": master, "name": "MASTER-A", "slot": slot, "ts": 2}]
+
+    uc._mark_slots_busy(targets)
+
+    assert slot["TX_TYPE"] == HBPF_SLT_VHEAD
+    assert int.from_bytes(slot["TX_RFS"], "big") == 5000
+    assert slot["TX_TIME"] > 0
