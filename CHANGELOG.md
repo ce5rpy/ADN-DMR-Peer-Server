@@ -4,6 +4,21 @@ All notable changes to **adn-server** are documented here.
 
 <!-- version list -->
 
+## v2.3.0 (2026-07-10)
+
+### Chores
+
+- Fix import order in voice subscription plan test
+  ([#40](https://github.com/ce5rpy/ADN-DMR-Peer-Server/pull/40),
+  [`c3b1c1c`](https://github.com/ce5rpy/ADN-DMR-Peer-Server/commit/c3b1c1c797ed68f20a81e43c62cbdd6964e45e16))
+
+### Features
+
+- Poll peer_dynamic_tgs.need_reload for dynamic TG purge
+  ([#40](https://github.com/ce5rpy/ADN-DMR-Peer-Server/pull/40),
+  [`c3b1c1c`](https://github.com/ce5rpy/ADN-DMR-Peer-Server/commit/c3b1c1c797ed68f20a81e43c62cbdd6964e45e16))
+
+
 ## v2.2.6 (2026-07-10)
 
 ### Bug Fixes
