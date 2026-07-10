@@ -17,7 +17,6 @@ from contextlib import contextmanager
 from typing import Any
 
 import pytest
-
 from tests.harness.deterministic import (
     DeterministicScenario,
     FakeClock,
@@ -253,19 +252,6 @@ def _wrap_send_peer_trace(hbp: HBPProtocol) -> dict[str, Any]:
 
     hbp.send_peer = _traced  # type: ignore[method-assign]
     return trace
-    bits = packet[15]
-    return {
-        "peer_id": packet[11:15],
-        "rf_src": packet[5:8],
-        "dst_id": packet[8:11],
-        "seq": packet[4],
-        "slot": 2 if bits & 0x80 else 1,
-        "call_type": "group",
-        "frame_type": (bits & 0x30) >> 4,
-        "dtype_vseq": bits & 0xF,
-        "stream_id": packet[16:20],
-        "data": packet,
-    }
 
 
 def _inject_obp_at(
@@ -295,7 +281,6 @@ def _run_interleaved_qsos(
     t0 = scenario.clock.time()
     step = 0
     tx_stamp_changes = 0
-    start_tx_events = 0
     prev_tx_stream: bytes | None = None
     hs_addr = ("127.0.0.1", 62031)
     delivered_a: list[bytes] = []
