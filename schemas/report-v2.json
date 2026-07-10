@@ -7,6 +7,7 @@
   "required": ["type"],
   "oneOf": [
     { "$ref": "#/$defs/hello" },
+    { "$ref": "#/$defs/dashboard_state" },
     { "$ref": "#/$defs/topology" },
     { "$ref": "#/$defs/routing_table" },
     { "$ref": "#/$defs/voice_event" },
@@ -55,13 +56,139 @@
           "type": "array",
           "items": { "type": "string" },
           "uniqueItems": true,
-          "description": "Capability tokens. v1: INGRESS, END_TX_FORWARD, PUSH_ON_CONNECT. v2 adds REPORT_V2, TOPOLOGY_JSON, ROUTING_TABLE_JSON, VOICE_EVENT_JSON, DELTA_UPDATES."
+          "description": "Capability tokens. v1: INGRESS, END_TX_FORWARD, PUSH_ON_CONNECT. v2 adds REPORT_V2, ROUTING_TABLE_JSON, VOICE_EVENT_JSON, DELTA_UPDATES. TCP monitor uses dashboard_state (STATE_SND), not topology."
         },
         "systems": {
           "type": "array",
           "items": { "type": "string" },
           "description": "Optional hint: enabled system names with at least one connected peer or upstream link. Omitted when none. Full topology (all systems) follows in the topology message."
         }
+      }
+    },
+    "dashboard_peer": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": ["id", "connected"],
+      "properties": {
+        "id": { "$ref": "#/$defs/dmr_id" },
+        "connected": { "type": "boolean" },
+        "ip": { "type": "string" },
+        "port": { "type": "integer", "minimum": 0, "maximum": 65535 },
+        "callsign": { "type": "string" },
+        "connected_at": { "type": "integer" },
+        "options": { "type": "string" },
+        "ts1_static": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "ts2_static": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "single_mode": { "type": "boolean" },
+        "ua_timer_min": { "type": "number", "minimum": 0 },
+        "ua_sessions": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["tgid", "expires_at"],
+            "properties": {
+              "tgid": { "$ref": "#/$defs/dmr_id" },
+              "expires_at": { "type": "number" }
+            }
+          }
+        },
+        "ua_multi_tgs": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "array",
+            "items": { "type": "string" }
+          }
+        },
+        "rf_mode": {
+          "type": "string",
+          "enum": ["simplex", "duplex"]
+        }
+      }
+    },
+    "dashboard_master": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["mode", "peers"],
+      "properties": {
+        "mode": { "const": "MASTER" },
+        "peers": {
+          "type": "object",
+          "additionalProperties": { "$ref": "#/$defs/dashboard_peer" }
+        },
+        "single_mode": { "type": "boolean" },
+        "default_ua_timer": { "type": "number", "minimum": 0 },
+        "ip": { "type": "string" },
+        "port": { "type": "integer", "minimum": 0, "maximum": 65535 }
+      }
+    },
+    "dashboard_upstream_peer": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["mode", "connected"],
+      "properties": {
+        "mode": { "type": "string", "enum": ["PEER", "XLXPEER"] },
+        "connected": { "type": "boolean" },
+        "callsign": { "type": "string" },
+        "location": { "type": "string" },
+        "description": { "type": "string" },
+        "url": { "type": "string" },
+        "master_ip": { "type": "string" },
+        "master_port": { "type": "integer", "minimum": 0, "maximum": 65535 },
+        "radio_id": { "$ref": "#/$defs/dmr_id" },
+        "connected_at": { "type": "integer" }
+      }
+    },
+    "dashboard_openbridge": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["mode", "streams"],
+      "properties": {
+        "mode": { "const": "OPENBRIDGE" },
+        "streams": { "type": "object" },
+        "network_id": { "$ref": "#/$defs/dmr_id" },
+        "ip": { "type": "string" },
+        "port": { "type": "integer", "minimum": 0, "maximum": 65535 },
+        "enhanced_obp": { "type": "boolean" }
+      }
+    },
+    "dashboard_ctable": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["MASTERS", "PEERS", "OPENBRIDGES"],
+      "properties": {
+        "MASTERS": {
+          "type": "object",
+          "additionalProperties": { "$ref": "#/$defs/dashboard_master" }
+        },
+        "PEERS": {
+          "type": "object",
+          "additionalProperties": { "$ref": "#/$defs/dashboard_upstream_peer" }
+        },
+        "OPENBRIDGES": {
+          "type": "object",
+          "additionalProperties": { "$ref": "#/$defs/dashboard_openbridge" }
+        }
+      }
+    },
+    "dashboard_state": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "ts", "ctable"],
+      "properties": {
+        "type": { "const": "dashboard_state" },
+        "ts": { "type": "number", "description": "Unix epoch seconds (fractional allowed)." },
+        "server_id": {
+          "type": "string",
+          "description": "GLOBAL.SERVER_ID when present (MQTT retained state)."
+        },
+        "ctable": { "$ref": "#/$defs/dashboard_ctable" }
       }
     },
     "topology_system": {

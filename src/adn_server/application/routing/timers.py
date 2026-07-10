@@ -48,6 +48,7 @@ import time
 from typing import Any
 
 from ...domain import HBPF_SLT_VTERM, int_id
+from .helpers import obp_clear_deferred_bridge_tx_leg
 
 logger = logging.getLogger(__name__)
 
@@ -313,6 +314,26 @@ class RoutingTimerMixin:
                     )
                 if _slot.get("RX_TIME", 0) < now - 60:
                     _slot["RX_STREAM_ID"] = b"\x00"
+                tx_streams = _slot.get("TX_STREAMS")
+                if isinstance(tx_streams, dict):
+                    for sid, leg in list(tx_streams.items()):
+                        if not isinstance(leg, dict):
+                            continue
+                        if leg.get("TX_TYPE") != HBPF_SLT_VTERM and leg.get("TX_TIME", 0) < now - 5:
+                            logger.debug(
+                                "(%s) *TIME OUT*  TX STREAM ID: %s SUB: %s TGID %s, TS %s, Duration: %.2f",
+                                system_name, int_id(sid), int_id(leg.get("TX_RFS", b"")),
+                                int_id(leg.get("TX_TGID", b"")), slot,
+                                leg.get("TX_TIME", 0) - leg.get("TX_START", 0),
+                            )
+                            self._send_routing_event(
+                                "GROUP VOICE,END,TX,{},{},{},{},{},{},{:.2f}".format(
+                                    system_name, int_id(sid), int_id(leg.get("TX_PEER", b"")),
+                                    int_id(leg.get("TX_RFS", b"")), slot, int_id(leg.get("TX_TGID", b"")),
+                                    leg.get("TX_TIME", 0) - leg.get("TX_START", 0),
+                                )
+                            )
+                            obp_clear_deferred_bridge_tx_leg(_slot, sid, now)
                 if _slot.get("TX_TYPE") != HBPF_SLT_VTERM and _slot.get("TX_TIME", 0) < now - 5:
                     _slot["TX_TYPE"] = HBPF_SLT_VTERM
                     logger.debug(

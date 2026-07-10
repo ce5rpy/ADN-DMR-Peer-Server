@@ -22,6 +22,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from typing import Any
 from unittest.mock import MagicMock
 
@@ -41,10 +42,17 @@ def packet_bytes(spec: PacketSpec) -> bytes:
     return spec.data()
 
 
-def install_reactor_capture() -> tuple[MagicMock, list[tuple[float, Any, tuple[Any, ...]]]]:
-    """Patch reactor.callLater; returns mock and scheduled (delay, fn, args) list."""
+def noop_call_later(*_args: Any, **_kwargs: Any) -> MagicMock:
+    """No-op scheduler for tests that never fire timers."""
+    handle = MagicMock()
+    handle.active.return_value = False
+    handle.cancel = MagicMock()
+    return handle
+
+
+def make_capture_call_later() -> tuple[Callable[..., Any], list[tuple[float, Any, tuple[Any, ...]]]]:
+    """Build a call_later stub; returns (callable, scheduled (delay, fn, args) list)."""
     scheduled: list[tuple[float, Any, tuple[Any, ...]]] = []
-    mock_reactor = MagicMock()
 
     def call_later(delay: float, fn: Any, *args: Any) -> MagicMock:
         scheduled.append((delay, fn, args))
@@ -53,6 +61,13 @@ def install_reactor_capture() -> tuple[MagicMock, list[tuple[float, Any, tuple[A
         handle.cancel = MagicMock()
         return handle
 
+    return call_later, scheduled
+
+
+def install_reactor_capture() -> tuple[MagicMock, list[tuple[float, Any, tuple[Any, ...]]]]:
+    """Backward-compatible alias; prefer make_capture_call_later + call_later= kwarg."""
+    call_later, scheduled = make_capture_call_later()
+    mock_reactor = MagicMock()
     mock_reactor.callLater = call_later
     return mock_reactor, scheduled
 

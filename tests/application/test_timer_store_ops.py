@@ -33,7 +33,7 @@ from adn_server.application.subscription.subscription_reset_ops import (
 )
 from adn_server.domain import bytes_3
 from adn_server.domain.subscription import SubscriptionPhase
-from adn_server.infrastructure.subscription_store import InMemorySubscriptionStore
+from fakes.subscription_store import InMemorySubscriptionStore
 
 
 def _store(bridges: dict) -> InMemorySubscriptionStore:

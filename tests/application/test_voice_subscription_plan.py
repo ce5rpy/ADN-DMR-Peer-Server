@@ -32,7 +32,7 @@ from adn_server.domain.dmr.bptc import encode_emblc
 from adn_server.domain.subscription import TgId
 from adn_server.domain.voice_routing import ForwardLeg
 from adn_server.infrastructure.acl_router import InMemoryAclRouter
-from adn_server.infrastructure.subscription_store import InMemorySubscriptionStore
+from fakes.subscription_store import InMemorySubscriptionStore
 from adn_server.infrastructure.talker_alias_emblc import default_ta_emblc_encoder
 
 

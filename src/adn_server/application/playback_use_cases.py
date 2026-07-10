@@ -26,12 +26,10 @@
 from __future__ import annotations
 
 import logging
+from collections.abc import Callable
 from random import randint
 from time import time
 from typing import Any
-
-from twisted.internet import reactor
-from twisted.internet.base import DelayedCall
 
 from ..domain import HBPF_DATA_SYNC, HBPF_SLT_VHEAD, HBPF_SLT_VTERM, HBPF_VOICE, bytes_4, int_id
 
@@ -49,8 +47,15 @@ _SOURCE_MAX_S = 180.0
 class PlaybackUseCases:
     """Legacy playback class behaviour; playback is scheduled on the reactor (non-blocking)."""
 
-    def __init__(self, system_name: str, get_protocol: Any = None) -> None:
+    def __init__(
+        self,
+        system_name: str,
+        *,
+        call_later: Callable[..., Any],
+        get_protocol: Any = None,
+    ) -> None:
         self._system = system_name
+        self._call_later = call_later
         self._get_protocol = get_protocol
         self.STATUS: dict[str, Any] = {}
         self.CALL_DATA: list[bytes] = []
@@ -66,10 +71,10 @@ class PlaybackUseCases:
         self._playback_index = 0
         self._playback_stream_id = b""
         self._playback_ta_from_stream = b""
-        self._delay_call: DelayedCall | None = None
-        self._packet_call: DelayedCall | None = None
-        self._idle_call: DelayedCall | None = None
-        self._max_call: DelayedCall | None = None
+        self._delay_call: Any = None
+        self._packet_call: Any = None
+        self._idle_call: Any = None
+        self._max_call: Any = None
 
     def dmrd_received(
         self,
@@ -219,7 +224,7 @@ class PlaybackUseCases:
         self._cancel_record_idle()
         if not self._recording_active:
             return
-        self._idle_call = reactor.callLater(_RECORD_IDLE_S, self._on_record_idle, proto)
+        self._idle_call = self._call_later(_RECORD_IDLE_S, self._on_record_idle, proto)
 
     def _cancel_record_idle(self) -> None:
         if self._idle_call is not None and self._idle_call.active():
@@ -277,7 +282,7 @@ class PlaybackUseCases:
         if not recorded:
             return
         self._playback_busy = True
-        self._delay_call = reactor.callLater(
+        self._delay_call = self._call_later(
             _PLAYBACK_DELAY_S,
             self._start_playback,
             proto,
@@ -327,7 +332,7 @@ class PlaybackUseCases:
         self._cancel_record_max()
         if not self._recording_active:
             return
-        self._max_call = reactor.callLater(_SOURCE_MAX_S, self._on_record_max_duration, proto)
+        self._max_call = self._call_later(_SOURCE_MAX_S, self._on_record_max_duration, proto)
 
     def _cancel_record_max(self) -> None:
         if self._max_call is not None and self._max_call.active():
@@ -454,7 +459,7 @@ class PlaybackUseCases:
         else:
             logger.warning("(%s) Playback packet %d dropped (no protocol/send_system)", self._system, self._playback_index)
         self._playback_index += 1
-        self._packet_call = reactor.callLater(_PACKET_INTERVAL_S, self._send_next_packet, proto)
+        self._packet_call = self._call_later(_PACKET_INTERVAL_S, self._send_next_packet, proto)
 
     def _finish_playback(self) -> None:
         if self._delay_call is not None and self._delay_call.active():

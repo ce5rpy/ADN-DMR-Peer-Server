@@ -285,6 +285,23 @@ class SubscriptionStore(ABC):
     def list_by_phase(self, phase: "SubscriptionPhase") -> tuple["Subscription", ...]:
         ...
 
+    @abstractmethod
+    def relay_tables_with_active_source(
+        self,
+        system: str,
+        slot: int,
+        dst_tgid: int,
+    ) -> tuple[str, ...]:
+        ...
+
+    @abstractmethod
+    def legs_in_table(self, table_key: str) -> tuple["Subscription", ...]:
+        ...
+
+    @abstractmethod
+    def has_active_target_leg(self, system: str, slot: int, tgid: int) -> bool:
+        ...
+
 
 class ProxySlotStore(ABC):
     """Hotspot session registry keyed by peer_id (Phase 3)."""

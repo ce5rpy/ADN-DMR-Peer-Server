@@ -38,7 +38,7 @@ def _reload_uc(scenario, *, start_looping_call) -> VoiceUseCases:
     )
 
 
-def test_check_voice_config_reload_starts_enabled_announcement_loop() -> None:
+def test_apply_voice_config_starts_enabled_announcement_loop() -> None:
     scenario, _ = voice_master_scenario()
     scenario.config["VOICE"] = {
         "ANNOUNCEMENTS": [
@@ -61,14 +61,14 @@ def test_check_voice_config_reload_starts_enabled_announcement_loop() -> None:
         return handle
 
     uc = _reload_uc(scenario, start_looping_call=start_looping_call)
-    uc.check_voice_config_reload()
+    uc.apply_voice_config()
 
     assert len(started) == 1
     assert started[0][0] == 120.0
     assert 0 in uc._ann_tasks
 
 
-def test_check_voice_config_reload_stops_removed_announcement() -> None:
+def test_apply_voice_config_stops_removed_announcement() -> None:
     scenario, _ = voice_master_scenario()
     scenario.config["VOICE"] = {"ANNOUNCEMENTS": [{"ENABLED": False, "TG": 91, "FILE": "x"}]}
     stop_mock = MagicMock()
@@ -80,13 +80,13 @@ def test_check_voice_config_reload_stops_removed_announcement() -> None:
     )
     uc._ann_tasks[0] = MagicMock(running=True, stop=stop_mock)
 
-    uc.check_voice_config_reload()
+    uc.apply_voice_config()
 
     assert 0 not in uc._ann_tasks
     stop_mock.assert_called_once()
 
 
-def test_check_voice_config_reload_starts_tts_loop() -> None:
+def test_apply_voice_config_starts_tts_loop() -> None:
     scenario, _ = voice_master_scenario()
     scenario.config["VOICE"] = {
         "TTS_ANNOUNCEMENTS": [
@@ -106,7 +106,7 @@ def test_check_voice_config_reload_starts_tts_loop() -> None:
         return MagicMock(running=True, stop=MagicMock())
 
     uc = _reload_uc(scenario, start_looping_call=start_looping_call)
-    uc.check_voice_config_reload()
+    uc.apply_voice_config()
 
     assert started == [30.0]
     assert 0 in uc._tts_tasks

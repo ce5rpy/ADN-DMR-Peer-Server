@@ -975,6 +975,25 @@ class HBPProtocol(DatagramProtocol):
             return _peer_ids[_int_peer_id]
         return False
 
+    def validate_obp_source_server_id(self, peer_id: bytes):
+        """OPENBRIDGE DMRE source-server lookup (legacy hblink.py OPENBRIDGE.validate_id).
+
+        Unlike ``validate_id`` on HBP systems, OBP ingress always resolves 6–7 digit
+        source servers against alias tables with no ``ALLOW_UNREG_ID`` bypass.
+        Returns a callsign string on match, or ``False``.
+        """
+        _int_peer_id = int(int_id(peer_id))
+        _local_subscriber_ids = self._CONFIG.get("_LOCAL_SUBSCRIBER_IDS", {})
+        _subscriber_ids = self._CONFIG.get("_SUB_IDS", {})
+        _peer_ids = self._CONFIG.get("_PEER_IDS", {})
+        if _int_peer_id in _local_subscriber_ids:
+            return _local_subscriber_ids[_int_peer_id]
+        if _int_peer_id in _subscriber_ids:
+            return _subscriber_ids[_int_peer_id]
+        if _int_peer_id in _peer_ids:
+            return _peer_ids[_int_peer_id]
+        return False
+
     def proxy_IPBlackList(self, peer_id: bytes, sockaddr: tuple[str, int]) -> None:
         """Legacy hblink.py proxy_IPBlackList: send PRBL to proxy to blacklist a peer's IP for 5 min."""
         _bltime = str(time.time() + 300)
@@ -1534,8 +1553,13 @@ class HBPProtocol(DatagramProtocol):
                 if self._on_options_received:
                     try:
                         self._on_options_received(self._system, _this_peer["OPTIONS"])
-                    except Exception:
-                        pass
+                    except Exception as e:
+                        logger.warning(
+                            "(%s) on_options_received failed for peer %s: %s",
+                            self._system,
+                            int_id(_peer_id),
+                            e,
+                        )
                 if is_proxy_inject_only(self._CONFIG, self._system):
                     for _slot in (1, 2):
                         if _slot in self.STATUS:
@@ -2131,7 +2155,7 @@ class HBPProtocol(DatagramProtocol):
                     self._obp_send_bcsq(_dst_id, _stream_id)
                     self._laststrid.append(_stream_id)
                 return
-            if _src_srv_len > 5 and not self.validate_id(_source_server):
+            if _src_srv_len > 5 and not self.validate_obp_source_server_id(_source_server):
                 if _stream_id not in self._laststrid:
                     logger.warning("(%s) Source Server 6 or 7 digits but not a valid DMR ID, discarding Src: %s", self._system, _src_srv_int)
                     self._obp_send_bcsq(_dst_id, _stream_id)

@@ -46,6 +46,11 @@ from .routing.helpers import (
     inject_only_defer_obp_hbp_slot_contention,
     is_private_subscriber_dst,
     is_unit_data_ingress,
+    obp_clear_deferred_bridge_tx_leg,
+    obp_deferred_bridge_tx_leg,
+    obp_flat_bridge_tx_idle,
+    obp_publish_flat_bridge_tx,
+    obp_sync_flat_bridge_tx_times,
     obp_target_bcsq_quenches_stream,
     resolve_voice_peer_id,
     slot_has_active_voice,
@@ -134,8 +139,8 @@ class RoutingUseCases(
             return
         try:
             self._reporting.send_routing_table(self._routing_table_for_report(), incremental=incremental)
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning("(ROUTER) send_routing_table failed: %s", e)
 
     def routing_table_for_report(self) -> dict[str, list[dict[str, Any]]]:
         """Return BRIDGES export for monitor/report only (routing uses ``SubscriptionStore``)."""
@@ -611,15 +616,48 @@ class RoutingUseCases(
                         _src_stream_st = getattr(src_proto, "STATUS", {}).get(stream_id, {}) if src_proto else {}
                     else:
                         _src_stream_st = getattr(src_proto, "STATUS", {}).get(slot, {}) if src_proto else {}
-                    _closing_bridge_leg = (
-                        frame_type == HBPF_DATA_SYNC
-                        and dtype_vseq == HBPF_SLT_VTERM
-                        and _ts_st.get("TX_STREAM_ID") == stream_id
-                        and _ts_st.get("TX_TYPE") != HBPF_SLT_VTERM
+                    # Slot contention: active QSO blocks any other stream; post-VTERM uses GROUP_HANGTIME.
+                    _group_hangtime = float(_target_system.get("GROUP_HANGTIME", 0) or 0)
+                    _tgt_peers = getattr(tgt_proto, "_peers", None) if tgt_proto else None
+                    if _tgt_peers is None:
+                        _tgt_peers = _target_system.get("PEERS", {})
+                    _target_connected = (
+                        count_connected_peers(_tgt_peers) if isinstance(_tgt_peers, dict) else 0
                     )
+                    _defer_slot_contention = inject_only_defer_obp_hbp_slot_contention(
+                        self._config,
+                        entry["SYSTEM"],
+                        _target_system,
+                        source_is_obp=source_is_obp,
+                        source_is_hbp=not source_is_obp,
+                        connected_count=_target_connected,
+                    )
+                    _obp_deferred_bridge = _defer_slot_contention and source_is_obp
+                    _bridge_tx_leg: dict[str, Any] | None = None
+                    if _obp_deferred_bridge:
+                        _bridge_tx_leg = obp_deferred_bridge_tx_leg(_ts_st, stream_id)
+                        _lc_row = _bridge_tx_leg
+                        _closing_bridge_leg = (
+                            frame_type == HBPF_DATA_SYNC
+                            and dtype_vseq == HBPF_SLT_VTERM
+                            and _bridge_tx_leg.get("TX_TYPE") is not None
+                            and _bridge_tx_leg.get("TX_TYPE") != HBPF_SLT_VTERM
+                        )
+                    else:
+                        _lc_row = _ts_st
+                        _closing_bridge_leg = (
+                            frame_type == HBPF_DATA_SYNC
+                            and dtype_vseq == HBPF_SLT_VTERM
+                            and _ts_st.get("TX_STREAM_ID") == stream_id
+                            and _ts_st.get("TX_TYPE") != HBPF_SLT_VTERM
+                        )
                     if _closing_bridge_leg:
-                        call_duration = pkt_time - _ts_st.get("TX_START", pkt_time)
-                        _end_peer = _ts_st.get("TX_PEER", peer_id)
+                        if _obp_deferred_bridge and _bridge_tx_leg is not None:
+                            call_duration = pkt_time - _bridge_tx_leg.get("TX_START", pkt_time)
+                            _end_peer = _bridge_tx_leg.get("TX_PEER", peer_id)
+                        else:
+                            call_duration = pkt_time - _ts_st.get("TX_START", pkt_time)
+                            _end_peer = _ts_st.get("TX_PEER", peer_id)
                         _end_report_peer = int_id(_end_peer)
                         if not source_is_obp:
                             _end_report_peer = int_id(
@@ -638,23 +676,8 @@ class RoutingUseCases(
                                 call_duration,
                             )
                         )
-                        _ts_st["TX_TYPE"] = HBPF_SLT_VTERM
-                    # Slot contention: active QSO blocks any other stream; post-VTERM uses GROUP_HANGTIME.
-                    _group_hangtime = float(_target_system.get("GROUP_HANGTIME", 0) or 0)
-                    _tgt_peers = getattr(tgt_proto, "_peers", None) if tgt_proto else None
-                    if _tgt_peers is None:
-                        _tgt_peers = _target_system.get("PEERS", {})
-                    _target_connected = (
-                        count_connected_peers(_tgt_peers) if isinstance(_tgt_peers, dict) else 0
-                    )
-                    _defer_slot_contention = inject_only_defer_obp_hbp_slot_contention(
-                        self._config,
-                        entry["SYSTEM"],
-                        _target_system,
-                        source_is_obp=source_is_obp,
-                        source_is_hbp=not source_is_obp,
-                        connected_count=_target_connected,
-                    )
+                        if not _obp_deferred_bridge:
+                            _ts_st["TX_TYPE"] = HBPF_SLT_VTERM
                     if (
                         not _defer_slot_contention
                         and hbp_slot_blocks_group_voice(
@@ -690,32 +713,56 @@ class RoutingUseCases(
                                     int_id(_ts_st.get("RX_TGID", b"") or _ts_st.get("TX_TGID", b"")),
                                 )
                         continue
-                    # New stream detection — legacy OBP uses _target_status[TS]['TX_STREAM_ID'], legacy HBP uses self.STATUS[_slot]['RX_STREAM_ID']
-                    if source_is_obp:
+                    # New stream detection — legacy OBP uses flat TX_STREAM_ID; deferred OBP uses per-stream legs.
+                    if _obp_deferred_bridge and _bridge_tx_leg is not None:
+                        _is_new_stream = "TX_STREAM_ID" not in _bridge_tx_leg
+                    elif source_is_obp:
                         _is_new_stream = (_ts_st.get("TX_STREAM_ID") != stream_id)
                     else:
                         src_status = getattr(src_proto, "STATUS", None) if src_proto else None
                         _is_new_stream = (src_status.get(slot, {}).get("RX_STREAM_ID") if src_status else b"") != stream_id
                     if _is_new_stream:
-                        _ts_st["TX_START"] = pkt_time
-                        _ts_st["TX_TGID"] = entry_tgid_b
-                        _ts_st["TX_STREAM_ID"] = stream_id
-                        _ts_st["TX_RFS"] = rf_src
-                        _ts_st["TX_PEER"] = peer_id
                         dst_lc = source_lc[0:3] + entry_tgid_b + rf_src
-                        _ts_st["TX_H_LC"] = bptc.encode_header_lc(dst_lc)
-                        _ts_st["TX_T_LC"] = bptc.encode_terminator_lc(dst_lc)
-                        _ts_st["TX_EMB_LC"] = self._encode_emblc(dst_lc)
-                        self._dispatch_talker_alias_on_bridge_open(
-                            _ts_st,
-                            system_name,
-                            entry["SYSTEM"],
-                            rf_src,
-                            stream_id,
-                            peer_id,
-                            int(entry_ts),
-                            int_id(entry_tgid_b),
-                        )
+                        if _obp_deferred_bridge and _bridge_tx_leg is not None:
+                            _bridge_tx_leg["TX_START"] = pkt_time
+                            _bridge_tx_leg["TX_TGID"] = entry_tgid_b
+                            _bridge_tx_leg["TX_STREAM_ID"] = stream_id
+                            _bridge_tx_leg["TX_RFS"] = rf_src
+                            _bridge_tx_leg["TX_PEER"] = peer_id
+                            _bridge_tx_leg["TX_H_LC"] = bptc.encode_header_lc(dst_lc)
+                            _bridge_tx_leg["TX_T_LC"] = bptc.encode_terminator_lc(dst_lc)
+                            _bridge_tx_leg["TX_EMB_LC"] = self._encode_emblc(dst_lc)
+                            if obp_flat_bridge_tx_idle(_ts_st, pkt_time) or _ts_st.get("TX_STREAM_ID") == stream_id:
+                                obp_publish_flat_bridge_tx(_ts_st, _bridge_tx_leg)
+                            self._dispatch_talker_alias_on_bridge_open(
+                                _bridge_tx_leg,
+                                system_name,
+                                entry["SYSTEM"],
+                                rf_src,
+                                stream_id,
+                                peer_id,
+                                int(entry_ts),
+                                int_id(entry_tgid_b),
+                            )
+                        else:
+                            _ts_st["TX_START"] = pkt_time
+                            _ts_st["TX_TGID"] = entry_tgid_b
+                            _ts_st["TX_STREAM_ID"] = stream_id
+                            _ts_st["TX_RFS"] = rf_src
+                            _ts_st["TX_PEER"] = peer_id
+                            _ts_st["TX_H_LC"] = bptc.encode_header_lc(dst_lc)
+                            _ts_st["TX_T_LC"] = bptc.encode_terminator_lc(dst_lc)
+                            _ts_st["TX_EMB_LC"] = self._encode_emblc(dst_lc)
+                            self._dispatch_talker_alias_on_bridge_open(
+                                _ts_st,
+                                system_name,
+                                entry["SYSTEM"],
+                                rf_src,
+                                stream_id,
+                                peer_id,
+                                int(entry_ts),
+                                int_id(entry_tgid_b),
+                            )
                         logger.info(
                             "(%s) Conference Bridge: %s, Call Bridged to HBP System: %s TS: %s, TGID: %s",
                             system_name, _relay_table_key, entry["SYSTEM"], entry_ts, int_id(entry_tgid_b),
@@ -730,8 +777,13 @@ class RoutingUseCases(
                                 int_id(entry_tgid_b),
                             )
                         )
-                    _ts_st["TX_TIME"] = pkt_time
-                    _ts_st["TX_TYPE"] = dtype_vseq
+                    if _obp_deferred_bridge and _bridge_tx_leg is not None:
+                        obp_sync_flat_bridge_tx_times(
+                            _ts_st, _bridge_tx_leg, stream_id, pkt_time, dtype_vseq,
+                        )
+                    else:
+                        _ts_st["TX_TIME"] = pkt_time
+                        _ts_st["TX_TYPE"] = dtype_vseq
                     # Slot bit rewrite (legacy bridge.py 457-460 / 770-773)
                     _src_entry_ts = slot
                     if _src_entry_ts != entry_ts:
@@ -743,12 +795,16 @@ class RoutingUseCases(
                     dmrbits = bitarray(endian="big")
                     dmrbits.frombytes(dmrpkt)
                     if frame_type == HBPF_DATA_SYNC and dtype_vseq == HBPF_SLT_VHEAD:
-                        dmrbits = _ts_st["TX_H_LC"][0:98] + dmrbits[98:166] + _ts_st["TX_H_LC"][98:197]
+                        dmrbits = _lc_row["TX_H_LC"][0:98] + dmrbits[98:166] + _lc_row["TX_H_LC"][98:197]
                     elif frame_type == HBPF_DATA_SYNC and dtype_vseq == HBPF_SLT_VTERM:
-                        dmrbits = _ts_st["TX_T_LC"][0:98] + dmrbits[98:166] + _ts_st["TX_T_LC"][98:197]
+                        dmrbits = _lc_row["TX_T_LC"][0:98] + dmrbits[98:166] + _lc_row["TX_T_LC"][98:197]
                         if not _closing_bridge_leg:
-                            call_duration = pkt_time - _ts_st.get("TX_START", pkt_time)
-                            _end_peer = _ts_st.get("TX_PEER", peer_id)
+                            if _obp_deferred_bridge and _bridge_tx_leg is not None:
+                                call_duration = pkt_time - _bridge_tx_leg.get("TX_START", pkt_time)
+                                _end_peer = _bridge_tx_leg.get("TX_PEER", peer_id)
+                            else:
+                                call_duration = pkt_time - _ts_st.get("TX_START", pkt_time)
+                                _end_peer = _ts_st.get("TX_PEER", peer_id)
                             _end_report_peer = int_id(_end_peer)
                             if not source_is_obp:
                                 _end_report_peer = int_id(
@@ -767,10 +823,11 @@ class RoutingUseCases(
                                     call_duration,
                                 )
                             )
-                        _ts_st["TX_TYPE"] = HBPF_SLT_VTERM
+                        if not _obp_deferred_bridge:
+                            _ts_st["TX_TYPE"] = HBPF_SLT_VTERM
                     elif dtype_vseq in (1, 2, 3, 4):
                         self._rewrite_embed_lc(
-                            dmrbits, _ts_st, dtype_vseq, "TX_EMB_LC",
+                            dmrbits, _lc_row, dtype_vseq, "TX_EMB_LC",
                         )
                     dmrpkt_out = dmrbits.tobytes()
                     # bridge_master.routerOBP.to_target HBP branch: _tmp_data + dmrpkt only (~2041-2042);
@@ -789,7 +846,11 @@ class RoutingUseCases(
                     except Exception as e:
                         logger.warning("(ROUTER) send_to_system %s failed: %s", entry.get("SYSTEM"), e)
                     if frame_type == HBPF_DATA_SYNC and dtype_vseq == HBPF_SLT_VTERM:
-                        self._clear_talker_alias_embed(_ts_st)
+                        if _obp_deferred_bridge and _bridge_tx_leg is not None:
+                            self._clear_talker_alias_embed(_bridge_tx_leg)
+                            obp_clear_deferred_bridge_tx_leg(_ts_st, stream_id, pkt_time)
+                        else:
+                            self._clear_talker_alias_embed(_ts_st)
                         self._talker_alias.clear_stream(entry["SYSTEM"], stream_id)
         # Legacy bridge_master routerOBP ~2420-2434: after to_target, VTERM — CALL END log, END RX report, _fin, lastSeq
         if (

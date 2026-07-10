@@ -26,7 +26,12 @@ from unittest.mock import patch
 
 import pytest
 from tests.harness.deterministic import DeterministicScenario, PacketSpec
-from tests.harness.playback_helpers import FakePlaybackProtocol, install_reactor_capture, send_playback
+from tests.harness.playback_helpers import (
+    FakePlaybackProtocol,
+    make_capture_call_later,
+    noop_call_later,
+    send_playback,
+)
 
 from adn_server.application.playback_use_cases import PlaybackUseCases
 from adn_server.domain import bytes_4
@@ -54,7 +59,7 @@ def _long_voice_recording(
 @pytest.mark.behavior
 def test_prepare_playback_preserves_source_seq_past_255_packets() -> None:
     """Regression: long QSO keeps source seq; new stream segment when seq byte wraps."""
-    pb = PlaybackUseCases("ECHO")
+    pb = PlaybackUseCases("ECHO", call_later=noop_call_later)
     base = PacketSpec(dst_id=9990, stream_id=0x55555555, slot=2)
     recorded = _long_voice_recording(base, burst_count=500)
     pb._playback_stream_id = bytes_4(0x77777777)
@@ -83,45 +88,47 @@ def test_prepare_playback_preserves_source_seq_past_255_packets() -> None:
 def test_start_playback_sends_preserved_seq_over_30s_recording() -> None:
     """End-to-end: ~500 bursts @ 60ms ≈ 30s; replay seq on wire must match recording."""
     proto = FakePlaybackProtocol()
-    pb = PlaybackUseCases("ECHO", get_protocol=lambda: proto)
+    call_later, scheduled = make_capture_call_later()
+    pb = PlaybackUseCases("ECHO", call_later=call_later, get_protocol=lambda: proto)
     base = PacketSpec(dst_id=9990, stream_id=0x66666666, slot=2)
     burst_count = 500
     recorded = _long_voice_recording(base, burst_count=burst_count)
-    mock_reactor, scheduled = install_reactor_capture()
 
     pb._playback_stream_id = bytes_4(0x77777777)
     out = pb._prepare_playback_packets(recorded)
     assert len(out) == len(recorded) + 1
 
-    with patch("adn_server.application.playback_use_cases.reactor", mock_reactor):
-        pb._playback_packets = out
-        pb._playback_index = 0
-        pb._playback_busy = True
-        pb._send_next_packet(proto)
-        while scheduled:
-            _delay, fn, args = scheduled.pop(0)
-            fn(*args)
+    pb._playback_packets = out
+    pb._playback_index = 0
+    pb._playback_busy = True
+    pb._send_next_packet(proto)
+    while scheduled:
+        _delay, fn, args = scheduled.pop(0)
+        fn(*args)
 
     assert len(proto.sent) == len(out)
 
 
 def test_recording_rekey_does_not_store_second_vhead() -> None:
-    pb = PlaybackUseCases("ECHO", get_protocol=lambda: FakePlaybackProtocol())
+    call_later, _scheduled = make_capture_call_later()
+    pb = PlaybackUseCases(
+        "ECHO",
+        call_later=call_later,
+        get_protocol=lambda: FakePlaybackProtocol(),
+    )
     base = PacketSpec(dst_id=9990, stream_id=0x11111111, slot=2)
     rekey = PacketSpec(dst_id=9990, stream_id=0x22222222, slot=2)
-    mock_reactor, _scheduled = install_reactor_capture()
 
-    with patch("adn_server.application.playback_use_cases.reactor", mock_reactor):
-        with patch("adn_server.application.playback_use_cases.time") as mock_time:
-            mock_time.side_effect = [100.0, 100.1, 100.2, 100.3]
-            send_playback(pb, "ECHO", DeterministicScenario.voice_head_spec(base))
-            send_playback(
-                pb, "ECHO", DeterministicScenario.voice_burst_spec(base, seq=1, dtype_vseq=1),
-            )
-            send_playback(pb, "ECHO", DeterministicScenario.voice_head_spec(rekey))
-            send_playback(
-                pb, "ECHO", DeterministicScenario.voice_burst_spec(rekey, seq=2, dtype_vseq=2),
-            )
+    with patch("adn_server.application.playback_use_cases.time") as mock_time:
+        mock_time.side_effect = [100.0, 100.1, 100.2, 100.3]
+        send_playback(pb, "ECHO", DeterministicScenario.voice_head_spec(base))
+        send_playback(
+            pb, "ECHO", DeterministicScenario.voice_burst_spec(base, seq=1, dtype_vseq=1),
+        )
+        send_playback(pb, "ECHO", DeterministicScenario.voice_head_spec(rekey))
+        send_playback(
+            pb, "ECHO", DeterministicScenario.voice_burst_spec(rekey, seq=2, dtype_vseq=2),
+        )
 
     vheads = sum(
         1
@@ -133,7 +140,7 @@ def test_recording_rekey_does_not_store_second_vhead() -> None:
 
 
 def test_prepare_playback_skips_mid_call_vhead_and_preserves_seq() -> None:
-    pb = PlaybackUseCases("ECHO")
+    pb = PlaybackUseCases("ECHO", call_later=noop_call_later)
     base = PacketSpec(dst_id=9990, stream_id=0x33333333, slot=2)
     rekey = PacketSpec(dst_id=9990, stream_id=0x44444444, slot=2)
     recorded = [

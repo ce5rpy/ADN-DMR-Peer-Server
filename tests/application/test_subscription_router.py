@@ -29,7 +29,7 @@ from adn_server.application.subscription.routing_table_import import subscriptio
 from adn_server.domain import bytes_3, int_id
 from adn_server.domain.subscription import TgId
 from adn_server.domain.voice_routing import ForwardLeg, VoiceIngress
-from adn_server.infrastructure.subscription_store import InMemorySubscriptionStore
+from fakes.subscription_store import InMemorySubscriptionStore
 
 
 def _legacy_relay_tables(

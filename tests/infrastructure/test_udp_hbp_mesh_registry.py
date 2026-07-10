@@ -22,6 +22,8 @@
 
 from __future__ import annotations
 
+import logging
+
 from adn_server.domain import bytes_4
 from adn_server.infrastructure.hbp_constants import DMRD
 from adn_server.infrastructure.mesh.obp_v1 import build_dmrd_v1
@@ -29,6 +31,15 @@ from adn_server.infrastructure.twisted_adapters.udp_hbp import HBPProtocol
 
 _PASS = b"test-passphrase\x00\x00\x00\x00\x00\x00"
 _SERVER = bytes_4(73010)
+_OBP_ADDR = ("127.0.0.1", 62030)
+
+
+class _RecordingTransport:
+    def __init__(self) -> None:
+        self.sent: list[tuple[bytes, tuple[str, int]]] = []
+
+    def write(self, data: bytes, addr: tuple[str, int]) -> None:
+        self.sent.append((data, addr))
 
 
 def _sample_dmr_voice() -> bytes:
@@ -87,3 +98,20 @@ def test_hbp_encode_mesh_egress_dmre_when_ver_ge_4() -> None:
     assert wire is not None
     assert len(wire) == 89
     assert wire[:4] == b"DMRE"
+
+
+def test_obp_hmac_reject_discards_and_warns(caplog) -> None:
+    proto = _obp_protocol()
+    proto._config["VER"] = 1
+    transport = _RecordingTransport()
+    proto.transport = transport  # type: ignore[assignment]
+    proto._config["TARGET_SOCK"] = _OBP_ADDR
+    inner = _sample_dmr_voice()
+    wire = bytearray(build_dmrd_v1(inner, _SERVER, _PASS))
+    wire[-1] ^= 0xFF
+
+    with caplog.at_level(logging.WARNING):
+        proto.datagramReceived(bytes(wire), _OBP_ADDR)
+
+    assert transport.sent == []
+    assert any("HMAC failed" in record.message for record in caplog.records)

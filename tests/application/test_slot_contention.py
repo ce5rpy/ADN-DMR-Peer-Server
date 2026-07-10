@@ -1232,7 +1232,7 @@ def test_idle_static_bridges_do_not_block_options_fanout() -> None:
     from adn_server.application.subscription.routing_table_import import (
         subscriptions_from_routing_table,
     )
-    from adn_server.infrastructure.subscription_store import InMemorySubscriptionStore
+    from fakes.subscription_store import InMemorySubscriptionStore
 
     def _row(*, system: str, ts: int, tgid: int) -> dict:
         return {
@@ -1343,7 +1343,7 @@ def test_single0_ingress_vterm_bridge_hold_blocks_within_hangtime() -> None:
     from adn_server.application.subscription.routing_table_import import (
         subscriptions_from_routing_table,
     )
-    from adn_server.infrastructure.subscription_store import InMemorySubscriptionStore
+    from fakes.subscription_store import InMemorySubscriptionStore
 
     def _row(*, system: str, ts: int, tgid: int) -> dict:
         return {
@@ -1416,7 +1416,7 @@ def test_single0_listener_bridge_hold_expires_after_hangtime_allows_fresh_ptt() 
     from adn_server.application.subscription.routing_table_import import (
         subscriptions_from_routing_table,
     )
-    from adn_server.infrastructure.subscription_store import InMemorySubscriptionStore
+    from fakes.subscription_store import InMemorySubscriptionStore
 
     def _row(*, system: str, ts: int, tgid: int) -> dict:
         return {
@@ -1492,7 +1492,7 @@ def test_single0_listener_fresh_ptt_after_blocked_second_stream() -> None:
     from adn_server.application.subscription.routing_table_import import (
         subscriptions_from_routing_table,
     )
-    from adn_server.infrastructure.subscription_store import InMemorySubscriptionStore
+    from fakes.subscription_store import InMemorySubscriptionStore
 
     def _row(*, system: str, ts: int, tgid: int) -> dict:
         return {
@@ -1646,7 +1646,7 @@ def test_single1_duplex_listen_lock_does_not_block_other_rf_slot() -> None:
     from adn_server.application.subscription.routing_table_import import (
         subscriptions_from_routing_table,
     )
-    from adn_server.infrastructure.subscription_store import InMemorySubscriptionStore
+    from fakes.subscription_store import InMemorySubscriptionStore
 
     def _row(*, system: str, ts: int, tgid: int) -> dict:
         return {

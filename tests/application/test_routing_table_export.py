@@ -34,7 +34,7 @@ from adn_server.domain.subscription import (
     SystemId,
     TgId,
 )
-from adn_server.infrastructure.subscription_store import InMemorySubscriptionStore
+from fakes.subscription_store import InMemorySubscriptionStore
 
 
 def test_subscription_to_legacy_row_echo():
