@@ -25,7 +25,7 @@ from __future__ import annotations
 import logging
 import struct
 from hashlib import pbkdf2_hmac
-from typing import Any
+from typing import Any, Callable
 
 from twisted.internet import reactor
 from twisted.internet.defer import inlineCallbacks
@@ -67,6 +67,8 @@ class ProxySelfServiceBridge:
         pbkdf2_salt: str = "ADN",
         pbkdf2_iterations: int = 2000,
         logger: logging.Logger | None = None,
+        dynamic_tg_uc: Any = None,
+        purge_peer_dynamic: Callable[[bytes, str], bool] | None = None,
     ) -> None:
         self._store = store
         self._use_cases = use_cases
@@ -77,6 +79,8 @@ class ProxySelfServiceBridge:
         self._log = logger or logging.getLogger(__name__)
         self._opt_timers: dict[bytes, IDelayedCall] = {}
         self._loop_calls: list[LoopingCall] = []
+        self._dynamic_tg_uc = dynamic_tg_uc
+        self._purge_peer_dynamic = purge_peer_dynamic
         # Peers that sent PASS= this session — only they get MySQL OPTIONS push.
         self._mysql_option_peers: set[bytes] = set()
 
@@ -93,6 +97,10 @@ class ProxySelfServiceBridge:
             "(SELF_SERVICE) DB options on PASS= (immediate), send_opts every 10s, "
             "lst_seen + reconcile_logged_in every 2min"
         )
+        if self._dynamic_tg_uc is not None and self._purge_peer_dynamic is not None:
+            self._log.info(
+                "(SELF_SERVICE) peer_dynamic_tgs.need_reload polled on send_opts (TG 4000 parity)"
+            )
 
     def stop_loops(self) -> None:
         for call in self._loop_calls:
@@ -344,8 +352,21 @@ class ProxySelfServiceBridge:
                 self._store.updt_tbl("rst_mod", pid)
                 self._inject_rpto(pid, options)
                 self._log.info("(SELF_SERVICE) Options update sent for: %s", int_id(pid))
+            yield self._process_dynamic_reload()
         except Exception as err:
             self._log.warning("(SELF_SERVICE) send_opts error: %s", err)
+
+    @inlineCallbacks
+    def _process_dynamic_reload(self) -> None:
+        if self._dynamic_tg_uc is None or self._purge_peer_dynamic is None:
+            return
+
+        def _try_purge(peer_int: int, system_name: str, peer_id: bytes) -> bool:
+            if self._use_cases.resolve_client(peer_id) is None:
+                return False
+            return bool(self._purge_peer_dynamic(peer_id, system_name))
+
+        yield self._dynamic_tg_uc.process_reload_queue(try_purge=_try_purge)
 
     def lst_seen(self) -> None:
         slots = self._use_cases.list_slots()

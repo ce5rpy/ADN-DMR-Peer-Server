@@ -52,6 +52,9 @@ class _CaptureStore:
     def purge_expired(self, now: float) -> None:
         pass
 
+    def select_need_reload(self):
+        return defer.succeed([])
+
 
 def test_persist_after_register_stores_absolute_expires_from_memory() -> None:
     peer_id = _peer_id()
@@ -105,6 +108,9 @@ def test_restore_peer_passes_now_as_keyword_to_on_restored() -> None:
 
         def purge_expired(self, now: float) -> None:
             pass
+
+        def select_need_reload(self):
+            return defer.succeed([])
 
     uc = DynamicTgUseCases(_Store(), on_restored=on_restored)
     out: list[list[int]] = []

@@ -551,6 +551,19 @@ class HBPProtocol(DatagramProtocol):
             )
         return True
 
+    def purge_peer_dynamic_tgs(self, peer_id: bytes) -> bool:
+        """Monitor/proxy requested TG-4000-equivalent purge for one connected peer."""
+        if peer_id not in self._peers:
+            return False
+        self._apply_tg4000_reset(
+            peer_id,
+            1,
+            "group",
+            rf_src=peer_id,
+            stream_id=b"\x00\x00\x00\x00",
+        )
+        return True
+
     def _peer_should_receive_dmrd(self, peer_id: bytes, packet: bytes) -> bool:
         if peer_id not in self._peers:
             return False
