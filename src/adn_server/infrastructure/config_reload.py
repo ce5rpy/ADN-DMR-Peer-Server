@@ -29,7 +29,7 @@ from typing import Any, Callable
 
 from twisted.internet import defer
 
-from adn_server.application.proxy.deployment import normalize_proxy_target
+from adn_server.application.proxy.deployment import normalize_obp_proxy_targets, normalize_proxy_target
 
 from ..domain.errors import ConfigError
 from .config_loader import YamlConfigLoader
@@ -88,6 +88,7 @@ def prepare_incoming_config(
     ensure_system_runtime_config(incoming)
     normalize_peer_config(incoming)
     normalize_obp_config(incoming)
+    normalize_obp_proxy_targets(incoming)
     return incoming
 
 

@@ -44,7 +44,7 @@ pytestmark = pytest.mark.integration
 _PEER_TX = bytes_4(730039210)
 _PEER_RX = bytes_4(730039101)
 _ADDR_TX = ("192.168.50.10", 62031)
-_ADDR_RX = ("192.168.50.20", 62032)
+_ADDR_RX = ("192.168.50.20", 62040)
 _EMB_SLICE = slice(116, 148)
 
 

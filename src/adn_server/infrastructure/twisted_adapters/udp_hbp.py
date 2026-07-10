@@ -274,6 +274,9 @@ class HBPProtocol(DatagramProtocol):
 
     def startProtocol(self) -> None:
         if self._config.get("MODE") == "OPENBRIDGE":
+            if getattr(self, "_obp_protocol_started", False):
+                return
+            self._obp_protocol_started = True
             logger.info(
                 "(%s) Starting OBP. TARGET_IP: %s, TARGET_PORT: %s",
                 self._system,

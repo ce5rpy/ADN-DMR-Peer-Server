@@ -61,3 +61,102 @@ def normalize_proxy_target(config: dict[str, Any]) -> None:
         sys_cfg["_REPORT_BASE_PORT"] = int(port)
     else:
         sys_cfg.setdefault("_REPORT_BASE_PORT", 56400)
+
+
+def _obp_proxy_block(config: dict[str, Any]) -> dict[str, Any] | None:
+    block = config.get("OBP_PROXY")
+    return block if isinstance(block, dict) else None
+
+
+def config_has_enabled_openbridge(config: dict[str, Any]) -> bool:
+    """True when config defines at least one enabled OPENBRIDGE system."""
+    systems = config.get("SYSTEMS", {})
+    if not isinstance(systems, dict):
+        return False
+    return any(
+        isinstance(cfg, dict) and cfg.get("ENABLED", True) and cfg.get("MODE") == "OPENBRIDGE"
+        for cfg in systems.values()
+    )
+
+
+def obp_proxy_enabled(config: dict[str, Any]) -> bool:
+    """True when OBP proxy manages inbound UDP (default on for OPENBRIDGE configs)."""
+    block = _obp_proxy_block(config)
+    if block is not None:
+        return bool(block.get("ENABLED", True))
+    return config_has_enabled_openbridge(config)
+
+
+def obp_proxy_bind_legacy_ports(config: dict[str, Any]) -> bool:
+    """When OBP proxy is enabled, also listen on each OPENBRIDGE section PORT (default true)."""
+    if not obp_proxy_enabled(config):
+        return False
+    block = _obp_proxy_block(config)
+    if block is None:
+        return True
+    return bool(block.get("BIND_LEGACY_PORTS", True))
+
+
+def obp_bridge_legacy_listen_port(
+    sys_cfg: dict[str, Any],
+    *,
+    listen_port: int,
+    bind_legacy_ports: bool,
+) -> int | None:
+    """Per-bridge legacy UDP port, or None when inbound uses OBP_PROXY fan-in only.
+
+    When BIND_LEGACY_PORTS is true globally, a bridge with PORT equal to LISTEN_PORT is
+    treated as migrated to the shared fan-in (no extra legacy listener).
+    """
+    if not bind_legacy_ports:
+        return None
+    report_port = sys_cfg.get("_REPORT_PORT")
+    if report_port is not None:
+        port = int(report_port)
+    elif "PORT" in sys_cfg:
+        port = int(sys_cfg.get("PORT", 0) or 0)
+    else:
+        return None
+    if port <= 0 or port == listen_port:
+        return None
+    return port
+
+
+def is_obp_proxy_managed(config: dict[str, Any], system_name: str) -> bool:
+    """OPENBRIDGE under active OBP proxy — no direct HBPProtocol UDP bind."""
+    if not obp_proxy_enabled(config):
+        return False
+    sys_cfg = config.get("SYSTEMS", {}).get(system_name)
+    if not isinstance(sys_cfg, dict):
+        return False
+    return sys_cfg.get("MODE") == "OPENBRIDGE"
+
+
+def normalize_obp_proxy_targets(config: dict[str, Any]) -> None:
+    """Strip bind fields from OPENBRIDGE systems when OBP proxy manages inbound UDP."""
+    if not obp_proxy_enabled(config):
+        return
+    block = _obp_proxy_block(config) or {}
+    listen_port = int(block.get("LISTEN_PORT", 62032))
+    systems = config.get("SYSTEMS", {})
+    if not isinstance(systems, dict):
+        return
+    for sys_cfg in systems.values():
+        if not isinstance(sys_cfg, dict):
+            continue
+        if sys_cfg.get("MODE") != "OPENBRIDGE":
+            continue
+        port = sys_cfg.pop("PORT", None)
+        bind_ip = sys_cfg.pop("IP", None)
+        parsed_port = 0
+        if port is not None and port != "":
+            try:
+                parsed_port = int(port)
+            except (TypeError, ValueError):
+                parsed_port = 0
+        if parsed_port > 0:
+            sys_cfg["_REPORT_PORT"] = parsed_port
+        else:
+            sys_cfg["_REPORT_PORT"] = listen_port
+        if bind_ip is not None and str(bind_ip).strip():
+            sys_cfg["_REPORT_BIND_IP"] = str(bind_ip)

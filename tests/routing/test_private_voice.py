@@ -31,7 +31,7 @@ from adn_server.domain.hbp_protocol import HBPF_SLT_VHEAD
 def _private_call_scenario(dst_subscriber: int = 7123456) -> tuple[DeterministicScenario, int]:
     config = minimal_config(("MASTER-A", "MASTER-B"))
     config["SYSTEMS"]["MASTER-A"]["PEERS"] = {
-        "1001": {"CALLSIGN": "SRC", "IP": "127.0.0.1", "PORT": 62032},
+        "1001": {"CALLSIGN": "SRC", "IP": "127.0.0.1", "PORT": 62040},
     }
     config["SYSTEMS"]["MASTER-B"]["PEERS"] = {
         "1002": {"CALLSIGN": "DST", "IP": "127.0.0.1", "PORT": 62033},

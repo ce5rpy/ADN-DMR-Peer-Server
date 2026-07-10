@@ -31,7 +31,10 @@ from typing import TextIO
 
 from adn_server.application.proxy.deployment import (
     is_proxy_inject_only,
+    normalize_obp_proxy_targets,
     normalize_proxy_target,
+    obp_bridge_legacy_listen_port,
+    obp_proxy_enabled,
     proxy_target_system,
 )
 from adn_server.domain.errors import ConfigError
@@ -43,6 +46,7 @@ from adn_server.infrastructure.config_normalizer import (
     normalize_obp_config,
     normalize_peer_config,
 )
+from adn_server.infrastructure.proxy.obp_config import obp_proxy_settings
 
 
 @dataclass(frozen=True)
@@ -121,6 +125,7 @@ def collect_findings(
         ensure_system_runtime_config(config)
         normalize_peer_config(config)
         normalize_obp_config(config)
+        normalize_obp_proxy_targets(config)
 
     findings.append(Finding("ok", "config", f"loaded {config_path}"))
 
@@ -170,19 +175,49 @@ def collect_findings(
                 )
             )
         elif mode == "OPENBRIDGE":
-            ip = str(sys_cfg.get("IP") or "0.0.0.0")
-            port = int(sys_cfg.get("PORT", 62044))
             proto_ver = sys_cfg.get("VER", sys_cfg.get("PROTO_VER", 5))
             enhanced = sys_cfg.get("ENHANCED_OBP", True)
-            ok, detail = _check_udp_bind(ip, port)
-            level = "ok" if ok else "error"
-            findings.append(
-                Finding(
-                    level,
-                    "ports",
-                    f"{name}: OPENBRIDGE UDP {ip}:{port} — {detail}; PROTO_VER={proto_ver}, ENHANCED_OBP={enhanced}",
+            if obp_proxy_enabled(config):
+                obp = obp_proxy_settings(config)
+                legacy_port = obp_bridge_legacy_listen_port(
+                    sys_cfg,
+                    listen_port=int(obp["listen_port"]),
+                    bind_legacy_ports=bool(obp["bind_legacy_ports"]),
                 )
-            )
+                if legacy_port is not None:
+                    ip = str(sys_cfg.get("_REPORT_BIND_IP") or "0.0.0.0")
+                    ok, detail = _check_udp_bind(ip, legacy_port)
+                    level = "ok" if ok else "error"
+                    findings.append(
+                        Finding(
+                            level,
+                            "ports",
+                            f"{name}: OPENBRIDGE legacy UDP {ip}:{legacy_port} — {detail}; "
+                            f"PROTO_VER={proto_ver}, ENHANCED_OBP={enhanced}",
+                        )
+                    )
+                else:
+                    findings.append(
+                        Finding(
+                            "ok",
+                            "systems",
+                            f"{name}: OPENBRIDGE fan-in only (OBP_PROXY {obp['listen_port']}); "
+                            f"PROTO_VER={proto_ver}, ENHANCED_OBP={enhanced}",
+                        )
+                    )
+            else:
+                ip = str(sys_cfg.get("IP") or "0.0.0.0")
+                port = int(sys_cfg.get("PORT", 62044))
+                ok, detail = _check_udp_bind(ip, port)
+                level = "ok" if ok else "error"
+                findings.append(
+                    Finding(
+                        level,
+                        "ports",
+                        f"{name}: OPENBRIDGE UDP {ip}:{port} — {detail}; "
+                        f"PROTO_VER={proto_ver}, ENHANCED_OBP={enhanced}",
+                    )
+                )
             target_ip = sys_cfg.get("TARGET_IP", "")
             if isinstance(target_ip, bytes):
                 target_ip = target_ip.decode("utf-8", errors="replace")
@@ -216,6 +251,20 @@ def collect_findings(
             )
         elif proxy_target and no_proxy:
             findings.append(Finding("warn", "proxy", f"PROXY configured ({proxy_target}) but --no-proxy set"))
+
+        if obp_proxy_enabled(config):
+            obp = obp_proxy_settings(config)
+            ip = str(obp["listen_ip"] or "0.0.0.0")
+            port = int(obp["listen_port"])
+            ok, detail = _check_udp_bind(ip, port)
+            level = "ok" if ok else "error"
+            findings.append(
+                Finding(
+                    level,
+                    "proxy",
+                    f"OBP_PROXY UDP {ip}:{port} — {detail}; BIND_LEGACY_PORTS={obp['bind_legacy_ports']}",
+                )
+            )
 
         aliases = config.get("ALIASES", {})
         for key, default in (

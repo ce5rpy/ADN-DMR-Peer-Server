@@ -64,7 +64,7 @@ def test_merge_new_master_keeps_yaml_static_tg() -> None:
         "MODE": "MASTER",
         "ENABLED": True,
         "IP": "127.0.0.1",
-        "PORT": 62032,
+        "PORT": 62040,
         "TS2_STATIC": "52090",
         "DEFAULT_UA_TIMER": 10,
     }

@@ -23,11 +23,13 @@ Enrutado, temporizadores, control de bucle OpenBridge y manejo de protocolo est�
 | **Voz** | Ficheros AMBE, anuncios programados, tubería TTS, reproducción bajo demanda (TG 9991–9999). |
 | **Informes** | Canal TCP netstring hacia **adn-monitor** (y paneles compatibles): config, estado de bridges, eventos de llamada (informe v2 JSON). |
 | **Proxy hotspot** | Fan-in UDP integrado opcional (`PROXY` en `adn-server.yaml`) y **self-service** MySQL (`SELF_SERVICE`) para opciones de hotspot desde el panel. |
+| **Proxy OBP** | Fan-in UDP OpenBridge integrado opcional (`OBP_PROXY` en `adn-server.yaml`; por defecto si hay sistemas OPENBRIDGE). |
 
 ## Programas relacionados
 
 - **Echo / playback** — `adn-server.py --echo` con `adn-echo.yaml` mínimo; ver [Echo](echo.md).
 - **Proxy hotspot integrado** — `PROXY` en **`adn-server.yaml`**; ver [Proxy hotspot](hotspot-proxy.md).
+- **Proxy OBP integrado** — fan-in `OBP_PROXY` para OpenBridge; ver [Proxy OBP](obp-proxy.md).
 - **Proxy de informes (paneles legacy)** — **[ADN-report-proxy](https://github.com/ce5rpy/ADN-report-proxy)** opcional para que **adn-server 2.x** alimente monitores antiguos estilo HBMonitor / FDMR (wire v1); ver [Proxy de informes](report-proxy.md). No se usa con **adn-monitor 2.x**.
 
 ## Siguientes pasos
@@ -37,6 +39,7 @@ Enrutado, temporizadores, control de bucle OpenBridge y manejo de protocolo est�
 - [Enrutado de voz y contención](../development/routing-and-contention.md) — el flujo completo de paquetes, reglas de contención, SINGLE, mapeo de slot y divergencias.
 - [Números especiales](special-numbers.md) — TG 4000, servicios de información, eco.
 - [Proxy hotspot](hotspot-proxy.md) — **`PROXY`** / **`SELF_SERVICE`** integrados en `adn-server.yaml`.
+- [Proxy OBP](obp-proxy.md) — fan-in OpenBridge **`OBP_PROXY`** integrado.
 - [ADN Monitor](../../monitor/index.md) — panel, `adn-monitor.yaml`, UI self-service (repo aparte, desplegado con el servidor).
 - [Rendimiento (2.x)](../development/performance.md) — mejoras de CPU/RAM en esta versión y qué las provoca.
 - [Créditos y licencia](attribution.md) — ADN → FreeDMR → hblink3, licencia.
