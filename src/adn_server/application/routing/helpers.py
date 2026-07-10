@@ -461,6 +461,27 @@ def inject_only_defer_obp_hbp_slot_contention(
     return source_is_hbp and connected_count > 1
 
 
+_SERVER_VOICE_RF_SRC = 5000
+
+
+def master_slot_holds_server_broadcast(slot_st: dict[str, Any], pkt_time: float) -> bool:
+    """True when server scheduled/TTS voice holds the flat MASTER slot TX row.
+
+    Announcements stamp TX_TYPE=VHEAD, TX_RFS=5000, and refresh TX_TIME each frame.
+    Re-apply global slot contention for OBP→MASTER when held so inject-only defer
+    does not interleave mesh voice (legacy ``bridge_master`` TX_TGID/TX_TIME rules).
+    """
+    if int_id(slot_st.get("TX_RFS", b"\x00\x00\x00")) != _SERVER_VOICE_RF_SRC:
+        return False
+    tx_type = slot_st.get("TX_TYPE")
+    if tx_type is None or tx_type == HBPF_SLT_VTERM:
+        return False
+    tx_time = float(slot_st.get("TX_TIME", 0) or 0)
+    if tx_time <= 0:
+        return True
+    return (pkt_time - tx_time) < STREAM_TO
+
+
 _OBP_FLAT_TX_KEYS = (
     "TX_START",
     "TX_TGID",

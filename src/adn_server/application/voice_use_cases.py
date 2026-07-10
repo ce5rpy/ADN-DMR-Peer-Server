@@ -148,11 +148,15 @@ class VoiceUseCases:
 
     def _mark_slots_busy(self, targets: list[dict[str, Any]]) -> None:
         """Mark target slots busy (TX_TYPE=VHEAD) to prevent TS conflict."""
+        server_rfs = bytes_3(5000)
+        now = time.time()
         for t in targets:
             try:
                 slot = t.get("slot")
                 if slot is not None:
                     slot["TX_TYPE"] = HBPF_SLT_VHEAD
+                    slot["TX_TIME"] = now
+                    slot["TX_RFS"] = server_rfs
             except (KeyError, TypeError):
                 pass
 
@@ -305,6 +309,7 @@ class VoiceUseCases:
                         "LAST": now,
                     }
                     slot["TX_TGID"] = dst_id
+                    slot["TX_RFS"] = source_id
                 else:
                     sys_obj.STATUS[stream_id]["LAST"] = now
                 slot["TX_TIME"] = now
@@ -607,6 +612,7 @@ class VoiceUseCases:
                         "LAST": now,
                     }
                     slot["TX_TGID"] = dst_id
+                    slot["TX_RFS"] = source_id
                 else:
                     sys_obj.STATUS[stream_id]["LAST"] = now
                 slot["TX_TIME"] = now
