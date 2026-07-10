@@ -44,11 +44,13 @@ def test_describe_mysql_error_unknown_database() -> None:
 
 def test_ensure_peer_dynamic_tgs_applies_migration_once() -> None:
     cur = MagicMock()
-    cur.fetchone.side_effect = [None, (1,)]  # migration missing, then exists on re-check path
+    cur.fetchone.side_effect = [None, None, (1,), None, None, None]
     _ensure_peer_dynamic_tgs_on_cursor(cur)
     executed = [call[0][0] for call in cur.execute.call_args_list]
     assert any("schema_migrations" in sql for sql in executed)
     assert any("peer_dynamic_tgs" in sql for sql in executed)
+    assert any("need_reload" in sql for sql in executed)
+    assert any("idx_need_reload_peer" in sql for sql in executed)
     assert any("INSERT IGNORE INTO schema_migrations" in sql for sql in executed)
 
 

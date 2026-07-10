@@ -24,7 +24,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, Callable
 
 from twisted.internet import reactor
 from twisted.internet.interfaces import IDelayedCall
@@ -139,6 +139,8 @@ def _build_self_service(
     *,
     logger: logging.Logger,
     mysql_pool: Any | None = None,
+    dynamic_tg_uc: Any | None = None,
+    purge_peer_dynamic: Callable[[bytes, str], bool] | None = None,
 ) -> ProxySelfServiceBridge | None:
     ss = self_service_settings(config)
     if not ss["enabled"]:
@@ -170,6 +172,8 @@ def _build_self_service(
         pbkdf2_salt=ss["pbkdf2_salt"],
         pbkdf2_iterations=ss["pbkdf2_iterations"],
         logger=logger,
+        dynamic_tg_uc=dynamic_tg_uc,
+        purge_peer_dynamic=purge_peer_dynamic,
     )
     return bridge
 
@@ -180,6 +184,8 @@ def start_proxy_service(
     *,
     logger: logging.Logger,
     mysql_pool: Any | None = None,
+    dynamic_tg_uc: Any | None = None,
+    purge_peer_dynamic: Callable[[bytes, str], bool] | None = None,
 ) -> ProxyServiceState:
     """Start LISTEN_PORT fan-in and inject into ``PROXY.TARGET_SYSTEM`` MASTER."""
     runtime = _proxy_runtime_snapshot(config)
@@ -297,6 +303,8 @@ def start_proxy_service(
             state.client_sender,
             logger=logger,
             mysql_pool=mysql_pool,
+            dynamic_tg_uc=dynamic_tg_uc,
+            purge_peer_dynamic=purge_peer_dynamic,
         )
         if self_service_bridge is not None:
             fanin._self_service = self_service_bridge  # noqa: SLF001

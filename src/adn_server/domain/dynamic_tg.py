@@ -36,3 +36,13 @@ class DynamicTgEntry:
     single_mode: bool
     expires_at: float | None
     updated_at: float
+    need_reload: bool = False
+
+
+def is_persisted_dynamic_row(entry: DynamicTgEntry) -> bool:
+    """True for real dynamic TG rows (exclude monitor reload control rows)."""
+    if entry.need_reload:
+        return False
+    if int(entry.slot) == 0 and int(entry.tgid) == 0:
+        return False
+    return True
