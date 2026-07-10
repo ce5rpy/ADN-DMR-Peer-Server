@@ -4,6 +4,14 @@ All notable changes to **adn-server** are documented here.
 
 <!-- version list -->
 
+## v2.2.6 (2026-07-10)
+
+### Bug Fixes
+
+- Block OBP during server announcements on inject-only masters
+  ([`cae5d57`](https://github.com/ce5rpy/ADN-DMR-Peer-Server/commit/cae5d57d8ec0ebcc4deaf5662d35d3f5d59571b2))
+
+
 ## v2.2.5 (2026-07-10)
 
 ### Bug Fixes
