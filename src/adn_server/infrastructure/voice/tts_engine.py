@@ -250,8 +250,8 @@ def _cleanup(files: list[str]) -> None:
         try:
             if os.path.isfile(f):
                 os.remove(f)
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning("(TTS) cleanup remove %s failed: %s", f, e)
 
 
 def text_to_ambe(

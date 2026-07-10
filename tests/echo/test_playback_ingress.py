@@ -26,7 +26,12 @@ import logging
 from unittest.mock import patch
 
 from tests.harness.deterministic import DeterministicScenario, PacketSpec
-from tests.harness.playback_helpers import FakePlaybackProtocol, install_reactor_capture, send_playback
+from tests.harness.playback_helpers import (
+    FakePlaybackProtocol,
+    make_capture_call_later,
+    noop_call_later,
+    send_playback,
+)
 
 from adn_server.application.playback_use_cases import _PLAYBACK_DELAY_S, _RECORD_IDLE_S, PlaybackUseCases
 
@@ -34,7 +39,7 @@ from adn_server.application.playback_use_cases import _PLAYBACK_DELAY_S, _RECORD
 def test_dmrd_received_accepts_ingress_pkt_time_kwarg() -> None:
     """Regression: PEER udp_hbp passes ingress_pkt_time (echo must not TypeError)."""
     proto = FakePlaybackProtocol()
-    pb = PlaybackUseCases("ECHO", get_protocol=lambda: proto)
+    pb = PlaybackUseCases("ECHO", call_later=noop_call_later, get_protocol=lambda: proto)
     base = PacketSpec(dst_id=9990, stream_id=0x12121212, slot=2)
     args = DeterministicScenario.voice_head_spec(base).decoded_hbp_args()
 
@@ -60,23 +65,22 @@ def test_dmrd_received_accepts_ingress_pkt_time_kwarg() -> None:
 def test_ingress_pkt_time_enables_record_to_playback(caplog) -> None:
     """Regression: PEER path (ingress_pkt_time) records voice and schedules playback."""
     proto = FakePlaybackProtocol()
-    pb = PlaybackUseCases("ECHO", get_protocol=lambda: proto)
+    call_later, scheduled = make_capture_call_later()
+    pb = PlaybackUseCases("ECHO", call_later=call_later, get_protocol=lambda: proto)
     base = PacketSpec(dst_id=9990, stream_id=0x34343434, slot=2)
-    mock_reactor, scheduled = install_reactor_capture()
     t0 = 1_700_000_000.0
 
-    with patch("adn_server.application.playback_use_cases.reactor", mock_reactor):
-        with patch("adn_server.application.playback_use_cases.time", return_value=t0):
-            send_playback(pb, "ECHO", DeterministicScenario.voice_head_spec(base))
-            send_playback(
-                pb,
-                "ECHO",
-                DeterministicScenario.voice_burst_spec(base, seq=1, dtype_vseq=1),
-                ingress_pkt_time=t0 + 2.0,
-            )
-        with patch("adn_server.application.playback_use_cases.time", return_value=t0 + _RECORD_IDLE_S + 1):
-            with caplog.at_level(logging.INFO, logger="adn_server.application.playback_use_cases"):
-                pb._on_record_idle(proto)
+    with patch("adn_server.application.playback_use_cases.time", return_value=t0):
+        send_playback(pb, "ECHO", DeterministicScenario.voice_head_spec(base))
+        send_playback(
+            pb,
+            "ECHO",
+            DeterministicScenario.voice_burst_spec(base, seq=1, dtype_vseq=1),
+            ingress_pkt_time=t0 + 2.0,
+        )
+    with patch("adn_server.application.playback_use_cases.time", return_value=t0 + _RECORD_IDLE_S + 1):
+        with caplog.at_level(logging.INFO, logger="adn_server.application.playback_use_cases"):
+            pb._on_record_idle(proto)
 
     assert any(item[0] == _PLAYBACK_DELAY_S for item in scheduled)
     assert pb._playback_busy is True

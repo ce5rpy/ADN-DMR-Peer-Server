@@ -461,6 +461,112 @@ def inject_only_defer_obp_hbp_slot_contention(
     return source_is_hbp and connected_count > 1
 
 
+_OBP_FLAT_TX_KEYS = (
+    "TX_START",
+    "TX_TGID",
+    "TX_STREAM_ID",
+    "TX_RFS",
+    "TX_PEER",
+    "TX_H_LC",
+    "TX_T_LC",
+    "TX_EMB_LC",
+    "TX_TIME",
+    "TX_TYPE",
+)
+
+
+def obp_deferred_bridge_tx_leg(slot_st: dict[str, Any], stream_id: bytes) -> dict[str, Any]:
+    """Per-stream bridge TX stamp for inject-only OBP→MASTER legs on a shared slot row."""
+    legs = slot_st.setdefault("TX_STREAMS", {})
+    if not isinstance(legs, dict):
+        legs = {}
+        slot_st["TX_STREAMS"] = legs
+    return legs.setdefault(stream_id, {})
+
+
+def obp_flat_bridge_tx_idle(slot_st: dict[str, Any], pkt_time: float) -> bool:
+    """True when flat ``TX_*`` on the slot is not carrying an active bridge leg."""
+    tx_type = slot_st.get("TX_TYPE")
+    if tx_type is None or tx_type == HBPF_SLT_VTERM:
+        return True
+    tx_time = float(slot_st.get("TX_TIME", 0) or 0)
+    return pkt_time >= tx_time + STREAM_TO
+
+
+def obp_bridge_tx_leg_active(leg: dict[str, Any], pkt_time: float) -> bool:
+    tx_type = leg.get("TX_TYPE")
+    if tx_type is None or tx_type == HBPF_SLT_VTERM:
+        return False
+    tx_time = float(leg.get("TX_TIME", 0) or 0)
+    return pkt_time < tx_time + STREAM_TO
+
+
+def obp_publish_flat_bridge_tx(slot_st: dict[str, Any], leg: dict[str, Any]) -> None:
+    """Mirror one per-stream bridge leg onto the legacy flat ``TX_*`` slot row."""
+    for key in _OBP_FLAT_TX_KEYS:
+        if key in leg:
+            slot_st[key] = leg[key]
+
+
+def obp_sync_flat_bridge_tx_times(
+    slot_st: dict[str, Any],
+    leg: dict[str, Any],
+    stream_id: bytes,
+    pkt_time: float,
+    dtype_vseq: int,
+) -> None:
+    """Refresh per-stream leg activity; mirror times to flat row only for the owner stream."""
+    leg["TX_TIME"] = pkt_time
+    leg["TX_TYPE"] = dtype_vseq
+    if slot_st.get("TX_STREAM_ID") == stream_id:
+        slot_st["TX_TIME"] = pkt_time
+        slot_st["TX_TYPE"] = dtype_vseq
+
+
+def obp_pick_active_bridge_tx_leg(
+    slot_st: dict[str, Any],
+    pkt_time: float,
+) -> tuple[bytes | None, dict[str, Any] | None]:
+    legs = slot_st.get("TX_STREAMS")
+    if not isinstance(legs, dict):
+        return None, None
+    best_sid: bytes | None = None
+    best_leg: dict[str, Any] | None = None
+    best_time = -1.0
+    for sid, leg in legs.items():
+        if not isinstance(leg, dict) or not obp_bridge_tx_leg_active(leg, pkt_time):
+            continue
+        t = float(leg.get("TX_TIME", 0) or 0)
+        if t > best_time:
+            best_time = t
+            best_sid = sid
+            best_leg = leg
+    return best_sid, best_leg
+
+
+def obp_clear_flat_bridge_tx(slot_st: dict[str, Any]) -> None:
+    slot_st["TX_TYPE"] = HBPF_SLT_VTERM
+    slot_st["TX_STREAM_ID"] = b"\x00"
+    slot_st["TX_TIME"] = 0.0
+
+
+def obp_clear_deferred_bridge_tx_leg(
+    slot_st: dict[str, Any],
+    stream_id: bytes,
+    pkt_time: float,
+) -> None:
+    """End one per-stream OBP bridge leg; republish flat ``TX_*`` for another active leg if any."""
+    legs = slot_st.get("TX_STREAMS")
+    if isinstance(legs, dict):
+        legs.pop(stream_id, None)
+    if slot_st.get("TX_STREAM_ID") == stream_id:
+        repl_sid, repl_leg = obp_pick_active_bridge_tx_leg(slot_st, pkt_time)
+        if repl_leg is not None and repl_sid is not None:
+            obp_publish_flat_bridge_tx(slot_st, repl_leg)
+        else:
+            obp_clear_flat_bridge_tx(slot_st)
+
+
 def hbp_slot_blocks_group_voice_for_peer(
     slot_st: dict[str, Any],
     peer_id: bytes,

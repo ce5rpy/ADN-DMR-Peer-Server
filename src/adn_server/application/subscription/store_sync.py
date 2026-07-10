@@ -22,7 +22,7 @@
 
 Runtime hot paths mutate the store directly and publish via ``export_routing_table``; they must not
 call ``replace_store_from_routing_table`` (would overwrite store authority with the shim).
-Bootstrap and tests may import once — e.g. ``_seed_echo_routing_table`` in ``peer_server.py``.
+Bootstrap and tests may import once — e.g. ``seed_echo_routing_table`` in ``application/subscription/echo_seed.py``.
 """
 
 from __future__ import annotations

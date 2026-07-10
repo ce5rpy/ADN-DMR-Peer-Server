@@ -37,6 +37,7 @@ from adn_server.application.report import (
 )
 from adn_server.application.report.payloads import (
     parse_peer_options_static,
+    peer_options_static_valid,
     resolve_peer_single_and_timer,
 )
 from adn_server.application.routing.helpers import peer_should_receive_group_voice
@@ -57,6 +58,20 @@ def test_parse_peer_options_static_ts2():
     ts1, ts2 = parse_peer_options_static(b"TS2=730444;TIMER=15;")
     assert ts1 == []
     assert ts2 == ["730444"]
+
+
+@pytest.mark.parametrize(
+    ("options", "expected"),
+    [
+        (b"", True),
+        (b"TS2=730444;TIMER=15;", True),
+        (b"TS2=bad;TIMER=15;", False),
+        (b"PASS=secret;TS2=730;", False),
+        (b"PASS=secret;", False),
+    ],
+)
+def test_peer_options_static_valid_table(options: bytes, expected: bool) -> None:
+    assert peer_options_static_valid(options) is expected
 
 
 def test_resolve_peer_single_and_timer_yaml_defaults() -> None:

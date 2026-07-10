@@ -26,7 +26,7 @@ import logging
 import re
 
 from tests.harness.deterministic import DeterministicScenario, PacketSpec
-from tests.harness.playback_helpers import FakePlaybackProtocol
+from tests.harness.playback_helpers import FakePlaybackProtocol, noop_call_later
 
 from adn_server.application.playback_use_cases import PlaybackUseCases
 from adn_server.domain import bytes_3, bytes_4
@@ -35,7 +35,7 @@ from adn_server.domain import bytes_3, bytes_4
 def test_start_playback_logs_duration_with_two_decimals(caplog) -> None:
     """PLAYBACK duration matches bridge-style %.2f (no float noise in logs)."""
     proto = FakePlaybackProtocol()
-    pb = PlaybackUseCases("ECHO", get_protocol=lambda: proto)
+    pb = PlaybackUseCases("ECHO", call_later=noop_call_later, get_protocol=lambda: proto)
     base = PacketSpec(dst_id=9990, stream_id=0x88888888, slot=2)
     recorded = [DeterministicScenario.voice_head_spec(base).data()]
 

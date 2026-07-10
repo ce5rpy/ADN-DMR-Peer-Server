@@ -27,7 +27,6 @@
 from __future__ import annotations
 
 import logging
-import os
 import time
 from datetime import datetime
 from typing import Any, Callable
@@ -72,7 +71,6 @@ class VoiceUseCases:
         self._tts_running: dict[int, bool] = {}
         self._announcement_last_hour: dict[int, int] = {}
         self._tts_last_hour: dict[int, int] = {}
-        self._config_file_mtime: float = 0.0
         self._broadcast_queue: list[dict[str, Any]] = []
         self._broadcast_active_tgs: set[str] = set()
 
@@ -249,8 +247,8 @@ class VoiceUseCases:
                         for sid in list(obj.STATUS.keys()):
                             if sid not in (1, 2):
                                 del obj.STATUS[sid]
-                except Exception:
-                    pass
+                except Exception as e:
+                    logger.warning("(%s) slot STATUS cleanup failed: %s", label, e)
             self._announcement_running[ann_idx] = False
             if not targets:
                 logger.info(
@@ -523,7 +521,8 @@ class VoiceUseCases:
         self._tts_running[tts_idx] = False
         try:
             msg = failure.getErrorMessage()
-        except Exception:
+        except Exception as e:
+            logger.warning("(%s) failure.getErrorMessage unavailable: %s", label, e)
             msg = str(failure)
         logger.error("(%s) TTS conversion error: %s", label, msg)
 
@@ -550,8 +549,8 @@ class VoiceUseCases:
                         for sid in list(obj.STATUS.keys()):
                             if sid not in (1, 2):
                                 del obj.STATUS[sid]
-                except Exception:
-                    pass
+                except Exception as e:
+                    logger.warning("(%s) slot STATUS cleanup failed: %s", label, e)
             self._tts_running[tts_idx] = False
             if not targets:
                 logger.info(
@@ -718,17 +717,8 @@ class VoiceUseCases:
             self._call_from_reactor(protocol.send_voice_packet, pkt, bytes_3(5000), bytes_3(9), _slot)
         logger.debug("(%s) disconnected voice thread end", system)
 
-    def check_voice_config_reload(self, config_file_path: str | None = None) -> None:
-        """Check adn-voice.yaml mtime and reload if changed (15s loop). Start/stop announcement LoopingCalls."""
-        if config_file_path and os.path.isfile(config_file_path):
-            try:
-                mtime = os.path.getmtime(config_file_path)
-            except OSError:
-                return
-            if mtime == self._config_file_mtime:
-                return
-            self._config_file_mtime = mtime
-            logger.info("(VOICE-RELOAD) config file change detected, reloading configuration...")
+    def apply_voice_config(self) -> None:
+        """Start/stop announcement and TTS LoopingCalls from ``config["VOICE"]``."""
         g = self._config.get("VOICE", {})
         if not self._start_looping_call:
             return
@@ -740,8 +730,8 @@ class VoiceUseCases:
                 try:
                     if getattr(self._ann_tasks[ann_idx], "running", False):
                         self._ann_tasks[ann_idx].stop()
-                except Exception:
-                    pass
+                except Exception as e:
+                    logger.warning("(VOICE-RELOAD) stop announcement task %s failed: %s", ann_idx + 1, e)
                 del self._ann_tasks[ann_idx]
                 logger.info("(VOICE-RELOAD) ANNOUNCEMENT-%s stopped", ann_idx + 1)
         for ann_idx, item in enumerate(announcements):
@@ -752,8 +742,8 @@ class VoiceUseCases:
                 try:
                     if getattr(self._ann_tasks[ann_idx], "running", False):
                         self._ann_tasks[ann_idx].stop()
-                except Exception:
-                    pass
+                except Exception as e:
+                    logger.warning("(VOICE-RELOAD) stop %s failed: %s", label, e)
                 del self._ann_tasks[ann_idx]
                 logger.info("(VOICE-RELOAD) %s stopped", label)
             mode = item.get("MODE", "interval")
@@ -772,8 +762,8 @@ class VoiceUseCases:
                 try:
                     if getattr(self._tts_tasks[tts_idx], "running", False):
                         self._tts_tasks[tts_idx].stop()
-                except Exception:
-                    pass
+                except Exception as e:
+                    logger.warning("(VOICE-RELOAD) stop TTS task %s failed: %s", tts_idx + 1, e)
                 del self._tts_tasks[tts_idx]
                 logger.info("(VOICE-RELOAD) TTS-%s stopped", tts_idx + 1)
         for tts_idx, item in enumerate(tts_list):
@@ -784,8 +774,8 @@ class VoiceUseCases:
                 try:
                     if getattr(self._tts_tasks[tts_idx], "running", False):
                         self._tts_tasks[tts_idx].stop()
-                except Exception:
-                    pass
+                except Exception as e:
+                    logger.warning("(VOICE-RELOAD) stop %s failed: %s", label, e)
                 del self._tts_tasks[tts_idx]
                 logger.info("(VOICE-RELOAD) %s stopped", label)
             mode = item.get("MODE", "interval")
@@ -796,5 +786,3 @@ class VoiceUseCases:
                 "(VOICE-RELOAD) %s enabled - mode: %s, file: %s, TG: %s",
                 label, mode, item.get("FILE"), item.get("TG"),
             )
-        if config_file_path and self._config_file_mtime:
-            logger.info("(VOICE-RELOAD) config reload completed")

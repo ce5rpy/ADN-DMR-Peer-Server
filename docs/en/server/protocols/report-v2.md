@@ -1,12 +1,12 @@
 # Report protocol v2 (JSON)
 
-**Status:** schema draft. Wire encoding and server emission are in progress; monitor v2 consumer is a separate deliverable.
+**Status:** schema + TCP slim wire (`STATE_SND`) shipped on adn-server 2.x; monitor 2.x consumer required for production pairing.
 
 ## Goals
 
 Replace monitor snapshots that today use **pickle** (`CONFIG_SND`, `BRIDGE_SND`) and **CSV strings** (`BRDG_EVENT`) with **typed JSON** that any client can decode.
 
-**Release policy:** **adn-server 1.0.x** + **adn-monitor 1.0.x** = report v1 (frozen tag pair). **2.x** server sends **HELLO** with `report_protocol: 2` and **v2 JSON only** (`TOPOLOGY_SND`, `ROUTING_TABLE_SND`, `VOICE_EVENT_SND`, `DELTA_SND`) — no duplicate pickle/CSV frames. **adn-monitor 2.x** is the polyglot consumer: it decodes v1 wire from legacy peers and v2 JSON from **adn-server 2.x**, mapping both into the same dashboard state for the UI. **adn-monitor 1.0.0** cannot decode v2 opcodes — upgrade the monitor line for **adn-server 2.x**.
+**Release policy:** **adn-server 1.0.x** + **adn-monitor 1.0.x** = report v1 (frozen tag pair). **2.x** server sends **HELLO** with `report_protocol: 2` and v2 JSON on TCP. The monitor connect path is **`HELLO` → `STATE_SND` (`dashboard_state`)** plus async **`ROUTING_TABLE_SND` / `DELTA_SND`** for UA/SINGLE_TS chips and **`VOICE_EVENT_SND`** for live calls. **`topology` is internal-only** (used to build `dashboard_state`, never sent on TCP). **adn-monitor 2.x** decodes v1 wire from legacy peers and v2 JSON from **adn-server 2.x**. **adn-monitor 1.0.0** cannot decode v2 opcodes — upgrade the monitor line for **adn-server 2.x**.
 
 ## Transport (unchanged)
 
@@ -18,15 +18,14 @@ Replace monitor snapshots that today use **pickle** (`CONFIG_SND`, `BRIDGE_SND`)
 | Opcode | Hex | v1 payload | v2 payload |
 |--------|-----|------------|------------|
 | `HELLO` | `0xFF` | JSON hello (`protocol`: 1) | JSON hello (`report_protocol`: 2) |
-| `CONFIG_SND` | `0x01` | pickle SYSTEMS | — (use `TOPOLOGY_SND`) |
+| `CONFIG_SND` | `0x01` | pickle SYSTEMS | — (use `STATE_SND`) |
 | `BRIDGE_SND` | `0x03` | pickle BRIDGES | — (use `ROUTING_TABLE_SND`) |
 | `BRDG_EVENT` | `0x07` | CSV text | — (use `VOICE_EVENT_SND`) |
-| `TOPOLOGY_SND` | `0x10` | — | JSON `topology` |
+| `STATE_SND` | `0x14` | — | JSON `dashboard_state` |
+| `TOPOLOGY_SND` | `0x10` | — | *(internal schema only — not emitted on TCP)* |
 | `ROUTING_TABLE_SND` | `0x11` | — | JSON `routing_table` |
 | `VOICE_EVENT_SND` | `0x12` | — | JSON `voice_event` |
 | `DELTA_SND` | `0x13` | — | JSON `delta` |
-
-Proposed opcodes `0x10`–`0x13` are reserved in the schema phase; exact values may change before P1-002 ships.
 
 ```mermaid
 flowchart TB
@@ -37,8 +36,8 @@ flowchart TB
   end
 
   subgraph v2 [Report v2 — adn-server 2.x + monitor 2.x]
-    H2[HELLO report_protocol 2] --> T2[TOPOLOGY_SND JSON]
-    T2 --> R2[ROUTING_TABLE_SND JSON]
+    H2[HELLO report_protocol 2] --> S2[STATE_SND dashboard_state]
+    S2 --> R2[ROUTING_TABLE_SND JSON async]
     R2 --> V2[VOICE_EVENT_SND JSON]
     R2 -.-> D2[DELTA_SND optional]
   end
@@ -54,7 +53,7 @@ On connect the server sends **`HELLO` (`0xFF`)** first (same as today). v2 clien
   "server": "adn-server",
   "version": "2.0.0-alpha.1",
   "report_protocol": 2,
-  "features": ["INGRESS", "END_TX_FORWARD", "PUSH_ON_CONNECT", "REPORT_V2", "TOPOLOGY_JSON", "ROUTING_TABLE_JSON", "VOICE_EVENT_JSON", "DELTA_UPDATES"],
+  "features": ["INGRESS", "END_TX_FORWARD", "PUSH_ON_CONNECT", "REPORT_V2", "ROUTING_TABLE_JSON", "VOICE_EVENT_JSON", "DELTA_UPDATES"],
   "systems": ["MASTER-A", "OBP-CL"]
 }
 ```
@@ -70,14 +69,63 @@ Monitor **1.0.x** does not speak this wire; use the **1.0.x** server tag for tha
 
 | `type` | Replaces | Purpose |
 |--------|----------|---------|
-| `topology` | `CONFIG_SND` | Systems, peers, OpenBridge legs (no secrets). |
-| `routing_table` | `BRIDGE_SND` | Active bridge legs per talkgroup / reflector key. |
+| `dashboard_state` | `CONFIG_SND` (slim) | Linked masters/peers/openbridges snapshot (`STATE_SND`). **Full snapshot** — monitor prunes absent masters. |
+| `topology` | `CONFIG_SND` (full) | Internal schema / ops only — **not** sent on TCP monitor wire. |
+| `routing_table` | `BRIDGE_SND` | Active bridge legs per talkgroup / reflector key (UA/SINGLE_TS chips). |
 | `voice_event` | `BRDG_EVENT` | Structured call start/end/ingress. |
-| `delta` | — | Incremental `topology` or `routing_table` patch since `since_seq`. |
+| `delta` | — | Incremental `routing_table` patch since `since_seq`. |
 
 ## Reference payloads
 
 Each frame payload is one JSON object with a required `type`. Examples below use anonymized IDs.
+
+### `dashboard_state`
+
+```json
+{
+  "type": "dashboard_state",
+  "ts": 1717555200.0,
+  "server_id": "7302",
+  "ctable": {
+    "MASTERS": {
+      "MASTER-A": {
+        "mode": "MASTER",
+        "ip": "10.0.0.1",
+        "port": 62030,
+        "peers": {
+          "3120001": {
+            "id": 3120001,
+            "connected": true,
+            "ip": "10.0.0.50",
+            "port": 62031,
+            "callsign": "CE5RPY"
+          }
+        }
+      }
+    },
+    "PEERS": {},
+    "OPENBRIDGES": {
+      "OBP-CL": {
+        "mode": "OPENBRIDGE",
+        "network_id": 73010,
+        "ip": "44.31.61.68",
+        "port": 62999,
+        "streams": {}
+      }
+    }
+  }
+}
+```
+
+| Field | Type | Required | Notes |
+|-------|------|----------|-------|
+| `ts` | float | yes | Epoch time of snapshot. |
+| `server_id` | string | no | `GLOBAL.SERVER_ID` (MQTT retained state). |
+| `ctable.MASTERS` | object | yes | Masters with **connected** peers only. |
+| `ctable.PEERS` | object | yes | Connected upstream PEER/XLXPEER systems. |
+| `ctable.OPENBRIDGES` | object | yes | Enabled OpenBridge legs (`streams` empty; live chips from `voice_event`). |
+
+Committed example: `schemas/examples/dashboard_state.json`.
 
 ### `topology`
 
@@ -133,7 +181,7 @@ No passwords or encryption material are included (unlike legacy pickle).
   "ts": 1717555260.5,
   "routes": [
     {
-      "bridge_key": "52090",
+      "relay_table_key": "52090",
       "legs": [
         {
           "system": "MASTER-A",
@@ -153,7 +201,7 @@ No passwords or encryption material are included (unlike legacy pickle).
       ]
     },
     {
-      "bridge_key": "#310",
+      "relay_table_key": "#310",
       "legs": [
         {
           "system": "MASTER-A",
@@ -170,7 +218,7 @@ No passwords or encryption material are included (unlike legacy pickle).
 
 | Field | Type | Required | Notes |
 |-------|------|----------|-------|
-| `routes[].bridge_key` | string | yes | Talkgroup id or reflector key (`#nnn`). |
+| `routes[].relay_table_key` | string | yes | Talkgroup id or reflector key (`#nnn`). |
 | `legs[].system` | string | yes | Target system name. |
 | `legs[].ts` | 1 \| 2 | yes | Timeslot (legacy `TS`). |
 | `legs[].tgid` | int | yes | Talkgroup (1–16777215). |
@@ -231,7 +279,7 @@ OpenBridge **INGRESS** vs **START** semantics match [Monitoring and reports](../
     "ts": 1717555261.0,
     "routes": [
       {
-        "bridge_key": "52090",
+        "relay_table_key": "52090",
         "legs": [
           {
             "system": "MASTER-A",

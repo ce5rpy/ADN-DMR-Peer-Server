@@ -22,7 +22,23 @@
 
 from __future__ import annotations
 
+import json
+from pathlib import Path
+
+import jsonschema
+import pytest
+
 from adn_server.application.report.dashboard_state import build_dashboard_state
+from adn_server.domain.value_objects import bytes_4
+
+_SCHEMA_PATH = Path(__file__).resolve().parents[2] / "schemas" / "report-v2.json"
+_EXAMPLES_DIR = _SCHEMA_PATH.parent / "examples"
+
+
+@pytest.fixture(scope="module")
+def validator() -> jsonschema.Draft202012Validator:
+    with _SCHEMA_PATH.open(encoding="utf-8") as fh:
+        return jsonschema.Draft202012Validator(json.load(fh))
 
 
 def test_dashboard_state_omits_idle_masters():
@@ -105,3 +121,56 @@ def test_dashboard_state_includes_connected_upstream_peer():
     assert "XLX-730" in state["ctable"]["PEERS"]
     assert state["ctable"]["PEERS"]["XLX-730"]["connected"] is True
     assert state["ctable"]["MASTERS"] == {}
+
+
+def test_build_dashboard_state_matches_example(validator: jsonschema.Draft202012Validator) -> None:
+    with (_EXAMPLES_DIR / "dashboard_state.json").open(encoding="utf-8") as fh:
+        expected = json.load(fh)
+    systems = {
+        "MASTER-A": {
+            "MODE": "MASTER",
+            "ENABLED": True,
+            "IP": "10.0.0.1",
+            "PORT": 62030,
+            "SINGLE_MODE": False,
+            "DEFAULT_UA_TIMER": 10,
+            "TS1_STATIC": "91,92",
+            "TS2_STATIC": "7302",
+            "PEERS": {
+                bytes_4(3120001): {
+                    "CONNECTION": "YES",
+                    "CONNECTED": 1717555200,
+                    "IP": "10.0.0.50",
+                    "PORT": 62031,
+                    "CALLSIGN": b"CE5RPY  ",
+                },
+            },
+        },
+        "MASTER-B": {
+            "MODE": "MASTER",
+            "ENABLED": True,
+            "IP": "10.0.0.2",
+            "PORT": 62032,
+            "PEERS": {
+                bytes_4(3120002): {
+                    "CONNECTION": "YES",
+                    "CONNECTED": 1717555200,
+                    "IP": "10.0.0.51",
+                    "PORT": 62033,
+                    "CALLSIGN": b"EA5GVK  ",
+                },
+            },
+        },
+        "OBP-CL": {
+            "MODE": "OPENBRIDGE",
+            "ENABLED": True,
+            "IP": "44.31.61.68",
+            "PORT": 62999,
+            "NETWORK_ID": 73010,
+            "ENHANCED_OBP": True,
+            "PEERS": {},
+        },
+    }
+    doc = build_dashboard_state(systems, server_id="7302", ts=expected["ts"])
+    assert json.loads(json.dumps(doc)) == expected
+    validator.validate(doc)

@@ -27,6 +27,7 @@ Use the project interpreter, e.g. `/opt/.pyenv/versions/3.11.8/bin/python3`.
 | `replay/` | JSONL session replay |
 | `schemas/` | Report v2 JSON Schema validation (`jsonschema` dev dep) |
 | `application/` | Report payloads, monitor topology, proxy use cases, subscription store/router |
+| `fakes/` | Re-exports for application tests (`InMemorySubscriptionStore` shim) — not run as tests |
 | `infrastructure/` | Logging reload, ACL router, **HBP REPEAT + proxy fan-in integration**, MQTT |
 | `smoke/` | Quick routing smoke |
 | `support/` | Shared stacks (`hbp_repeat_stack`, monitor sim) — not run as tests |

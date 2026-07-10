@@ -32,7 +32,7 @@ from adn_server.application.subscription.store_sync import replace_store_from_ro
 from adn_server.application.subscription.subscription_table_ops import make_static_tg_store
 from adn_server.domain import bytes_3
 from adn_server.domain.subscription import SubscriptionPhase
-from adn_server.infrastructure.subscription_store import InMemorySubscriptionStore
+from fakes.subscription_store import InMemorySubscriptionStore
 
 
 def _store_from_bridges(bridges: dict) -> InMemorySubscriptionStore:

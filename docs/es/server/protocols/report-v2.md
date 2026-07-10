@@ -1,12 +1,12 @@
 # Protocolo de informes v2 (JSON)
 
-**Estado:** borrador de esquema. La codificación en wire y la emisión en el servidor están en progreso; el consumidor monitor v2 es un entregable aparte.
+**Estado:** esquema + wire TCP slim (`STATE_SND`) en adn-server 2.x; pareja de producción requiere adn-monitor 2.x.
 
 ## Objetivos
 
 Sustituir instantáneas al monitor que hoy usan **pickle** (`CONFIG_SND`, `BRIDGE_SND`) y **CSV** (`BRDG_EVENT`) por **JSON tipado**.
 
-**Política de releases:** **adn-server 1.0.x** + **adn-monitor 1.0.x** = report v1 (tags congelados). El servidor **2.x** emite **solo report v2** (sin shim pickle ni `dual`); requiere **adn-monitor 2.x** en la misma línea.
+**Política de releases:** **adn-server 1.0.x** + **adn-monitor 1.0.x** = report v1 (tags congelados). El servidor **2.x** emite **HELLO** con `report_protocol: 2` y JSON v2 en TCP. El flujo de conexión del monitor es **`HELLO` → `STATE_SND` (`dashboard_state`)** más **`ROUTING_TABLE_SND` / `DELTA_SND`** asíncronos para chips UA/SINGLE_TS y **`VOICE_EVENT_SND`** para llamadas en vivo. **`topology` es solo interno** (construye `dashboard_state`, no se emite en TCP). **adn-monitor 2.x** decodifica v1 de peers legacy y v2 de **adn-server 2.x**.
 
 ## Transporte (sin cambios)
 
@@ -18,10 +18,11 @@ Sustituir instantáneas al monitor que hoy usan **pickle** (`CONFIG_SND`, `BRIDG
 | Opcode | Hex | Payload v1 | Payload v2 |
 |--------|-----|------------|------------|
 | `HELLO` | `0xFF` | JSON hello (`protocol`: 1) | JSON hello (`report_protocol`: 2) |
-| `CONFIG_SND` | `0x01` | pickle SYSTEMS | — (`TOPOLOGY_SND`) |
+| `CONFIG_SND` | `0x01` | pickle SYSTEMS | — (`STATE_SND`) |
 | `BRIDGE_SND` | `0x03` | pickle BRIDGES | — (`ROUTING_TABLE_SND`) |
 | `BRDG_EVENT` | `0x07` | texto CSV | — (`VOICE_EVENT_SND`) |
-| `TOPOLOGY_SND` | `0x10` | — | JSON `topology` |
+| `STATE_SND` | `0x14` | — | JSON `dashboard_state` |
+| `TOPOLOGY_SND` | `0x10` | — | *(solo esquema interno — no se emite en TCP)* |
 | `ROUTING_TABLE_SND` | `0x11` | — | JSON `routing_table` |
 | `VOICE_EVENT_SND` | `0x12` | — | JSON `voice_event` |
 | `DELTA_SND` | `0x13` | — | JSON `delta` |
@@ -37,8 +38,8 @@ flowchart TB
   end
 
   subgraph v2 [Informe v2 — adn-server 2.x + monitor 2.x]
-    H2[HELLO report_protocol 2] --> T2[TOPOLOGY_SND JSON]
-    T2 --> R2[ROUTING_TABLE_SND JSON]
+    H2[HELLO report_protocol 2] --> S2[STATE_SND dashboard_state]
+    S2 --> R2[ROUTING_TABLE_SND JSON async]
     R2 --> V2[VOICE_EVENT_SND JSON]
     R2 -.-> D2[DELTA_SND opcional]
   end
@@ -54,7 +55,7 @@ Al conectar, el servidor envía **`HELLO` (`0xFF`)** primero. Clientes v2 miran 
   "server": "adn-server",
   "version": "2.0.0-alpha.1",
   "report_protocol": 2,
-  "features": ["INGRESS", "END_TX_FORWARD", "PUSH_ON_CONNECT", "REPORT_V2", "TOPOLOGY_JSON", "ROUTING_TABLE_JSON", "VOICE_EVENT_JSON", "DELTA_UPDATES"],
+  "features": ["INGRESS", "END_TX_FORWARD", "PUSH_ON_CONNECT", "REPORT_V2", "ROUTING_TABLE_JSON", "VOICE_EVENT_JSON", "DELTA_UPDATES"],
   "systems": ["MASTER-A", "OBP-CL"]
 }
 ```
@@ -68,14 +69,19 @@ Al conectar, el servidor envía **`HELLO` (`0xFF`)** primero. Clientes v2 miran 
 
 | `type` | Sustituye | Uso |
 |--------|-----------|-----|
-| `topology` | `CONFIG_SND` | Sistemas, peers, piernas OBP (sin secretos). |
-| `routing_table` | `BRIDGE_SND` | Piernas de bridge por TG / reflector. |
+| `dashboard_state` | `CONFIG_SND` (slim) | Instantánea de sistemas enlazados (`STATE_SND`). **Snapshot completo** — el monitor elimina masters ausentes. |
+| `topology` | `CONFIG_SND` (completo) | Solo esquema interno / ops — **no** se envía en TCP al monitor. |
+| `routing_table` | `BRIDGE_SND` | Piernas de bridge por TG / reflector (chips UA/SINGLE_TS). |
 | `voice_event` | `BRDG_EVENT` | Inicio/fin/ingress de llamadas. |
-| `delta` | — | Parche incremental desde `since_seq`. |
+| `delta` | — | Parche incremental de `routing_table` desde `since_seq`. |
 
 ## Payloads de referencia
 
 Cada trama lleva un único objeto JSON con `type` obligatorio. Los ejemplos usan IDs anonimizados.
+
+### `dashboard_state`
+
+Ver ejemplo completo en `schemas/examples/dashboard_state.json` (mismo objeto que MQTT `{prefix}/state`).
 
 ### `topology`
 

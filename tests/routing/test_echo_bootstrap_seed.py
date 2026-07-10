@@ -26,7 +26,7 @@ from tests.harness.assertions import assert_forwarded
 from tests.harness.deterministic import DeterministicScenario, PacketSpec
 from tests.routing.test_echo_subscription_reset import _echo_scenario_config
 
-from adn_server.infrastructure.bootstrap.peer_server import _seed_echo_routing_table
+from adn_server.application.subscription.echo_seed import seed_echo_routing_table
 
 
 def _prod_like_config() -> dict:
@@ -49,7 +49,7 @@ def test_echo_routing_missing_without_echo_store_seed() -> None:
 
 def test_echo_routing_works_after_echo_seed_on_vhead() -> None:
     config = _prod_like_config()
-    scenario = DeterministicScenario(config=config, routing_table=_seed_echo_routing_table(config))
+    scenario = DeterministicScenario(config=config, routing_table=seed_echo_routing_table(config))
     scenario.routing.apply_startup_subscriptions()
 
     base = PacketSpec(dst_id=9990, stream_id=0xABCDEF02, slot=2)
