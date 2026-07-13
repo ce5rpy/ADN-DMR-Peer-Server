@@ -81,9 +81,16 @@ class ObpForwardMixin:
             return
         if not (79 <= dst_int < 9990 or dst_int > 9999):
             return
-        from ..subscription.obp_source_ops import ensure_obp_source_for_tg_store
+        from ..subscription.obp_source_ops import (
+            ensure_obp_source_for_tg_store,
+            obp_source_needs_ensure,
+        )
+
+        store = self._subscription_store
+        if not obp_source_needs_ensure(store, system_name, relay_table_key, dst_int):
+            return
         ensure_obp_source_for_tg_store(
-            self._subscription_store,
+            store,
             system_name,
             relay_table_key,
             dst_id_b,
