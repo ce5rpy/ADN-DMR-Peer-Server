@@ -4,6 +4,14 @@ All notable changes to **adn-server** are documented here.
 
 <!-- version list -->
 
+## v2.3.3 (2026-07-13)
+
+### Bug Fixes
+
+- Gate OBP source ensure when bridge source is already active
+  ([`e140822`](https://github.com/ce5rpy/ADN-DMR-Peer-Server/commit/e140822e68fc65331123f12ee1ece8b7122a2690))
+
+
 ## v2.3.2 (2026-07-13)
 
 ### Bug Fixes
