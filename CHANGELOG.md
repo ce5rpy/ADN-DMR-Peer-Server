@@ -4,6 +4,14 @@ All notable changes to **adn-server** are documented here.
 
 <!-- version list -->
 
+## v2.3.2 (2026-07-13)
+
+### Bug Fixes
+
+- Inject scheduled voice via routing and restore monitor TX events
+  ([`62f429a`](https://github.com/ce5rpy/ADN-DMR-Peer-Server/commit/62f429aad90272e1684f554ac8a1999cf15eed43))
+
+
 ## v2.3.1 (2026-07-13)
 
 ### Bug Fixes
