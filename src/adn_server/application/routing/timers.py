@@ -53,6 +53,16 @@ from .helpers import obp_clear_deferred_bridge_tx_leg
 logger = logging.getLogger(__name__)
 
 
+def _obp_status_is_forward_leg(st: dict[str, Any]) -> bool:
+    """``to_target`` OPENBRIDGE rows carry rewritten LC (monitor TX leg)."""
+    return isinstance(st, dict) and "H_LC" in st
+
+
+def _obp_status_is_ingress(st: dict[str, Any]) -> bool:
+    """Ingress/routerOBP source stream (monitor canonical RX)."""
+    return isinstance(st, dict) and not _obp_status_is_forward_leg(st)
+
+
 class RoutingTimerMixin:
     """rule_timer, stream_trimmer, bridge_reset, stat_trimmer, bridge_debug loops."""
 
@@ -182,7 +192,9 @@ class RoutingTimerMixin:
             return
         if tst.get("TGID", b"\x00\x00\x00") != tgid:
             return
-        self._obp_emit_end_tx_forward_leg(system_name, stream_id, tst, time.time())
+        now = time.time()
+        self._obp_emit_end_tx_forward_leg(system_name, stream_id, tst, now)
+        tst["_bcsq_quenched"] = True
 
     def flush_monitor_events_for_system(self, system_name: str, protocol: Any) -> None:
         if not self._config.get("REPORTS", {}).get("REPORT", True):
@@ -267,8 +279,13 @@ class RoutingTimerMixin:
                         if st.get("_to") and last < now - 180:
                             to_remove.append(stream_id)
                             continue
-                        # Stage 1: 5s idle, not yet timed out → mark _to, emit END
+                        # Stage 1: 5s idle — monitor END only on ingress (canonical RX).
+                        # Forward legs (H_LC): no END,RX and no cross-leg END,TX cascade.
                         if "_to" not in st and "_fin" not in st and last < now - 5:
+                            if _obp_status_is_forward_leg(st):
+                                if st.get("_end_tx_sent") or st.get("_bcsq_quenched"):
+                                    st["_to"] = True
+                                continue
                             rfs = st.get("RFS", b"\x00\x00\x00")
                             peer = st.get("RX_PEER", b"\x00\x00\x00\x00")
                             tgid = st.get("TGID", b"\x00\x00\x00")
@@ -280,8 +297,6 @@ class RoutingTimerMixin:
                                 )
                             )
                             st["_to"] = True
-                            # Legacy trimmer emits END,RX here only; forward legs waited ~180s.
-                            # END,TX now (END_TX_FORWARD): same event as legacy VTERM path (~2039).
                             self._obp_emit_end_tx_for_forward_legs(stream_id, system_name, now)
                             continue
                     for stream_id in to_remove:
@@ -291,7 +306,11 @@ class RoutingTimerMixin:
                             for _tgid_k, _sid in list(_bmap.items()):
                                 if _sid == stream_id:
                                     _bmap.pop(_tgid_k, None)
-                        self._obp_emit_end_tx_for_forward_legs(stream_id, system_name, now)
+                        st_rem = obp_status.get(stream_id)
+                        if isinstance(st_rem, dict) and _obp_status_is_forward_leg(st_rem):
+                            self._obp_emit_end_tx_forward_leg(system_name, stream_id, st_rem, now)
+                        elif isinstance(st_rem, dict) and _obp_status_is_ingress(st_rem):
+                            self._obp_emit_end_tx_for_forward_legs(stream_id, system_name, now)
                         obp_status.pop(stream_id, None)
                 continue
             for slot in (1, 2):
