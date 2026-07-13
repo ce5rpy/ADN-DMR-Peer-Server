@@ -509,6 +509,17 @@ class RoutingUseCases(
                         if isinstance(_prev_obp_st, dict) and _prev_obp_st.get("_fin"):
                             del _target_status[stream_id]
                             self.clear_talker_alias_stream(system_name, stream_id)
+                            _prev_obp_st = None
+                        # Reused stream_id on a forward leg: drop stale row before START,TX.
+                        if isinstance(_prev_obp_st, dict) and "H_LC" in _prev_obp_st:
+                            _stale_forward = (
+                                _prev_obp_st.get("_end_tx_sent")
+                                or _prev_obp_st.get("RX_PEER") != peer_id
+                                or _prev_obp_st.get("RFS") != rf_src
+                                or _prev_obp_st.get("TGID") != dst_id_b
+                            )
+                            if _stale_forward:
+                                del _target_status[stream_id]
                         if stream_id not in _target_status:
                             _target_status[stream_id] = {
                                 "START": pkt_time,
