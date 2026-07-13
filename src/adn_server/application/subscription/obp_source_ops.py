@@ -48,6 +48,23 @@ def _tgid_match(entry_tgid: Any, dst_id_b: bytes, dst_int: int) -> bool:
         return False
 
 
+def obp_source_needs_ensure(
+    store: SubscriptionStore,
+    system_name: str,
+    relay_table_key: str,
+    dst_int: int,
+) -> bool:
+    """True when a bridge table exists but OBP lacks an ACTIVE TS1 source for ``dst_int``."""
+    active_tables = set(store.relay_tables_with_active_source(system_name, 1, dst_int))
+    pending_keys: list[str] = []
+    for key in (relay_table_key, "#" + relay_table_key):
+        if store.legs_in_table(key):
+            pending_keys.append(key)
+    if not pending_keys:
+        return False
+    return any(key not in active_tables for key in pending_keys)
+
+
 def ensure_obp_source_for_tg_store(
     store: SubscriptionStore,
     system_name: str,
