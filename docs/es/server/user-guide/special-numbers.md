@@ -2,19 +2,21 @@
 
 Varios **IDs de destino** están reservados para **control o servicios**. Se gestionan en capas de protocolo y/o en el router de bridges, no como tráfico de grupo normal.
 
-## ID 5000 — fuente de voz del servidor (no es «TG de anuncio») {#id-5000--server-voice-source-not-announcement-tg}
+## ID de voz del servidor — fuente configurable (no es «TG de anuncio») {#server-voice-source-id-configurable}
 
-**Importante:** **5000** es el **ID de fuente RF** que el servidor usa cuando **transmite** voz automatizada. Las radios y paneles muestran **ID de llamada 5000** en ese tráfico.
+**Importante:** El servidor usa un **DMR ID** configurable (`VOICE.DMR_ID` en `adn-voice.yaml`). Predeterminado: **1000001**. Cada anuncio/TTS puede definir **`DMR_ID`** propio; si se omite, hereda `VOICE.DMR_ID`. El callsign lo resuelve la base de suscriptores para ese ID.
 
 | Tráfico | Destino en el paquete DMR | Notas |
 |---------|---------------------------|--------|
-| **AMBE programado** (`ANNOUNCEMENTS`) | El **`TG`** que definas en `adn-voice.yaml` | ID de fuente **5000**. |
-| **TTS** (`TTS_ANNOUNCEMENTS`) | Igual — **`TG`** configurado | ID de fuente **5000**. |
-| **Bajo demanda** (TG **9991–9999**) | **TG 9** | Clips informativos cortos; fuente **5000** (ver [Voz, anuncios y TTS](voice-and-tts.md)). |
-| **Desconectado / reflector** | **TG 9** | Fuente **5000**. |
-| **Ident por voz** | **All-call** (`16777215`) o **`OVERRIDE_IDENT_TG`** si está definido | Fuente **5000**. |
+| **AMBE programado** (`ANNOUNCEMENTS`) | El **`TG`** que definas en `adn-voice.yaml` | `DMR_ID` del ítem o `VOICE.DMR_ID` (predeterminado **1000001**). |
+| **TTS** (`TTS_ANNOUNCEMENTS`) | Igual — **`TG`** configurado | Igual. |
+| **Bajo demanda** (TG **9991–9999**) | **TG 9** | Clips informativos cortos; fuente configurable (ver [Voz, anuncios y TTS](voice-and-tts.md)). |
+| **Desconectado / reflector** | **TG 9** | Igual. |
+| **Ident por voz** | **All-call** (`16777215`) o **`OVERRIDE_IDENT_TG`** si está definido | Igual. |
 
-**No** «monitorizas TG 5000» para oír anuncios programados: monitorizas el **TG de anuncio configurado** (p. ej. 2, 9, 26811). **5000** aparece como **ID del transmisor** en esas llamadas.
+**No** «monitorizas» el ID de voz del servidor para oír anuncios programados: monitorizas el **TG de anuncio configurado** (p. ej. 2, 9, 26811). El ID configurado aparece como **transmisor** en esas llamadas.
+
+El ID local heredado **5000** sigue reconocido en algunos caminos de reproducción bajo demanda por compatibilidad, pero el predeterminado nuevo es **1000001** (evita bloqueos con `SUB_ACL: DENY:0-1000000` en OBP).
 
 ### TG de destino 5000 (grupo entrante)
 
@@ -28,7 +30,7 @@ Si llega una llamada de grupo con **TG de destino 5000** y **no** hay fila `BRID
 
 Para reproducción **bajo demanda** (tras marcar **9991–9999**) y para líneas de voz de **desconectado / reflector**, el servidor transmite paquetes de **grupo** con:
 
-- **ID de fuente 5000**
+- **DMR ID** = `DMR_ID` del ítem o `VOICE.DMR_ID` (predeterminado **1000001**)
 - **TG de destino 9**
 - **Timeslot 2** (el código usa el slot **TS2** para ese hotspot)
 
@@ -92,7 +94,7 @@ A nivel operativo: si usuarios reportan «bridges que se caen demasiado fácil»
 - La ruta de disparo es **private VTERM** para destino **9991–9999**, seguida de generación/reproducción asíncrona.
 - Funciona desde rutas **MASTER** y **PEER**.
 
-El **audio** se envía con **ID de fuente 5000** y **TG de destino 9** en el flujo generado. Estructura de ficheros: [Voz, anuncios y TTS](voice-and-tts.md).
+El **audio** se envía con el **ID de fuente configurado** y **TG de destino 9** en el flujo generado. Estructura de ficheros: [Voz, anuncios y TTS](voice-and-tts.md).
 
 ## TG 9990 — eco (en banda)
 
@@ -118,11 +120,11 @@ Muchos IDs pequeños (0–5, 9, etc.) y el rango de **servicio 999x** quedan exc
 
 | ID / rango | Rol |
 |------------|-----|
-| **5000** (fuente) | Voz generada por el servidor (anuncios, TTS, mensajes, ident) — **ID de llamada** en receptores |
+| **VOICE.DMR_ID** (fuente) | Voz generada por el servidor — **ID de llamada** en receptores (predeterminado **1000001**) |
 | **5000** (destino) | Sin bridge UA automático si falta en `BRIDGES` |
 | **4000** (grupo) | Desactivar bridges dinámicos |
 | **4000** (unitaria) | Desconectar dinámicos; no enrutada como PC |
-| **9991–9999** | Audio informativo / bajo demanda (TG de disparo); reproducción usa fuente **5000** → TG **9** (TS2) |
+| **9991–9999** | Audio informativo / bajo demanda (TG de disparo); reproducción usa `VOICE.DMR_ID` → TG **9** (TS2) |
 | **9** | Carril de servicio/mensajes (audio corto del servidor); reservada para auto-bridges; **TGID** interno en patas TS2 |
 | **9990** | TG de bridge de eco (con sistema ECHO) |
 | **16777215** | All-call (destino por defecto de ident por voz salvo sobrescritura) |

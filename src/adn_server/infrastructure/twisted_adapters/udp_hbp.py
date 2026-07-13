@@ -39,6 +39,7 @@ from twisted.internet import reactor, task
 from twisted.internet.protocol import DatagramProtocol
 
 from ...application.proxy.deployment import is_proxy_inject_only
+from ...application.server_voice import all_server_voice_ids
 from ...application.routing.downlink import (
     DownlinkContext,
     iter_downlink_voice_slots,
@@ -398,7 +399,9 @@ class HBPProtocol(DatagramProtocol):
         connected = self._cached_connected_peer_count()
         if connected <= 0:
             return ()
-        if is_server_originated_voice(packet):
+        if is_server_originated_voice(
+            packet, server_voice_rf_srcs=all_server_voice_ids(self._CONFIG)
+        ):
             slot_st = self.STATUS.get(2, {})
             rx_peer = slot_st.get("RX_PEER", b"")
             if rx_peer and rx_peer in self._peers:
@@ -575,8 +578,10 @@ class HBPProtocol(DatagramProtocol):
         slot, tgid, call_type = parsed
         if call_type not in ("group", "vcsbk"):
             return True
-        # Server playback (5000 -> TG 9): not in OPTIONS; deliver to requesting RX peer on TS2.
-        if is_server_originated_voice(packet):
+        # Server playback (server voice ID -> TG 9): not in OPTIONS; deliver to requesting RX peer on TS2.
+        if is_server_originated_voice(
+            packet, server_voice_rf_srcs=all_server_voice_ids(self._CONFIG)
+        ):
             slot_st = self.STATUS.get(2, {})
             rx_peer = slot_st.get("RX_PEER", b"")
             if rx_peer and rx_peer != b"\x00\x00\x00\x00":

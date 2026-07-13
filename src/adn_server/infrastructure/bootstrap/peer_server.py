@@ -53,6 +53,7 @@ from adn_server.application.runtime_context import (
 )
 from adn_server.application.subscription.echo_seed import seed_echo_routing_table
 from adn_server.application.subscription.store_sync import replace_store_from_routing_table
+from adn_server.domain import bytes_4
 from adn_server.domain.dmr.bptc import encode_emblc
 from adn_server.infrastructure.acl_router import InMemoryAclRouter
 from adn_server.infrastructure.config_normalizer import (
@@ -374,6 +375,35 @@ def run_peer_server(
     )
     routing_table_for_report = routing_use_cases.routing_table_for_report
     voice_use_cases._routing_table_for_report = routing_table_for_report
+    from adn_server.application.routing.announcement_ptt_inject import (
+        announcement_ptt_system,
+        inject_announcement_ptt,
+    )
+
+    _ptt_system = announcement_ptt_system(config)
+
+    def _inject_announcement_ptt(pkt: bytes, pkt_time: float) -> bool | None:
+        if not _ptt_system:
+            return False
+        server_id = config.get("GLOBAL", {}).get("SERVER_ID", b"\x00\x00\x00\x00")
+        if not isinstance(server_id, bytes):
+            server_id = bytes_4(int(server_id or 0) & 0xFFFFFFFF)
+        accepted = inject_announcement_ptt(
+            routing_use_cases,
+            _ptt_system,
+            pkt,
+            pkt_time=pkt_time,
+            server_id=server_id,
+        )
+        proto = protocols.get(_ptt_system)
+        send_system = getattr(proto, "send_system", None) if proto is not None else None
+        if callable(send_system):
+            send_system(pkt)
+        return accepted
+
+    voice_use_cases._inject_announcement_ptt = _inject_announcement_ptt
+    voice_use_cases._announcement_ptt_system = _ptt_system
+    voice_use_cases._send_routing_event = reporting_use_cases.send_routing_event
     report_factory.set_routing_table(routing_table_for_report())
     report_factory.set_systems(config.get("SYSTEMS", {}))
 

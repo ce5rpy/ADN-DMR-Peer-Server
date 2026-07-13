@@ -24,6 +24,7 @@ from __future__ import annotations
 
 from tests.harness.voice_helpers import make_voice_uc, voice_master_scenario
 
+from adn_server.application.server_voice import DEFAULT_SERVER_VOICE_ID
 from adn_server.domain import HBPF_SLT_VHEAD, HBPF_SLT_VTERM, bytes_3
 
 
@@ -60,7 +61,7 @@ def test_broadcast_aborts_when_qso_starts_mid_transmission() -> None:
     uc = make_voice_uc(scenario, master)
     targets = [{"sys_obj": master, "name": "MASTER-A", "slot": master.STATUS[2], "ts": 2}]
     pkts = {1: [b"\x00" * 55], 2: [b"\x00" * 55]}
-    source = bytes_3(5000)
+    source = bytes_3(DEFAULT_SERVER_VOICE_ID)
     dst = bytes_3(91)
 
     master.STATUS[2]["RX_TYPE"] = HBPF_SLT_VHEAD
@@ -80,5 +81,5 @@ def test_mark_slots_busy_stamps_server_voice_tx_row() -> None:
     uc._mark_slots_busy(targets)
 
     assert slot["TX_TYPE"] == HBPF_SLT_VHEAD
-    assert int.from_bytes(slot["TX_RFS"], "big") == 5000
+    assert int.from_bytes(slot["TX_RFS"], "big") == DEFAULT_SERVER_VOICE_ID
     assert slot["TX_TIME"] > 0

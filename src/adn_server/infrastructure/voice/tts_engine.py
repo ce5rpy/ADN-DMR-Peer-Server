@@ -34,10 +34,20 @@ import os
 import socket
 import struct
 import subprocess
+import threading
+import time
 import wave
 from typing import Any
 
 logger = logging.getLogger(__name__)
+
+# One TTS conversion at a time (shared AMBEServer / vocoder cannot handle parallel sessions).
+_tts_conversion_lock = threading.Lock()
+
+_AMBESERVER_FRAME_TIMEOUT_S = 5.0
+_AMBESERVER_ENCODE_TIMEOUT_S = 120.0
+_AMBESERVER_MAX_CONSECUTIVE_ERRORS = 10
+_AMBESERVER_PROGRESS_EVERY_FRAMES = 100
 
 _LANG_MAP = {
     "es_ES": "es", "en_GB": "en", "en_US": "en", "fr_FR": "fr",
@@ -168,7 +178,7 @@ def _encode_ambe_ambeserver(wav_path: str, ambe_path: str, host: str, port: int)
         return False
     try:
         sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        sock.settimeout(5.0)
+        sock.settimeout(_AMBESERVER_FRAME_TIMEOUT_S)
     except Exception as e:
         logger.error("(TTS-AMBESERVER) Error creating UDP socket: %s", e)
         return False
@@ -212,12 +222,33 @@ def _encode_ambe_ambeserver(wav_path: str, ambe_path: str, host: str, port: int)
         return False
     _total_frames = wf.getnframes()
     _sample_rate = wf.getframerate()
-    logger.info("(TTS-AMBESERVER) WAV: %d samples, %d Hz", _total_frames, _sample_rate)
+    _duration_s = _total_frames / _sample_rate if _sample_rate else 0.0
+    _pcm_frames = (_total_frames + DV3K_SAMPLES_PER_FRAME - 1) // DV3K_SAMPLES_PER_FRAME
+    logger.info(
+        "(TTS-AMBESERVER) WAV: %d samples, %d Hz, duration: %.1fs (~%d AMBE frames)",
+        _total_frames,
+        _sample_rate,
+        _duration_s,
+        _pcm_frames,
+    )
     _raw_frames = wf.readframes(_total_frames)
     wf.close()
     _samples = list(struct.unpack("<" + "h" * _total_frames, _raw_frames))
     _ambe_frames: list[bytes] = []
+    _frames_sent = 0
+    _frames_error = 0
+    _consecutive_errors = 0
+    _encode_deadline = time.monotonic() + _AMBESERVER_ENCODE_TIMEOUT_S
     for i in range(0, len(_samples), DV3K_SAMPLES_PER_FRAME):
+        _frame_idx = i // DV3K_SAMPLES_PER_FRAME
+        if time.monotonic() >= _encode_deadline:
+            logger.error(
+                "(TTS-AMBESERVER) Encoding timeout after %ss (%d/%d frames)",
+                int(_AMBESERVER_ENCODE_TIMEOUT_S),
+                _frames_sent,
+                _pcm_frames,
+            )
+            break
         _chunk = _samples[i : i + DV3K_SAMPLES_PER_FRAME]
         if len(_chunk) < DV3K_SAMPLES_PER_FRAME:
             _chunk = _chunk + [0] * (DV3K_SAMPLES_PER_FRAME - len(_chunk))
@@ -228,8 +259,38 @@ def _encode_ambe_ambeserver(wav_path: str, ambe_path: str, host: str, port: int)
             _ambe_data = _parse_ambe_response(data)
             if _ambe_data is not None:
                 _ambe_frames.append(_ambe_data)
-        except (socket.timeout, Exception):
-            pass
+                _frames_sent += 1
+                _consecutive_errors = 0
+            else:
+                _frames_error += 1
+                _consecutive_errors += 1
+                logger.debug(
+                    "(TTS-AMBESERVER) Frame %d: non-AMBE response (type: 0x%02X)",
+                    _frame_idx,
+                    data[3] if len(data) > 3 else 0,
+                )
+        except socket.timeout:
+            _frames_error += 1
+            _consecutive_errors += 1
+            logger.warning("(TTS-AMBESERVER) Timeout on frame %d", _frame_idx)
+        except Exception as e:
+            _frames_error += 1
+            _consecutive_errors += 1
+            logger.error("(TTS-AMBESERVER) Error on frame %d: %s", _frame_idx, e)
+        if _consecutive_errors >= _AMBESERVER_MAX_CONSECUTIVE_ERRORS:
+            logger.error(
+                "(TTS-AMBESERVER) Aborting after %d consecutive frame errors (%d/%d sent)",
+                _consecutive_errors,
+                _frames_sent,
+                _pcm_frames,
+            )
+            break
+        if _frame_idx > 0 and _frame_idx % _AMBESERVER_PROGRESS_EVERY_FRAMES == 0:
+            logger.info(
+                "(TTS-AMBESERVER) Progress: %d/%d frames encoded",
+                _frames_sent,
+                _pcm_frames,
+            )
     sock.close()
     if not _ambe_frames:
         logger.error("(TTS-AMBESERVER) No AMBE frames received")
@@ -241,7 +302,12 @@ def _encode_ambe_ambeserver(wav_path: str, ambe_path: str, host: str, port: int)
     except Exception as e:
         logger.error("(TTS-AMBESERVER) Error writing AMBE: %s", e)
         return False
-    logger.info("(TTS-AMBESERVER) Encoding completed: %s", ambe_path)
+    logger.info(
+        "(TTS-AMBESERVER) Encoding completed: %d frames (%d errors): %s",
+        _frames_sent,
+        _frames_error,
+        ambe_path,
+    )
     return True
 
 
@@ -254,24 +320,33 @@ def _cleanup(files: list[str]) -> None:
             logger.warning("(TTS) cleanup remove %s failed: %s", f, e)
 
 
-def text_to_ambe(
+def _cleanup(files: list[str]) -> None:
+    for f in files:
+        try:
+            if os.path.isfile(f):
+                os.remove(f)
+        except Exception as e:
+            logger.warning("(TTS) cleanup remove %s failed: %s", f, e)
+
+
+def _ambe_cache_valid(txt_path: str, ambe_path: str) -> bool:
+    if not os.path.isfile(ambe_path):
+        return False
+    if not os.path.isfile(txt_path):
+        return True
+    return os.path.getmtime(ambe_path) > os.path.getmtime(txt_path)
+
+
+def _text_to_ambe_uncached(
     txt_path: str,
     ambe_path: str,
     language: str,
     vocoder_cmd: str,
-    ambeserver_host: str = "",
-    ambeserver_port: int = 2460,
-    volume_db: int = 0,
-    speed: float = 1.0,
+    ambeserver_host: str,
+    ambeserver_port: int,
+    volume_db: int,
+    speed: float,
 ) -> bool:
-    """Convert .txt to .ambe (gTTS -> mp3 -> ffmpeg -> wav -> vocoder/AMBEServer)."""
-    if not os.path.isfile(txt_path):
-        logger.warning("(TTS) Text file not found: %s", txt_path)
-        return False
-    if os.path.isfile(ambe_path):
-        if os.path.getmtime(ambe_path) > os.path.getmtime(txt_path):
-            logger.info("(TTS) Using cached AMBE (newer than .txt): %s", ambe_path)
-            return True
     with open(txt_path, "r", encoding="utf-8") as f:
         text = f.read().strip()
     if not text:
@@ -306,6 +381,39 @@ def text_to_ambe(
     _cleanup([_mp3_path, _wav_path])
     logger.info("(TTS) Conversion completed: %s -> %s", txt_path, ambe_path)
     return True
+
+
+def text_to_ambe(
+    txt_path: str,
+    ambe_path: str,
+    language: str,
+    vocoder_cmd: str,
+    ambeserver_host: str = "",
+    ambeserver_port: int = 2460,
+    volume_db: int = 0,
+    speed: float = 1.0,
+) -> bool:
+    """Convert .txt to .ambe (gTTS -> mp3 -> ffmpeg -> wav -> vocoder/AMBEServer)."""
+    if not os.path.isfile(txt_path):
+        logger.warning("(TTS) Text file not found: %s", txt_path)
+        return False
+    if _ambe_cache_valid(txt_path, ambe_path):
+        logger.info("(TTS) Using cached AMBE (newer than .txt): %s", ambe_path)
+        return True
+    with _tts_conversion_lock:
+        if _ambe_cache_valid(txt_path, ambe_path):
+            logger.info("(TTS) Using cached AMBE (newer than .txt): %s", ambe_path)
+            return True
+        return _text_to_ambe_uncached(
+            txt_path,
+            ambe_path,
+            language,
+            vocoder_cmd,
+            ambeserver_host,
+            ambeserver_port,
+            volume_db,
+            speed,
+        )
 
 
 def ensure_tts_ambe(config: dict[str, Any], item: dict[str, Any], audio_path: str) -> str | None:

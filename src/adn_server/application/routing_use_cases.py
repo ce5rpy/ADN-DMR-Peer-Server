@@ -64,6 +64,7 @@ from .routing.store_authority_mixin import StoreAuthorityMixin
 from .routing.subscription_table import SubscriptionTableMixin
 from .routing.timers import RoutingTimerMixin
 from .routing.voice_subscription import VoiceSubscriptionMixin
+from .server_voice import all_server_voice_ids
 from .talker_alias_use_cases import TalkerAliasUseCases
 
 logger = logging.getLogger(__name__)
@@ -692,7 +693,11 @@ class RoutingUseCases(
                             _ts_st["TX_TYPE"] = HBPF_SLT_VTERM
                     _apply_master_slot_contention = (
                         not _defer_slot_contention
-                        or master_slot_holds_server_broadcast(_ts_st, pkt_time)
+                        or master_slot_holds_server_broadcast(
+                            _ts_st,
+                            pkt_time,
+                            server_voice_rf_srcs=all_server_voice_ids(self._config),
+                        )
                     )
                     if (
                         _apply_master_slot_contention

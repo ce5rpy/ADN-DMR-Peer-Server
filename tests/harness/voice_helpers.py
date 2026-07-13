@@ -24,6 +24,10 @@ from __future__ import annotations
 
 from typing import Any, Iterator
 
+from adn_server.application.routing.announcement_ptt_inject import (
+    announcement_ptt_system,
+    inject_announcement_ptt,
+)
 from adn_server.application.voice_use_cases import VoiceUseCases
 from adn_server.domain import bytes_3, bytes_4
 from tests.harness.deterministic import DeterministicScenario, FakeHbpProtocol, active_routing_table
@@ -43,8 +47,9 @@ class FakeVoiceProvider:
     ) -> Iterator[bytes]:
         del phrase
         ts_bit = 0x80 if slot else 0
+        stream_id = bytes_4(0xA0A0A0A0)
         for seq in range(3):
-            yield b"DMRD" + bytes([seq]) + rf_src[:3] + dst_id[:3] + peer[:4] + bytes([ts_bit | 0x10]) + bytes_4(0xA0A0A0A0 + seq) + b"\x00" * 33 + b"\x00\x00"
+            yield b"DMRD" + bytes([seq]) + rf_src[:3] + dst_id[:3] + peer[:4] + bytes([ts_bit | 0x10]) + stream_id + b"\x00" * 33 + b"\x00\x00"
 
     def read_single_file(self, audio_path: str, lang: str, file_number: str) -> list:
         del audio_path, lang, file_number
@@ -68,10 +73,11 @@ class FakeMasterForVoice(FakeHbpProtocol):
 def voice_master_scenario(tg: int = 91) -> tuple[DeterministicScenario, FakeMasterForVoice]:
     config = DeterministicScenario().config
     master = FakeMasterForVoice("MASTER-A")
+    config["PROXY"] = {"TARGET_SYSTEM": "MASTER-A"}
     config["SYSTEMS"]["MASTER-A"]["PEERS"] = {
         "1001": {"CALLSIGN": "TEST", "IP": "127.0.0.1", "PORT": 62032},
     }
-    bridges = active_routing_table(tg, (("MASTER-A", 2),))
+    bridges = active_routing_table(tg, (("MASTER-A", 2), ("MASTER-B", 2)))
     scenario = DeterministicScenario(config=config, routing_table=bridges)
     scenario.protocols["MASTER-A"] = master
     master.STATUS[2] = {
@@ -108,19 +114,39 @@ def make_voice_uc(
     audio_path: str = "/tmp/audio",
 ) -> VoiceUseCases:
     scheduled: list[tuple[float, tuple]] = []
+    ptt_system = announcement_ptt_system(scenario.config)
+    server_id = scenario.config.get("GLOBAL", {}).get("SERVER_ID", bytes_4(9990))
+    if not isinstance(server_id, bytes):
+        server_id = bytes_4(int(server_id or 0) & 0xFFFFFFFF)
 
     def call_later(delay, fn, *args):
         scheduled.append((delay, (fn, args)))
         return type("H", (), {"active": lambda self: True, "cancel": lambda self: None})()
 
+    def inject_announcement_ptt_cb(pkt: bytes, pkt_time: float) -> bool | None:
+        if not ptt_system:
+            return False
+        accepted = inject_announcement_ptt(
+            scenario.routing,
+            ptt_system,
+            pkt,
+            pkt_time=pkt_time,
+            server_id=server_id,
+        )
+        if hasattr(master, "send_system"):
+            master.send_system(pkt)
+        return accepted
+
     uc = VoiceUseCases(
         FakeVoiceProvider(),
         scenario.config,
-        get_protocols=lambda: {"MASTER-A": master},
+        get_protocols=lambda: {"MASTER-A": master, **{k: v for k, v in scenario.protocols.items() if k != "MASTER-A"}},
         routing_table_for_report=scenario.routing.routing_table_for_report,
         call_later=call_later,
         audio_path=audio_path,
+        inject_announcement_ptt=inject_announcement_ptt_cb,
     )
+    uc._announcement_ptt_system = ptt_system
     uc._scheduled = scheduled
     return uc
 
