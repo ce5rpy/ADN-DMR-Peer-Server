@@ -110,3 +110,29 @@ def test_apply_voice_config_starts_tts_loop() -> None:
 
     assert started == [30.0]
     assert 0 in uc._tts_tasks
+
+
+def test_apply_voice_config_legacy_yaml_without_dmr_id() -> None:
+    """Legacy adn-voice.yaml without DMR_ID must reload without error."""
+    scenario, _ = voice_master_scenario()
+    scenario.config["VOICE"] = {
+        "TTS_ANNOUNCEMENTS": [
+            {
+                "ENABLED": True,
+                "TG": 730500,
+                "FILE": "730500",
+                "LANGUAGE": "es_ES",
+                "MODE": "interval",
+                "INTERVAL": 60,
+            }
+        ],
+    }
+    uc = VoiceUseCases(
+        FakeVoiceProvider(),
+        scenario.config,
+        start_looping_call=lambda *_a: MagicMock(running=True, stop=MagicMock()),
+        audio_path="/tmp/audio",
+    )
+    uc.apply_voice_config()
+
+    assert 0 in uc._tts_tasks
