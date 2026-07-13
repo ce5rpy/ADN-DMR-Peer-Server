@@ -39,7 +39,6 @@ from twisted.internet import reactor, task
 from twisted.internet.protocol import DatagramProtocol
 
 from ...application.proxy.deployment import is_proxy_inject_only
-from ...application.server_voice import all_server_voice_ids
 from ...application.routing.downlink import (
     DownlinkContext,
     iter_downlink_voice_slots,
@@ -74,6 +73,7 @@ from ...application.routing.peer_downlink_index import (
     count_connected_peers,
     invalidate_peer_options_cache,
 )
+from ...application.server_voice import all_server_voice_ids
 from ...domain import bytes_3, bytes_4, int_id
 from ...domain.dmr import decode
 from ...domain.dmr.const import LC_OPT

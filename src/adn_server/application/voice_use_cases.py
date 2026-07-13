@@ -35,7 +35,6 @@ from ..domain import HBPF_SLT_VHEAD, HBPF_SLT_VTERM, bytes_3, bytes_4, int_id
 from .ports import VoiceProvider
 from .server_voice import (
     announcement_item_source_bytes,
-    server_voice_id,
     server_voice_rf_src_bytes,
 )
 

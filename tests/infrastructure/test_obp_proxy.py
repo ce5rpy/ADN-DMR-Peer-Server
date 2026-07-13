@@ -39,7 +39,6 @@ from adn_server.infrastructure.config_validator import validate_config
 from adn_server.infrastructure.hbp_constants import DMRD
 from adn_server.infrastructure.mesh.obp_v1 import build_bcka, build_dmrd_v1
 from adn_server.infrastructure.proxy.obp_config import obp_proxy_settings
-from adn_server.infrastructure.proxy.obp_runtime import build_obp_bridge_registry
 from adn_server.infrastructure.proxy.obp_fanin import (
     InProcessObpSink,
     ObpBridgeEntry,
@@ -47,6 +46,7 @@ from adn_server.infrastructure.proxy.obp_fanin import (
     ObpFanInDemux,
     ObpIngressReplyTransport,
 )
+from adn_server.infrastructure.proxy.obp_runtime import build_obp_bridge_registry
 
 _PASS = b"test-passphrase\x00\x00\x00\x00\x00\x00"
 _NETWORK = bytes_4(73044)
