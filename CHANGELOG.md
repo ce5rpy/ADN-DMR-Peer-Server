@@ -4,6 +4,14 @@ All notable changes to **adn-server** are documented here.
 
 <!-- version list -->
 
+## v2.3.1 (2026-07-13)
+
+### Bug Fixes
+
+- Stop premature OBP monitor voice END events
+  ([`cc4031a`](https://github.com/ce5rpy/ADN-DMR-Peer-Server/commit/cc4031ae4d887cd2dbcfdc29b0ccaa8fd57dd72c))
+
+
 ## v2.3.0 (2026-07-10)
 
 ### Chores
