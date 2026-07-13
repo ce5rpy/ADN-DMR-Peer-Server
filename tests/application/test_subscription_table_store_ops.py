@@ -24,7 +24,10 @@ from __future__ import annotations
 
 from tests.harness.deterministic import active_routing_table, minimal_config
 
-from adn_server.application.subscription.obp_source_ops import ensure_obp_source_for_tg_store
+from adn_server.application.subscription.obp_source_ops import (
+    ensure_obp_source_for_tg_store,
+    obp_source_needs_ensure,
+)
 from adn_server.application.subscription.store_sync import replace_store_from_routing_table
 from adn_server.application.subscription.subscription_table_ops import (
     ensure_dynamic_relay_store,
@@ -64,9 +67,22 @@ def test_ensure_obp_source_activates_ts1_leg() -> None:
         if entry["SYSTEM"] == "OBP-CL":
             entry["ACTIVE"] = False
     store = _store(bridges)
+    assert obp_source_needs_ensure(store, "OBP-CL", "7305", 7305) is True
     ensure_obp_source_for_tg_store(store, "OBP-CL", "7305", bytes_3(7305), 7305, now=500.0)
     obp = next(s for s in store.snapshot() if s.system.value == "OBP-CL")
     assert obp.is_active()
+    assert obp_source_needs_ensure(store, "OBP-CL", "7305", 7305) is False
+
+
+def test_obp_source_needs_ensure_false_when_no_bridge_table() -> None:
+    store = _store()
+    assert obp_source_needs_ensure(store, "OBP-CL", "7305", 7305) is False
+
+
+def test_obp_source_needs_ensure_false_when_obp_source_already_active() -> None:
+    bridges = active_routing_table(7305, (("OBP-CL", 1), ("MASTER-A", 2)))
+    store = _store(bridges)
+    assert obp_source_needs_ensure(store, "OBP-CL", "7305", 7305) is False
 
 
 def test_ensure_dynamic_relay_store_obp_leg() -> None:
