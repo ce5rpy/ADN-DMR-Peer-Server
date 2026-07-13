@@ -42,6 +42,25 @@ def test_enqueue_broadcast_queues_second_same_tg() -> None:
     assert uc._scheduled == []
 
 
+def test_enqueue_broadcast_queues_second_different_tg_same_slot() -> None:
+    """Different TGs on the same MASTER/TS must not interleave DMRD frames."""
+    scenario, master = voice_master_scenario()
+    uc = make_voice_uc(scenario, master)
+    targets = [{"sys_obj": master, "name": "MASTER-A", "slot": master.STATUS[2], "ts": 2}]
+    pkts = {1: [b"\x00" * 55], 2: [b"\x00" * 55]}
+    source = bytes_3(5000)
+    dst91 = bytes_3(91)
+    dst92 = bytes_3(92)
+
+    uc._begin_broadcast(91, targets)
+    uc._enqueue_broadcast("tts", targets, pkts, source, dst92, 92, 1, "TTS-2")
+
+    assert len(uc._broadcast_queue) == 1
+    assert uc._broadcast_queue[0]["tg"] == 92
+    assert ("MASTER-A", 2) in uc._broadcast_active_slots
+    assert uc._scheduled == []
+
+
 def test_broadcast_queue_drains_after_first_finishes() -> None:
     scenario, master = voice_master_scenario()
     uc = make_voice_uc(scenario, master)
