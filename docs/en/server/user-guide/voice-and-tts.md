@@ -7,9 +7,26 @@
 
 Template: `adn-voice.example.yaml`.
 
-## Server voice identity (ID 5000)
+## Server voice identity (configurable `DMR_ID`)
 
-All **server-originated** voice uses **RF source ID 5000** in the DMR stream so clients can tell infrastructure traffic from user radios:
+All **server-originated** voice uses a configurable **DMR ID** in `adn-voice.yaml`:
+
+```yaml
+VOICE:
+  DMR_ID: 1000001        # optional; default 1000001
+
+  TTS_ANNOUNCEMENTS:
+    - ENABLED: true
+      FILE: texto1
+      TG: 730500
+      DMR_ID: 3109898    # optional; inherits VOICE.DMR_ID when omitted
+```
+
+- **`VOICE.DMR_ID`** — default RF source. **Optional** — existing `adn-voice.yaml` files need no change.
+- **Per-item `DMR_ID`** — override on each `ANNOUNCEMENTS` / `TTS_ANNOUNCEMENTS` row. Also optional.
+- **Callsign** — resolved from the subscriber DB (`users` / `SUB_MAP`) for that DMR ID; not in voice config.
+
+Applies to:
 
 - Scheduled **ANNOUNCEMENTS** and **TTS_ANNOUNCEMENTS** (destination = the **`TG`** field in each item).
 - **On-demand** clips triggered by dialling **9991–9999** (playback uses destination **TG 9** on **TS2**; you still key **999x** to request the file).
@@ -18,7 +35,7 @@ All **server-originated** voice uses **RF source ID 5000** in the DMR stream so 
 See [TG 9 — local service lane](special-numbers.md#tg-9-local-service-lane-prompts-and-bridge-plumbing) for why TG 9 is used and what must be enabled on the hotspot.
 - **Voice ident** (destination **all-call** or **`OVERRIDE_IDENT_TG`**).
 
-See [Special numbers — ID 5000](special-numbers.md#id-5000--server-voice-source-not-announcement-tg) for the full table.
+See [Special numbers — server voice source ID](special-numbers.md#server-voice-source-id-configurable) for the full table.
 
 ## Features
 
@@ -44,6 +61,8 @@ Configure **`TTS_VOCODER_CMD`** or **`TTS_AMBESERVER_HOST`** / **`TTS_AMBESERVER
 ## Anti-collision (QSO) with announcements
 
 When scheduling announcements, the server may **wait** if target slots are busy, **drop** targets if a live QSO appears mid-stream, and only mark **hourly** announcement state after a successful target list — this avoids clobbering live traffic.
+
+Scheduled and TTS broadcasts inject each frame as a **synthetic hotspot PTT** on `PROXY.TARGET_SYSTEM` (the same MASTER used by the integrated proxy). Routing fans out to bridged hotspots and OPENBRIDGE legs; local peers on that MASTER still receive frames via `send_system`.
 
 ## Broadcast queue
 

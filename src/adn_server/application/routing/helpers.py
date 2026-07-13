@@ -48,6 +48,7 @@ from typing import Any
 
 from ...domain import HBPF_DATA_SYNC, HBPF_SLT_VHEAD, bytes_3, bytes_4, int_id
 from ...domain.hbp_protocol import HBPF_SLT_VTERM, STREAM_TO
+from ..server_voice import DEFAULT_SERVER_VOICE_ID
 
 PeerVoiceSlotRow = dict[str, Any]
 PeerVoiceSlotMap = dict[int, PeerVoiceSlotRow]
@@ -461,17 +462,30 @@ def inject_only_defer_obp_hbp_slot_contention(
     return source_is_hbp and connected_count > 1
 
 
-_SERVER_VOICE_RF_SRC = 5000
+_SERVER_VOICE_RF_SRC_LEGACY = 5000
 
 
-def master_slot_holds_server_broadcast(slot_st: dict[str, Any], pkt_time: float) -> bool:
+def master_slot_holds_server_broadcast(
+    slot_st: dict[str, Any],
+    pkt_time: float,
+    *,
+    server_voice_rf_src: int | None = None,
+    server_voice_rf_srcs: frozenset[int] | None = None,
+) -> bool:
     """True when server scheduled/TTS voice holds the flat MASTER slot TX row.
 
-    Announcements stamp TX_TYPE=VHEAD, TX_RFS=5000, and refresh TX_TIME each frame.
+    Announcements stamp TX_TYPE=VHEAD, TX_RFS=server voice ID, and refresh TX_TIME each frame.
     Re-apply global slot contention for OBP→MASTER when held so inject-only defer
     does not interleave mesh voice (legacy ``bridge_master`` TX_TGID/TX_TIME rules).
     """
-    if int_id(slot_st.get("TX_RFS", b"\x00\x00\x00")) != _SERVER_VOICE_RF_SRC:
+    tx_rfs = int_id(slot_st.get("TX_RFS", b"\x00\x00\x00"))
+    if server_voice_rf_srcs is not None:
+        if tx_rfs not in server_voice_rf_srcs:
+            return False
+    elif server_voice_rf_src is not None:
+        if tx_rfs != server_voice_rf_src:
+            return False
+    elif tx_rfs != DEFAULT_SERVER_VOICE_ID and tx_rfs != _SERVER_VOICE_RF_SRC_LEGACY:
         return False
     tx_type = slot_st.get("TX_TYPE")
     if tx_type is None or tx_type == HBPF_SLT_VTERM:
@@ -1052,8 +1066,13 @@ def is_on_demand_service_dst(dst_id: int) -> bool:
     return 9991 <= int(dst_id) <= 9999
 
 
-def is_server_originated_voice(packet: bytes) -> bool:
-    """True for server group playback (src 5000 -> TG 9 TS2), e.g. on-demand / disconnected."""
+def is_server_originated_voice(
+    packet: bytes,
+    *,
+    server_voice_rf_src: int | None = None,
+    server_voice_rf_srcs: frozenset[int] | None = None,
+) -> bool:
+    """True for server group playback (server voice ID -> TG 9 TS2), e.g. on-demand / disconnected."""
     if len(packet) < 11:
         return False
     burst = parse_dmrd_burst_fields(packet)
@@ -1062,7 +1081,16 @@ def is_server_originated_voice(packet: bytes) -> bool:
     slot, _, _, _, dst_id, call_type = burst
     if call_type not in ("group", "vcsbk"):
         return False
-    return int_id(packet[5:8]) == 5000 and int_id(dst_id) == 9 and slot == 2
+    src = int_id(packet[5:8])
+    if server_voice_rf_srcs is not None:
+        if src not in server_voice_rf_srcs:
+            return False
+    elif server_voice_rf_src is not None:
+        if src != server_voice_rf_src and src != _SERVER_VOICE_RF_SRC_LEGACY:
+            return False
+    elif src != DEFAULT_SERVER_VOICE_ID and src != _SERVER_VOICE_RF_SRC_LEGACY:
+        return False
+    return int_id(dst_id) == 9 and slot == 2
 
 
 def parse_dmrd_route_fields(packet: bytes) -> tuple[int, int, str] | None:

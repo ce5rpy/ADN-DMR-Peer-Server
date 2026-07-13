@@ -7,6 +7,11 @@
 # Each announcement/TTS has its own LANGUAGE. ENABLED: true activates that item.
 
 VOICE:
+  # Optional — omit on legacy installs; default DMR_ID 1000001.
+  # Per-item DMR_ID on ANNOUNCEMENTS / TTS_ANNOUNCEMENTS overrides VOICE.DMR_ID.
+  # Callsign resolves from subscriber DB for that DMR ID.
+  # DMR_ID: 1000001
+
   # Voice ident only (MASTER systems with VOICE_IDENT in adn-server.yaml).
   # Leave empty: ident auto-detects from systems. Or set "es_ES,en_GB" to preload.
   # NOT used by ANNOUNCEMENTS or TTS — those use each item's LANGUAGE.
@@ -21,11 +26,13 @@ VOICE:
   # FILE: filename without .ambe, looked up in Audio/<LANGUAGE>/ondemand/
   # MODE: "hourly" (once per hour) or "interval" (every INTERVAL seconds)
   # ENABLED: true = plays; false = configured but inactive (edit to true when ready)
+  # DMR_ID: optional RF source for this clip (defaults to VOICE.DMR_ID)
   # ---------------------------------------------------------------------------
   ANNOUNCEMENTS:
     - ENABLED: true
       FILE: announcement1
       TG: 2
+      # DMR_ID: 1000001
       MODE: interval
       INTERVAL: 60
       LANGUAGE: es_ES
@@ -77,12 +84,14 @@ VOICE:
     - ENABLED: true
       FILE: texto1
       TG: 2
+      # DMR_ID: 1000001
       MODE: interval
       INTERVAL: 60
       LANGUAGE: es_ES
     - ENABLED: false
       FILE: texto2
       TG: 2
+      # DMR_ID: 1000001
       MODE: hourly
       INTERVAL: 3600
       LANGUAGE: es_ES

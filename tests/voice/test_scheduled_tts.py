@@ -25,7 +25,14 @@ from __future__ import annotations
 from datetime import datetime
 from unittest.mock import MagicMock, patch
 
-from tests.harness.voice_helpers import make_voice_uc, voice_master_scenario, voice_tts_config
+from tests.harness.scenarios import obp_bridge_scenario
+from tests.harness.voice_helpers import (
+    FakeMasterForVoice,
+    drain_call_later,
+    make_voice_uc,
+    voice_master_scenario,
+    voice_tts_config,
+)
 
 from adn_server.application.voice_use_cases import VoiceUseCases
 from adn_server.domain.hbp_protocol import HBPF_SLT_VHEAD
@@ -41,6 +48,25 @@ def test_scheduled_tts_sync_path_enqueues_broadcast() -> None:
     assert uc._broadcast_active_tgs == {"91"}
     assert len(uc._scheduled) == 1
     assert getattr(uc._scheduled[0][1][0], "__name__", "") == "_tts_send_broadcast"
+
+
+def test_inject_tts_starts_without_active_bridge_and_forwards_obp() -> None:
+    """Synthetic PTT must not require a pre-armed bridge row (UA relay created on inject)."""
+    scenario = obp_bridge_scenario("OBP-CL", tg=730500)
+    scenario.config["PROXY"] = {"TARGET_SYSTEM": "MASTER-A"}
+    scenario.seed_routing_table({})
+    master = FakeMasterForVoice("MASTER-A")
+    master.STATUS[2] = {"RX_TYPE": 2, "TX_TYPE": 2, "RX_STREAM_ID": b"\x00" * 4}
+    scenario.protocols["MASTER-A"] = master
+    voice_tts_config(scenario, tg=730500, file_number="730500")
+    uc = make_voice_uc(scenario, master)
+
+    uc._tts_conversion_done("/tmp/fake.ambe", 0, "730500", 730500, "en_GB", "interval", "TTS-1")
+
+    assert uc._broadcast_active_tgs == {"730500"}
+    drain_call_later(uc)
+    assert len(scenario.capture.for_system("OBP-CL")) == 3
+    assert len(master.sent) == 3
 
 
 def test_tts_conversion_error_clears_running_flag() -> None:
@@ -66,6 +92,8 @@ def test_tts_conversion_done_without_ambe_clears_running() -> None:
 
 def test_tts_conversion_done_retries_when_slot_busy() -> None:
     scenario, master = voice_master_scenario()
+    scenario.seed_routing_table({})
+    master.STATUS[1]["RX_TYPE"] = HBPF_SLT_VHEAD
     master.STATUS[2]["RX_TYPE"] = HBPF_SLT_VHEAD
     uc = make_voice_uc(scenario, master)
     uc._tts_running[0] = True

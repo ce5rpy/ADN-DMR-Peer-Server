@@ -367,6 +367,23 @@ def test_remap_voice_event_for_single_peer() -> None:
     assert mapped.startswith("GROUP VOICE,START,TX,SYSTEM-7,")
 
 
+def test_remap_announcement_tx_fans_out_to_ua_only_peer() -> None:
+    """Inject START,TX on SYSTEM reaches peers with dynamic UA but no static OPTIONS TG."""
+    peer = bytes_4(730039210)
+    peers = {peer: _peer(options=b"TS2=730500;SINGLE=0;")}
+    config = _proxy_config(peers)
+    sys_cfg = config["SYSTEMS"]["SYSTEM"]
+    pk = bytes_4(730039210)
+    sys_cfg.setdefault("_PEER_UA_MULTI_TGS", {}).setdefault(pk, {})[2] = {730600}
+    peer_slots = {peer: 7}
+    raw = "GROUP VOICE,START,TX,SYSTEM,4100887026,1000001,1000001,2,730600"
+    events = remap_inject_proxy_voice_events(
+        raw, config, config["SYSTEMS"], peer_slots,
+    )
+    systems = {ev.split(",")[3] for ev in events}
+    assert systems == {"SYSTEM-7"}
+
+
 def test_non_proxy_systems_pass_through_unchanged() -> None:
     systems = {
         "ECHO": {"MODE": "MASTER", "ENABLED": True, "PEERS": {}},

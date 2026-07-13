@@ -26,6 +26,7 @@ import pytest
 from tests.harness.deterministic import DeterministicScenario, PacketSpec
 from tests.support.hbp_repeat_stack import build_hbp_repeat_stack
 
+from adn_server.application.server_voice import DEFAULT_SERVER_VOICE_ID
 from adn_server.domain import bytes_3, bytes_4
 from adn_server.domain.hbp_protocol import HBPF_SLT_VHEAD, HBPF_SLT_VTERM
 from adn_server.infrastructure.hbp_constants import DMRD
@@ -188,7 +189,7 @@ def test_echo_tg_9990_reaches_caller_without_9990_in_options() -> None:
 
 
 def test_server_playback_tg9_reaches_requesting_peer_without_tg9_in_options() -> None:
-    """On-demand playback (5000 -> TG 9) must reach the peer that keyed 999x."""
+    """On-demand playback (server voice ID -> TG 9) must reach the peer that keyed 999x."""
     stack = _inject_proxy_stack()
     caller = bytes_4(730039101)
     other = bytes_4(730039102)
@@ -197,8 +198,8 @@ def test_server_playback_tg9_reaches_requesting_peer_without_tg9_in_options() ->
     stack.register_peer(caller, addr_caller, options="TS2=730,730444;")
     stack.register_peer(other, addr_other, options="TS2=91;")
     spec = PacketSpec(
-        peer_id=5000,
-        rf_src=5000,
+        peer_id=DEFAULT_SERVER_VOICE_ID,
+        rf_src=DEFAULT_SERVER_VOICE_ID,
         dst_id=9,
         slot=2,
         stream_id=0xCAFEBABE,

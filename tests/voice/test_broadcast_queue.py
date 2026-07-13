@@ -24,6 +24,7 @@ from __future__ import annotations
 
 from tests.harness.voice_helpers import make_voice_uc, voice_master_scenario
 
+from adn_server.application.server_voice import DEFAULT_SERVER_VOICE_ID
 from adn_server.domain import bytes_3
 
 
@@ -32,7 +33,7 @@ def test_enqueue_broadcast_queues_second_same_tg() -> None:
     uc = make_voice_uc(scenario, master)
     targets = [{"sys_obj": master, "name": "MASTER-A", "slot": master.STATUS[2], "ts": 2}]
     pkts = {1: [b"\x00" * 55], 2: [b"\x00" * 55]}
-    source = bytes_3(5000)
+    source = bytes_3(DEFAULT_SERVER_VOICE_ID)
     dst = bytes_3(91)
 
     uc._broadcast_active_tgs.add("91")
@@ -47,7 +48,7 @@ def test_broadcast_queue_drains_after_first_finishes() -> None:
     uc = make_voice_uc(scenario, master)
     targets = [{"sys_obj": master, "name": "MASTER-A", "slot": master.STATUS[2], "ts": 2}]
     pkts = {1: [b"\x00" * 55], 2: [b"\x00" * 55]}
-    source = bytes_3(5000)
+    source = bytes_3(DEFAULT_SERVER_VOICE_ID)
     dst = bytes_3(91)
 
     uc._broadcast_active_tgs.add("91")

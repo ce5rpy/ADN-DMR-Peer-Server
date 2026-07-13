@@ -31,6 +31,7 @@ import time
 from typing import Any, Callable
 
 from ..domain import HBPF_SLT_VTERM, bytes_3, int_id
+from .server_voice import server_voice_rf_src_bytes
 
 logger = logging.getLogger(__name__)
 
@@ -119,7 +120,7 @@ class IdentUseCases:
                 continue
 
             _all_call = bytes_3(16777215)
-            _source_id = bytes_3(5000)
+            _source_id = server_voice_rf_src_bytes(self._config)
             _dst_id = b""
             override_tg = sys_cfg.get("OVERRIDE_IDENT_TG")
             if override_tg is not None and int(override_tg) > 0 and int(override_tg) < 16777215:
