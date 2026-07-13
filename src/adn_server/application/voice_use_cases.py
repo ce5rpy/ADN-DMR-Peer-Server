@@ -31,8 +31,13 @@ import time
 from datetime import datetime
 from typing import Any, Callable
 
-from ..domain import HBPF_SLT_VHEAD, HBPF_SLT_VTERM, bytes_3, bytes_4
+from ..domain import HBPF_SLT_VHEAD, HBPF_SLT_VTERM, bytes_3, bytes_4, int_id
 from .ports import VoiceProvider
+from .server_voice import (
+    announcement_item_source_bytes,
+    server_voice_id,
+    server_voice_rf_src_bytes,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -55,6 +60,9 @@ class VoiceUseCases:
         call_later: Callable[..., Any] | None = None,
         start_looping_call: Callable[[Callable[[], None], float, bool], Any] | None = None,
         defer_to_thread: Callable[..., Any] | None = None,
+        inject_announcement_ptt: Callable[[bytes, float], bool | None] | None = None,
+        send_routing_event: Callable[[str], None] | None = None,
+        announcement_ptt_system: str | None = None,
     ) -> None:
         self._voice = voice_provider
         self._config = config
@@ -65,6 +73,10 @@ class VoiceUseCases:
         self._call_later = call_later
         self._start_looping_call = start_looping_call
         self._defer_to_thread = defer_to_thread
+        self._inject_announcement_ptt = inject_announcement_ptt
+        self._send_routing_event = send_routing_event
+        self._announcement_ptt_system = announcement_ptt_system
+        self._voice_report_state: dict[str, Any] | None = None
         self._ann_tasks: dict[int, Any] = {}
         self._tts_tasks: dict[int, Any] = {}
         self._announcement_running: dict[int, bool] = {}
@@ -74,6 +86,9 @@ class VoiceUseCases:
         self._broadcast_queue: list[dict[str, Any]] = []
         self._broadcast_active_tgs: set[str] = set()
 
+    def _server_source_id(self) -> bytes:
+        return server_voice_rf_src_bytes(self._config)
+
     def get_ambe_words(self, languages: str, audio_path: str) -> dict[str, dict[str, Any]]:
         """Load AMBE words for given languages (legacy readAMBE.readfiles)."""
         return self._voice.get_ambe_words(languages, audio_path)
@@ -82,14 +97,114 @@ class VoiceUseCases:
         """Generate HBP voice packets for phrase (legacy mk_voice.pkt_gen)."""
         return self._voice.pkt_gen(rf_src, dst_id, peer, slot, phrase)
 
+    def _global_server_id_bytes(self) -> bytes:
+        server_id = self._config.get("GLOBAL", {}).get("SERVER_ID", b"\x00\x00\x00\x00")
+        return bytes_4(int_id(server_id))
+
+    def _active_bridge_slots_for_tg(self, tg: int, system: str) -> set[int]:
+        bridges = self._routing_table_for_report() if self._routing_table_for_report else {}
+        entries = bridges.get(str(tg), [])
+        if not isinstance(entries, list):
+            return set()
+        out: set[int] = set()
+        for be in entries:
+            if not isinstance(be, dict):
+                continue
+            if be.get("SYSTEM") != system or not be.get("ACTIVE"):
+                continue
+            ts = be.get("TS")
+            if ts is not None:
+                out.add(int(ts))
+        return out
+
+    def _inject_ptt_slot_busy(
+        self,
+        slot: dict[str, Any],
+        tg: int,
+        sys_cfg: dict[str, Any],
+        wire_ts: int,
+    ) -> bool:
+        """True when MASTER slot cannot accept synthetic PTT for ``tg``."""
+        from .routing.helpers import master_dynamic_tg_slots, master_slot_holds_server_broadcast
+        from .server_voice import all_server_voice_ids
+
+        if wire_ts in master_dynamic_tg_slots(sys_cfg, int(tg)):
+            return False
+        ptt_system = self._announcement_ptt_system or ""
+        if wire_ts in self._active_bridge_slots_for_tg(tg, ptt_system):
+            return False
+        if slot.get("RX_TYPE") == HBPF_SLT_VTERM and slot.get("TX_TYPE") == HBPF_SLT_VTERM:
+            return False
+        if master_slot_holds_server_broadcast(
+            slot,
+            time.time(),
+            server_voice_rf_srcs=all_server_voice_ids(self._config),
+        ):
+            return False
+        return True
+
+    def _inject_ptt_slot_order(self, tg: int, sys_cfg: dict[str, Any]) -> list[int]:
+        """Prefer the RF slot where ``tg`` is already a dynamic UA session."""
+        from .routing.helpers import master_dynamic_tg_slots
+
+        dynamic = sorted(master_dynamic_tg_slots(sys_cfg, int(tg)), reverse=True)
+        preferred = list(dynamic)
+        if self._announcement_ptt_system:
+            for ts in sorted(
+                self._active_bridge_slots_for_tg(tg, self._announcement_ptt_system),
+                reverse=True,
+            ):
+                if ts not in preferred:
+                    preferred.append(ts)
+        ordered: list[int] = []
+        for ts in [*preferred, 2, 1]:
+            if ts not in ordered:
+                ordered.append(ts)
+        return ordered
+
+    def _build_inject_ptt_targets(
+        self, label: str, tg: int,
+    ) -> tuple[list[dict[str, Any]], int]:
+        """Synthetic PTT on proxy MASTER: routing creates the UA bridge on inject."""
+        targets: list[dict[str, Any]] = []
+        busy_count = 0
+        ptt_system = self._announcement_ptt_system
+        if not ptt_system or not self._inject_announcement_ptt:
+            return targets, busy_count
+        protocols = self._get_protocols() if self._get_protocols else {}
+        systems_cfg = self._config.get("SYSTEMS", {})
+        if ptt_system not in protocols or ptt_system not in systems_cfg:
+            return targets, busy_count
+        if systems_cfg[ptt_system].get("MODE") != "MASTER":
+            return targets, busy_count
+        sys_obj = protocols[ptt_system]
+        status = getattr(sys_obj, "STATUS", None)
+        if not status:
+            return targets, busy_count
+        sys_cfg = systems_cfg[ptt_system]
+        for ts in self._inject_ptt_slot_order(tg, sys_cfg):
+            slot_index = 2 if ts == 2 else 1
+            slot = status.get(slot_index)
+            if not slot:
+                continue
+            if self._inject_ptt_slot_busy(slot, tg, sys_cfg, ts):
+                logger.debug("(%s) System %s TS%s busy (QSO active), skipping", label, ptt_system, ts)
+                busy_count += 1
+                continue
+            targets.append({"sys_obj": sys_obj, "name": ptt_system, "slot": slot, "ts": ts})
+            break
+        return targets, busy_count
+
     def _build_announcement_targets(
         self, tg_int: int, tg_str: str, label: str
     ) -> tuple[list[dict[str, Any]], int]:
-        """MASTER systems with active bridge for tg_int and idle slot (legacy target list).
+        """MASTER targets for announcement/TTS broadcast.
 
-        Returns (targets, busy_count). busy_count increments when a candidate slot is skipped
-        because a QSO is active (RX/TX not VTERM), for anti-collision retry scheduling.
+        Inject path: synthetic PTT on the TG's dynamic UA slot when applicable.
+        Legacy path: MASTER systems with an ACTIVE bridge row for the TG.
         """
+        if self._inject_announcement_ptt:
+            return self._build_inject_ptt_targets(label, tg_int)
         targets: list[dict[str, Any]] = []
         busy_count = 0
         protocols = self._get_protocols() if self._get_protocols else {}
@@ -135,6 +250,18 @@ class VoiceUseCases:
                 targets.append({"sys_obj": sys_obj, "name": sys_name, "slot": slot, "ts": ts})
         return targets, busy_count
 
+    def _announcement_packet_peer(
+        self,
+        tg: int,
+        targets: list[dict[str, Any]],
+        server_id: bytes,
+    ) -> bytes:
+        """DMRD peer field: always GLOBAL SERVER_ID on inject (never a hotspot radio id)."""
+        del tg, targets
+        if self._inject_announcement_ptt:
+            return self._global_server_id_bytes()
+        return bytes_4(int_id(server_id))
+
     def _send_filtered_by_tg(
         self, sys_obj: Any, pkt: bytes, tg: int, ts: int, bridges: dict[str, list[dict[str, Any]]]
     ) -> int:
@@ -146,9 +273,150 @@ class VoiceUseCases:
                 return -1
         return 0
 
-    def _mark_slots_busy(self, targets: list[dict[str, Any]]) -> None:
+    def _emit_announcement_voice_event(
+        self,
+        action: str,
+        trx: str,
+        system: str,
+        stream_id: bytes,
+        slot: int,
+        tg: int,
+        rf_src: int,
+        duration: float | None = None,
+    ) -> None:
+        if not self._send_routing_event:
+            return
+        parts = [
+            "GROUP VOICE",
+            action,
+            trx,
+            system,
+            str(int_id(stream_id)),
+            str(rf_src),
+            str(rf_src),
+            str(slot),
+            str(tg),
+        ]
+        if duration is not None:
+            parts.append(f"{duration:.2f}")
+        self._send_routing_event(",".join(parts))
+
+    def _maybe_begin_legacy_voice_report(
+        self,
+        targets: list[dict[str, Any]],
+        pkts_by_ts: dict[int, list[bytes]],
+        tg: int,
+    ) -> None:
+        # Inject: routing emits START,RX (SERVER_ID) + OBP TX; same-MASTER downlink has no
+        # bridge leg, so emit START,TX on the proxy MASTER for monitor fan-out (SYSTEM-N).
+        self._begin_legacy_voice_report(targets, pkts_by_ts, tg)
+
+    def _maybe_end_legacy_voice_report(self) -> None:
+        self._end_legacy_voice_report()
+
+    def _begin_legacy_voice_report(
+        self,
+        targets: list[dict[str, Any]],
+        pkts_by_ts: dict[int, list[bytes]],
+        tg: int,
+    ) -> None:
+        if not self._send_routing_event or not targets:
+            return
+        wire_ts = targets[0]["ts"]
+        pkts = pkts_by_ts.get(wire_ts) or []
+        if not pkts:
+            return
+        stream_id = pkts[0][16:20]
+        rf_src = int_id(pkts[0][5:8])
+        systems: list[tuple[str, int]] = []
+        seen: set[tuple[str, int]] = set()
+        for t in targets:
+            key = (t["name"], t["ts"])
+            if key in seen:
+                continue
+            seen.add(key)
+            systems.append(key)
+            self._emit_announcement_voice_event(
+                "START", "TX", t["name"], stream_id, t["ts"], tg, rf_src
+            )
+        self._voice_report_state = {
+            "stream_id": stream_id,
+            "rf_src": pkts[0][5:8],
+            "start": time.time(),
+            "tg": tg,
+            "systems": systems,
+        }
+
+    def _end_legacy_voice_report(self) -> None:
+        state = self._voice_report_state
+        self._voice_report_state = None
+        if not state or not self._send_routing_event:
+            return
+        duration = time.time() - float(state["start"])
+        stream_id = state["stream_id"]
+        tg = int(state["tg"])
+        for name, ts in state["systems"]:
+            self._emit_announcement_voice_event(
+                "END", "TX", name, stream_id, ts, tg, int_id(state["rf_src"]), duration
+            )
+
+    def _send_announcement_packets(
+        self,
+        targets: list[dict[str, Any]],
+        pkts_by_ts: dict[int, list[bytes]],
+        pkt_idx: int,
+        source_id: bytes,
+        dst_id: bytes,
+        tg: int,
+        label: str,
+    ) -> None:
+        """One frame: synthetic PTT via routing, or legacy per-MASTER send_system."""
+        if self._inject_announcement_ptt:
+            wire_ts = targets[0]["ts"] if targets else 2
+            pkt = pkts_by_ts[wire_ts][pkt_idx]
+            if self._inject_announcement_ptt(pkt, time.time()) is False:
+                logger.warning("(%s) Routing rejected announcement frame %s", label, pkt_idx)
+            return
+        bridges = self._routing_table_for_report() if self._routing_table_for_report else {}
+        now = time.time()
+        for t in targets:
+            try:
+                sys_obj = t["sys_obj"]
+                slot = t["slot"]
+                t_ts = t["ts"]
+                pkt = pkts_by_ts[t_ts][pkt_idx]
+                stream_id = pkt[16:20]
+                if stream_id not in sys_obj.STATUS:
+                    sys_obj.STATUS[stream_id] = {
+                        "START": now,
+                        "CONTENTION": False,
+                        "RFS": source_id,
+                        "TGID": dst_id,
+                        "LAST": now,
+                    }
+                    slot["TX_TGID"] = dst_id
+                    slot["TX_RFS"] = source_id
+                else:
+                    sys_obj.STATUS[stream_id]["LAST"] = now
+                slot["TX_TIME"] = now
+                self._send_filtered_by_tg(sys_obj, pkt, tg, t_ts, bridges)
+            except Exception as e:
+                logger.error(
+                    "(%s) Error sending packet %s to %s/TS%s: %s",
+                    label,
+                    pkt_idx,
+                    t.get("name"),
+                    t.get("ts"),
+                    e,
+                )
+
+    def _mark_slots_busy(
+        self,
+        targets: list[dict[str, Any]],
+        source_id: bytes | None = None,
+    ) -> None:
         """Mark target slots busy (TX_TYPE=VHEAD) to prevent TS conflict."""
-        server_rfs = bytes_3(5000)
+        server_rfs = source_id if source_id is not None else self._server_source_id()
         now = time.time()
         for t in targets:
             try:
@@ -181,10 +449,10 @@ class VoiceUseCases:
                 'source_id': source_id, 'dst_id': dst_id, 'tg': tg, 'num': num, 'label': label,
             })
             _pos = len(self._broadcast_queue)
-            logger.info('(%s) Enqueued broadcast for same TG %s (position %s in queue)', label, tg, _pos)
+            logger.info('(%s) Same TG %s still on air; deferring next playback (pending %s)', label, tg, _pos)
         else:
             self._broadcast_active_tgs.add(_tg_key)
-            self._mark_slots_busy(targets)
+            self._mark_slots_busy(targets, source_id)
             logger.info('(%s) Starting broadcast immediately for TG %s (active TGs: %s)', label, tg, len(self._broadcast_active_tgs))
             if self._call_later:
                 if _type == 'ann':
@@ -207,8 +475,8 @@ class VoiceUseCases:
         _label = _next['label']
         _tg_key = str(_next['tg'])
         self._broadcast_active_tgs.add(_tg_key)
-        self._mark_slots_busy(_next['targets'])
-        logger.info('(%s) Starting broadcast from queue for TG %s (%s remaining, active TGs: %s)', _label, _next['tg'], len(self._broadcast_queue), len(self._broadcast_active_tgs))
+        self._mark_slots_busy(_next['targets'], _next['source_id'])
+        logger.info('(%s) Starting deferred same-TG playback for TG %s (%s pending, %s active TG(s))', _label, _next['tg'], len(self._broadcast_queue), len(self._broadcast_active_tgs))
         if self._call_later:
             if _type == 'ann':
                 self._call_later(0.5, self._announcement_send_broadcast, _next['targets'], _next['pkts_by_ts'], 0, _next['source_id'], _next['dst_id'], _next['tg'], _next['num'], _label, None)
@@ -219,14 +487,20 @@ class VoiceUseCases:
         if tg is not None:
             self._broadcast_active_tgs.discard(str(tg))
         if self._broadcast_queue:
-            logger.info('(QUEUE) Broadcast finished for TG %s, checking queue (%s queued, active TGs: %s)', tg, len(self._broadcast_queue), len(self._broadcast_active_tgs))
+            logger.info(
+                '(BROADCAST) TG %s announcement/TTS playback finished; %s same-TG deferred, %s active TG(s)',
+                tg, len(self._broadcast_queue), len(self._broadcast_active_tgs),
+            )
             if self._call_later:
                 self._call_later(_BROADCAST_GAP, self._start_next_broadcast)
         else:
             if not self._broadcast_active_tgs:
-                logger.info('(QUEUE) All broadcasts finished, queue empty')
+                logger.info('(BROADCAST) All announcement/TTS playbacks finished')
             else:
-                logger.info('(QUEUE) Broadcast finished for TG %s, %s TGs still active', tg, len(self._broadcast_active_tgs))
+                logger.info(
+                    '(BROADCAST) TG %s announcement/TTS playback finished; %s other TG(s) still on air',
+                    tg, len(self._broadcast_active_tgs),
+                )
 
     def _announcement_send_broadcast(
         self,
@@ -244,6 +518,7 @@ class VoiceUseCases:
         total = len(pkts_by_ts.get(1, []))
         if pkt_idx >= total or not targets:
             self._mark_slots_free(targets)
+            self._maybe_end_legacy_voice_report()
             for t in targets:
                 try:
                     obj = t.get("sys_obj")
@@ -283,6 +558,7 @@ class VoiceUseCases:
             targets.remove(t)
         if not targets:
             self._announcement_running[ann_idx] = False
+            self._maybe_end_legacy_voice_report()
             logger.info(
                 "(%s) Broadcast stopped: all targets had QSO collision at packet %s/%s",
                 label,
@@ -291,31 +567,10 @@ class VoiceUseCases:
             )
             self._broadcast_finished(tg)
             return
-        bridges = self._routing_table_for_report() if self._routing_table_for_report else {}
         now = time.time()
-        for t in targets:
-            try:
-                sys_obj = t["sys_obj"]
-                slot = t["slot"]
-                t_ts = t["ts"]
-                pkt = pkts_by_ts[t_ts][pkt_idx]
-                stream_id = pkt[16:20]
-                if stream_id not in sys_obj.STATUS:
-                    sys_obj.STATUS[stream_id] = {
-                        "START": now,
-                        "CONTENTION": False,
-                        "RFS": source_id,
-                        "TGID": dst_id,
-                        "LAST": now,
-                    }
-                    slot["TX_TGID"] = dst_id
-                    slot["TX_RFS"] = source_id
-                else:
-                    sys_obj.STATUS[stream_id]["LAST"] = now
-                slot["TX_TIME"] = now
-                self._send_filtered_by_tg(sys_obj, pkt, tg, t_ts, bridges)
-            except Exception as e:
-                logger.error("(%s) Error sending packet %s to %s/TS%s: %s", label, pkt_idx, t.get("name"), t.get("ts"), e)
+        if pkt_idx == 0:
+            self._maybe_begin_legacy_voice_report(targets, pkts_by_ts, tg)
+        self._send_announcement_packets(targets, pkts_by_ts, pkt_idx, source_id, dst_id, tg, label)
         if next_time is None:
             next_time = now + _FRAME_INTERVAL
         else:
@@ -369,7 +624,7 @@ class VoiceUseCases:
         if not _file or not _tg:
             return
         _dst_id = bytes_3(_tg)
-        _source_id = bytes_3(5000)
+        _source_id = announcement_item_source_bytes(item, self._config)
         server_id = self._config.get("GLOBAL", {}).get("SERVER_ID", b"\x00\x00\x00\x00")
         if not isinstance(server_id, bytes):
             server_id = bytes_3(int(server_id))
@@ -400,9 +655,10 @@ class VoiceUseCases:
         if mode == "hourly":
             self._announcement_last_hour[ann_idx] = datetime.now().hour
         _say_list = [_say]
+        pkt_peer = self._announcement_packet_peer(_tg, targets, server_id)
         pkts_by_ts = {
-            1: list(self.pkt_gen(_source_id, _dst_id, server_id, 0, _say_list)),
-            2: list(self.pkt_gen(_source_id, _dst_id, server_id, 1, _say_list)),
+            1: list(self.pkt_gen(_source_id, _dst_id, pkt_peer, 0, _say_list)),
+            2: list(self.pkt_gen(_source_id, _dst_id, pkt_peer, 1, _say_list)),
         }
         ts1_count = sum(1 for t in targets if t["ts"] == 1)
         ts2_count = sum(1 for t in targets if t["ts"] == 2)
@@ -475,7 +731,12 @@ class VoiceUseCases:
             return
         logger.info("(%s) Playing TTS file: %s to TG %s (both TS, mode: %s, lang: %s)", label, _file, _tg, mode, _lang)
         _dst_id = bytes_3(_tg)
-        _source_id = bytes_3(5000)
+        tts_list = self._config.get("VOICE", {}).get("TTS_ANNOUNCEMENTS") or []
+        tts_item = tts_list[tts_idx] if 0 <= tts_idx < len(tts_list) else None
+        _source_id = announcement_item_source_bytes(
+            tts_item if isinstance(tts_item, dict) else None,
+            self._config,
+        )
         server_id = self._config.get("GLOBAL", {}).get("SERVER_ID", b"\x00\x00\x00\x00")
         if not isinstance(server_id, bytes):
             server_id = bytes_3(int(server_id))
@@ -515,9 +776,10 @@ class VoiceUseCases:
         if mode == "hourly":
             self._tts_last_hour[tts_idx] = datetime.now().hour
         _say_list = [_say]
+        pkt_peer = self._announcement_packet_peer(_tg, targets, server_id)
         pkts_by_ts = {
-            1: list(self.pkt_gen(_source_id, _dst_id, server_id, 0, _say_list)),
-            2: list(self.pkt_gen(_source_id, _dst_id, server_id, 1, _say_list)),
+            1: list(self.pkt_gen(_source_id, _dst_id, pkt_peer, 0, _say_list)),
+            2: list(self.pkt_gen(_source_id, _dst_id, pkt_peer, 1, _say_list)),
         }
         logger.info("(%s) Broadcasting %s packets to %s targets", label, len(pkts_by_ts[1]), len(targets))
         self._enqueue_broadcast('tts', targets, pkts_by_ts, _source_id, _dst_id, _tg, tts_idx, label)
@@ -547,6 +809,7 @@ class VoiceUseCases:
         total = len(pkts_by_ts.get(1, []))
         if pkt_idx >= total or not targets:
             self._mark_slots_free(targets)
+            self._maybe_end_legacy_voice_report()
             for t in targets:
                 try:
                     obj = t.get("sys_obj")
@@ -586,6 +849,7 @@ class VoiceUseCases:
             targets.remove(t)
         if not targets:
             self._tts_running[tts_idx] = False
+            self._maybe_end_legacy_voice_report()
             logger.info(
                 "(%s) Broadcast stopped: all targets had QSO collision at packet %s/%s",
                 label,
@@ -594,31 +858,10 @@ class VoiceUseCases:
             )
             self._broadcast_finished(tg)
             return
-        bridges = self._routing_table_for_report() if self._routing_table_for_report else {}
         now = time.time()
-        for t in targets:
-            try:
-                sys_obj = t["sys_obj"]
-                slot = t["slot"]
-                t_ts = t["ts"]
-                pkt = pkts_by_ts[t_ts][pkt_idx]
-                stream_id = pkt[16:20]
-                if stream_id not in sys_obj.STATUS:
-                    sys_obj.STATUS[stream_id] = {
-                        "START": now,
-                        "CONTENTION": False,
-                        "RFS": source_id,
-                        "TGID": dst_id,
-                        "LAST": now,
-                    }
-                    slot["TX_TGID"] = dst_id
-                    slot["TX_RFS"] = source_id
-                else:
-                    sys_obj.STATUS[stream_id]["LAST"] = now
-                slot["TX_TIME"] = now
-                self._send_filtered_by_tg(sys_obj, pkt, tg, t_ts, bridges)
-            except Exception as e:
-                logger.error("(%s) Error sending packet %s to %s: %s", label, pkt_idx, t.get("name"), e)
+        if pkt_idx == 0:
+            self._maybe_begin_legacy_voice_report(targets, pkts_by_ts, tg)
+        self._send_announcement_packets(targets, pkts_by_ts, pkt_idx, source_id, dst_id, tg, label)
         if next_time is None:
             next_time = now + _FRAME_INTERVAL
         else:
@@ -659,12 +902,12 @@ class VoiceUseCases:
         logger.info("(%s) Playing on-demand AMBE file: %s (ID: %s)", system, file_number, file_number)
         time.sleep(1)
         _say = [pairs]
-        speech = self.pkt_gen(bytes_3(5000), bytes_3(9), bytes_4(9), 1, _say)
+        _source_id = self._server_source_id()
+        speech = self.pkt_gen(_source_id, bytes_3(9), bytes_4(9), 1, _say)
         time.sleep(1)
         _slot = protocol.STATUS.get(2)
         if not _slot:
             return
-        _source_id = bytes_3(5000)
         _dst_id = bytes_3(9)
         _next_time = time.time()
         _pkt_count = 0
@@ -708,7 +951,8 @@ class VoiceUseCases:
         else:
             _say.append(words.get("notlinked") or silence)
         _say.append(silence)
-        speech = self.pkt_gen(bytes_3(5000), bytes_3(9), bytes_4(9), 1, _say)
+        _source_id = self._server_source_id()
+        speech = self.pkt_gen(_source_id, bytes_3(9), bytes_4(9), 1, _say)
         time.sleep(1)
         _slot = protocol.STATUS.get(2)
         if not _slot:
@@ -720,7 +964,7 @@ class VoiceUseCases:
             _delay = _next_time - time.time()
             if _delay > 0.001:
                 time.sleep(_delay)
-            self._call_from_reactor(protocol.send_voice_packet, pkt, bytes_3(5000), bytes_3(9), _slot)
+            self._call_from_reactor(protocol.send_voice_packet, pkt, _source_id, bytes_3(9), _slot)
         logger.debug("(%s) disconnected voice thread end", system)
 
     def apply_voice_config(self) -> None:

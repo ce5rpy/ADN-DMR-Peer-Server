@@ -1,12 +1,31 @@
 # ADN DMR Peer Server - OBP vs server announcement slot contention
 #
 # Copyright (C) 2026  Rodrigo Pérez, CE5RPY <ce5rpy@qmd.cl>
+#
+###############################################################################
+#   This program is free software; you can redistribute it and/or modify
+#   it under the terms of the GNU General Public License as published by
+#   the Free Software Foundation; either version 3 of the License, or
+#   (at your option) any later version.
+#
+#   This program is distributed in the hope that it will be useful,
+#   but WITHOUT ANY WARRANTY; without even the implied warranty of
+#   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+#   GNU General Public License for more details.
+#
+#   You should have received a copy of the GNU General Public License
+#   along with this program; if not, write to the Free Software Foundation,
+#   Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301  USA
+###############################################################################
+
+"""OBP ingress blocked while server announcement holds MASTER slot TX row."""
 
 from __future__ import annotations
 
 from tests.harness.deterministic import DeterministicScenario, PacketSpec, patch_routing_wall_time
 from tests.harness.scenarios import obp_bridge_scenario
 
+from adn_server.application.server_voice import DEFAULT_SERVER_VOICE_ID
 from adn_server.domain import HBPF_SLT_VHEAD, HBPF_SLT_VTERM, bytes_3, bytes_4
 
 
@@ -17,7 +36,7 @@ def _seed_server_broadcast_slot(scenario: DeterministicScenario, *, ann_tg: int 
         "RX_TYPE": HBPF_SLT_VTERM,
         "TX_TYPE": HBPF_SLT_VHEAD,
         "TX_TIME": t,
-        "TX_RFS": bytes_3(5000),
+        "TX_RFS": bytes_3(DEFAULT_SERVER_VOICE_ID),
         "TX_TGID": bytes_3(ann_tg),
         "TX_STREAM_ID": bytes_4(0xA0A0A0A0),
     }

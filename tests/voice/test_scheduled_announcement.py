@@ -47,6 +47,7 @@ def test_scheduled_announcement_starts_broadcast_on_idle_slot() -> None:
     assert delay == 0.5
     drain_call_later(uc)
     assert len(master.sent) == 3
+    assert len(scenario.capture.for_system("MASTER-B")) == 3
 
 
 def test_scheduled_announcement_retries_when_slot_busy() -> None:
@@ -87,4 +88,5 @@ def test_scheduled_announcement_sends_packets_to_master() -> None:
     assert uc._announcement_running[0] is False
     assert "91" not in uc._broadcast_active_tgs
     assert len(master.sent) == 3
+    assert len(scenario.capture.for_system("MASTER-B")) == 3
     assert master.STATUS[2]["TX_TYPE"] == HBPF_SLT_VTERM

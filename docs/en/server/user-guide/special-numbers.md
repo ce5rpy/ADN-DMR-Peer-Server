@@ -2,19 +2,21 @@
 
 Several **destination IDs** are reserved for **control or services**. They are handled in protocol layers and/or the bridge router, not as normal group traffic.
 
-## ID 5000 — server voice source (not “announcement TG”) {#id-5000--server-voice-source-not-announcement-tg}
+## Server voice source ID (configurable, not “announcement TG”) {#server-voice-source-id-configurable}
 
-**Important:** **5000** is the **RF source ID** the server uses when it **transmits** automated voice. Radios and dashboards show **caller ID 5000** for that traffic.
+**Important:** The server uses a configurable **DMR ID** (`VOICE.DMR_ID` in `adn-voice.yaml`). Default: **1000001**. Each announcement/TTS row may set its own **`DMR_ID`**; when omitted, it inherits `VOICE.DMR_ID`. Callsign comes from the subscriber DB for that ID.
 
 | Traffic | Destination in the DMR packet | Notes |
 |---------|----------------------------------|--------|
-| **Scheduled AMBE** (`ANNOUNCEMENTS`) | Whatever **`TG`** you set in `adn-voice.yaml` | Source ID **5000**. |
-| **TTS** (`TTS_ANNOUNCEMENTS`) | Same — configured **`TG`** | Source ID **5000**. |
-| **On-demand** (TG **9991–9999**) | **TG 9** | Short info clips; source **5000** (see [Voice, announcements, and TTS](voice-and-tts.md)). |
-| **Disconnected / reflector prompts** | **TG 9** | Source **5000**. |
-| **Voice ident** | **All-call** (`16777215`) or **`OVERRIDE_IDENT_TG`** if set | Source **5000**. |
+| **Scheduled AMBE** (`ANNOUNCEMENTS`) | Whatever **`TG`** you set in `adn-voice.yaml` | Item `DMR_ID` or `VOICE.DMR_ID` (default **1000001**). |
+| **TTS** (`TTS_ANNOUNCEMENTS`) | Same — configured **`TG`** | Same. |
+| **On-demand** (TG **9991–9999**) | **TG 9** | Short info clips; configurable source (see [Voice, announcements, and TTS](voice-and-tts.md)). |
+| **Disconnected / reflector prompts** | **TG 9** | Same. |
+| **Voice ident** | **All-call** (`16777215`) or **`OVERRIDE_IDENT_TG`** if set | Same. |
 
-You do **not** “monitor TG 5000” to hear scheduled announcements: you monitor the **configured announcement TG** (e.g. 2, 9, 26811). **5000** appears as the **transmitter ID** on those calls.
+You do **not** “monitor” the server voice ID to hear scheduled announcements: you monitor the **configured announcement TG** (e.g. 2, 9, 26811). The configured ID appears as the **transmitter** on those calls.
+
+The legacy local ID **5000** is still recognised on some on-demand playback paths for compatibility, but the new default is **1000001** (avoids `SUB_ACL: DENY:0-1000000` blocks on OBP).
 
 ### Destination TG 5000 (inbound group)
 
@@ -28,7 +30,7 @@ If a group call arrives with **destination TG 5000** and there is **no** existin
 
 For **on-demand** playback (after you key **9991–9999**) and for **disconnected / reflector** voice lines, the server transmits **group** packets with:
 
-- **Source ID 5000**
+- **DMR ID** = item `DMR_ID` or `VOICE.DMR_ID` (default **1000001**)
 - **Destination TG 9**
 - **Timeslot 2** (the code drives the **TS2** slot for that hotspot)
 
@@ -92,7 +94,7 @@ Operationally: if users report “bridges drop too easily” after OPTIONS updat
 - Trigger path is **private VTERM** for destination **9991–9999**, then async playback generation.
 - Works from **MASTER** and **PEER** paths.
 
-The **audio** is sent with **source ID 5000** and **destination TG 9** in the generated stream. File layout: [Voice, announcements, and TTS](voice-and-tts.md).
+The **audio** is sent with the **configured source ID** and **destination TG 9** in the generated stream. File layout: [Voice, announcements, and TTS](voice-and-tts.md).
 
 ## TG 9990 — echo (in-band)
 
@@ -118,11 +120,11 @@ Many small IDs (0–5, 9, etc.) and the **999x service** range are excluded from
 
 | ID / range | Role |
 |------------|------|
-| **5000** (source) | Server-generated voice (announcements, TTS, prompts, ident) — **caller ID** on receivers |
+| **VOICE.DMR_ID** (source) | Server-generated voice — **caller ID** on receivers (default **1000001**) |
 | **5000** (destination) | No auto user-activated bridge if missing from `BRIDGES` |
 | **4000** (group) | Deactivate dynamic bridges |
 | **4000** (unit) | Disconnect dynamics; not routed as PC |
-| **9991–9999** | On-demand / information audio (trigger TG); playback uses src **5000** → TG **9** (TS2) |
+| **9991–9999** | On-demand / information audio (trigger TG); playback uses `VOICE.DMR_ID` → TG **9** (TS2) |
 | **9** | Service/prompt lane (short server audio); reserved for auto-bridges; internal **TGID** on TS2 legs |
 | **9990** | Echo bridge TG (with ECHO system) |
 | **16777215** | All-call (default voice-ident destination unless overridden) |
