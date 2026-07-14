@@ -103,7 +103,69 @@ def test_dashboard_state_includes_enabled_openbridge():
     assert obp["mode"] == "OPENBRIDGE"
     assert obp["network_id"] == 73010
     assert obp["enhanced_obp"] is True
+    assert obp["connected"] is False
     assert obp["streams"] == {}
+
+
+def test_openbridge_connected_true_when_bcka_fresh() -> None:
+    now = 1000.0
+    systems = {
+        "OBP-CL": {
+            "MODE": "OPENBRIDGE",
+            "ENABLED": True,
+            "NETWORK_ID": 73010,
+            "ENHANCED_OBP": True,
+            "_bcka": now - 10,
+            "PEERS": {},
+        },
+    }
+    state = build_dashboard_state(systems, ts=now)
+    assert state["ctable"]["OPENBRIDGES"]["OBP-CL"]["connected"] is True
+
+
+def test_openbridge_connected_false_when_bcka_stale() -> None:
+    now = 1000.0
+    systems = {
+        "OBP-CL": {
+            "MODE": "OPENBRIDGE",
+            "ENABLED": True,
+            "NETWORK_ID": 73010,
+            "ENHANCED_OBP": True,
+            "_bcka": now - 61,
+            "PEERS": {},
+        },
+    }
+    state = build_dashboard_state(systems, ts=now)
+    assert state["ctable"]["OPENBRIDGES"]["OBP-CL"]["connected"] is False
+
+
+def test_openbridge_connected_false_when_bcka_missing() -> None:
+    now = 1000.0
+    systems = {
+        "OBP-CL": {
+            "MODE": "OPENBRIDGE",
+            "ENABLED": True,
+            "NETWORK_ID": 73010,
+            "ENHANCED_OBP": True,
+            "PEERS": {},
+        },
+    }
+    state = build_dashboard_state(systems, ts=now)
+    assert state["ctable"]["OPENBRIDGES"]["OBP-CL"]["connected"] is False
+
+
+def test_openbridge_connected_omitted_without_enhanced_obp() -> None:
+    systems = {
+        "OBP-CL": {
+            "MODE": "OPENBRIDGE",
+            "ENABLED": True,
+            "NETWORK_ID": 73010,
+            "PEERS": {},
+        },
+    }
+    state = build_dashboard_state(systems)
+    obp = state["ctable"]["OPENBRIDGES"]["OBP-CL"]
+    assert "connected" not in obp
 
 
 def test_dashboard_state_includes_connected_upstream_peer():

@@ -57,6 +57,7 @@
         "ip": "44.31.61.68",
         "port": 62999,
         "enhanced_obp": true,
+        "connected": false,
         "streams": {}
       }
     }

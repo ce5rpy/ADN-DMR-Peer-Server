@@ -155,7 +155,11 @@
         "network_id": { "$ref": "#/$defs/dmr_id" },
         "ip": { "type": "string" },
         "port": { "type": "integer", "minimum": 0, "maximum": 65535 },
-        "enhanced_obp": { "type": "boolean" }
+        "enhanced_obp": { "type": "boolean" },
+        "connected": {
+          "type": "boolean",
+          "description": "ENHANCED_OBP BCKA keepalive OK (peer answered within 60s). Omitted when ENHANCED_OBP is false."
+        }
       }
     },
     "dashboard_ctable": {
