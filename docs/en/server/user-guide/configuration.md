@@ -155,6 +155,20 @@ The **echo** example (`adn-echo.example.yaml`) is a PEER that attaches to the **
 
 Ingress filters and loop control: [OpenBridge protocol](../protocols/openbridge.md) (including [DMRE vs OpenBridge v5](../protocols/openbridge.md#dmre-and-openbridge-v5)) and [Special numbers — OpenBridge ingress](special-numbers.md#openbridge-ingress--group-tg-filters).
 
+Inbound UDP for all OPENBRIDGE systems can use the shared **`OBP_PROXY`** fan-in (standard port **62032**). See [OBP proxy](obp-proxy.md).
+
+---
+
+## `OBP_PROXY` (integrated OpenBridge fan-in)
+
+Active when **`OBP_PROXY`** is present or when any **OPENBRIDGE** system exists (defaults apply). All OpenBridge inbound UDP is demuxed on **`LISTEN_PORT`** (default **62032**); per-bridge legacy listeners are optional. Full guide: [OBP proxy](obp-proxy.md).
+
+| Key | Meaning |
+|-----|---------|
+| **LISTEN_PORT** / **LISTEN_IP** | UDP bind for OpenBridge fan-in (pair to hotspot **`PROXY`** **62031**). |
+| **BIND_LEGACY_PORTS** | When `true`, also listen each **`SYSTEMS.*.PORT`** that differs from **`LISTEN_PORT`** (per-bridge migration). |
+| **ENABLED** | Set `false` to restore per-bridge UDP bind (legacy mode). |
+
 ---
 
 ## `BRIDGES` (runtime)
@@ -295,3 +309,4 @@ Use the project interpreter (see workspace rules), e.g. `python3.11` from pyenv,
 - [Special numbers](special-numbers.md) — reserved TGs and server IDs.
 - [Echo](echo.md) — PEER example (echo process).
 - [Hotspot proxy](hotspot-proxy.md) — integrated **`PROXY`** / **`SELF_SERVICE`**.
+- [OBP proxy](obp-proxy.md) — integrated **`OBP_PROXY`** OpenBridge fan-in.

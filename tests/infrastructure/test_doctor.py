@@ -89,3 +89,65 @@ def test_collect_findings_peer_mesh_protocol() -> None:
     findings = collect_findings(config, project_root=".", config_path="cfg.yaml")
     peer_msgs = [f.message for f in findings if f.section == "peer"]
     assert any("MESH_PROTOCOL=dmre_v5" in m for m in peer_msgs)
+
+
+def test_collect_findings_obp_per_bridge_migration() -> None:
+    """7301-style: OBP-CL2 on fan-in 62032; another bridge keeps legacy 62999."""
+    config = {
+        "GLOBAL": {"SERVER_ID": 7301},
+        "REPORTS": {"REPORT": False},
+        "PROXY": {"LISTEN_PORT": 62031, "TARGET_SYSTEM": "HOTSPOT"},
+        "OBP_PROXY": {"ENABLED": True, "LISTEN_PORT": 62032, "BIND_LEGACY_PORTS": True},
+        "SYSTEMS": {
+            "HOTSPOT": {"MODE": "MASTER", "ENABLED": True, "MAX_PEERS": 1},
+            "OBP-CL2": {
+                "MODE": "OPENBRIDGE",
+                "ENABLED": True,
+                "PORT": 62032,
+                "NETWORK_ID": 7302,
+                "PASSPHRASE": "dev",
+                "TARGET_IP": "44.31.61.68",
+                "TARGET_PORT": 62032,
+            },
+            "OBP-EU": {
+                "MODE": "OPENBRIDGE",
+                "ENABLED": True,
+                "PORT": 62999,
+                "NETWORK_ID": 73045,
+                "PASSPHRASE": "dev",
+                "TARGET_IP": "10.0.0.1",
+                "TARGET_PORT": 62044,
+            },
+        },
+    }
+    findings = collect_findings(config, project_root=".", config_path="cfg.yaml")
+    messages = [f.message for f in findings]
+    assert any("OBP-CL2" in m and "fan-in only" in m for m in messages)
+    assert any("OBP-EU" in m and "legacy UDP" in m and ":62999" in m for m in messages)
+
+
+def test_collect_findings_obp_fanin_only_with_remote_target() -> None:
+    """7302-style doctor: inject-only local; TARGET_PORT points at peer OBP_PROXY fan-in."""
+    config = {
+        "GLOBAL": {"SERVER_ID": 7302},
+        "REPORTS": {"REPORT": False},
+        "PROXY": {"LISTEN_PORT": 62031, "TARGET_SYSTEM": "HOTSPOT"},
+        "OBP_PROXY": {"ENABLED": True, "LISTEN_PORT": 62032, "BIND_LEGACY_PORTS": False},
+        "SYSTEMS": {
+            "HOTSPOT": {"MODE": "MASTER", "ENABLED": True, "MAX_PEERS": 1},
+            "OBP-CL": {
+                "MODE": "OPENBRIDGE",
+                "ENABLED": True,
+                "PORT": 62032,
+                "NETWORK_ID": 73010,
+                "PASSPHRASE": "dev",
+                "TARGET_IP": "44.31.61.66",
+                "TARGET_PORT": 62032,
+            },
+        },
+    }
+    findings = collect_findings(config, project_root=".", config_path="cfg.yaml")
+    messages = [f.message for f in findings]
+    assert any("OBP-CL" in m and "fan-in only" in m for m in messages)
+    assert any("target 44.31.61.66:62032" in m for m in messages)
+    assert any("OBP_PROXY UDP" in m and ":62032" in m for m in messages)

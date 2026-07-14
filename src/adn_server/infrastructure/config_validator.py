@@ -23,6 +23,8 @@ from __future__ import annotations
 
 from typing import Any
 
+from adn_server.application.proxy.deployment import config_has_enabled_openbridge
+
 from ..domain.errors import ConfigError
 
 ACL_KEYS = frozenset(
@@ -262,6 +264,71 @@ def _validate_proxy(proxy_cfg: dict[str, Any] | None, systems: dict[str, Any], e
         )
 
 
+def _validate_obp_proxy(
+    obp_cfg: dict[str, Any] | None,
+    systems: dict[str, Any],
+    errors: list[str],
+) -> None:
+    if isinstance(obp_cfg, dict) and not obp_cfg.get("ENABLED", True):
+        return
+    if not isinstance(obp_cfg, dict) and not config_has_enabled_openbridge({"SYSTEMS": systems}):
+        return
+    effective = obp_cfg if isinstance(obp_cfg, dict) else {}
+    for key in ("DEBUG", "BIND_LEGACY_PORTS"):
+        if key in effective:
+            _expect_bool(f"OBP_PROXY.{key}", effective[key], errors)
+    if "LISTEN_IP" in effective:
+        _expect_str("OBP_PROXY.LISTEN_IP", effective["LISTEN_IP"], errors)
+    listen_port = effective.get("LISTEN_PORT", 62032)
+    if isinstance(listen_port, bool) or not isinstance(listen_port, int) or listen_port < 1:
+        errors.append("OBP_PROXY.LISTEN_PORT: required >= 1 when ENABLED.")
+        return
+    bind_legacy = bool(effective.get("BIND_LEGACY_PORTS", True))
+    network_ids: dict[Any, str] = {}
+    legacy_ports: set[int] = set()
+    if not isinstance(systems, dict):
+        return
+    for name, sys_cfg in systems.items():
+        if not isinstance(sys_cfg, dict) or not sys_cfg.get("ENABLED", True):
+            continue
+        if sys_cfg.get("MODE") != "OPENBRIDGE":
+            continue
+        raw_nid = sys_cfg.get("NETWORK_ID")
+        if raw_nid is not None and not _is_empty(raw_nid):
+            if isinstance(raw_nid, bytes):
+                nid_key = raw_nid
+            else:
+                try:
+                    nid_key = int(raw_nid) & 0xFFFFFFFF
+                except (TypeError, ValueError):
+                    errors.append(f"SYSTEMS.{name}.NETWORK_ID: invalid value {raw_nid!r}.")
+                    continue
+            prev = network_ids.get(nid_key)
+            if prev is not None:
+                errors.append(
+                    f"SYSTEMS.{name}.NETWORK_ID: duplicate OPENBRIDGE identity "
+                    f"(same as SYSTEMS.{prev})."
+                )
+            else:
+                network_ids[nid_key] = name
+        if bind_legacy:
+            port = sys_cfg.get("PORT", 0)
+            if not _is_empty(port):
+                try:
+                    legacy_port = int(port)
+                except (TypeError, ValueError):
+                    errors.append(f"SYSTEMS.{name}.PORT: expected integer.")
+                    continue
+                if legacy_port > 0:
+                    if legacy_port == listen_port:
+                        continue
+                    if legacy_port in legacy_ports:
+                        errors.append(
+                            f"SYSTEMS.{name}.PORT: duplicate OPENBRIDGE listen port {legacy_port}."
+                        )
+                    legacy_ports.add(legacy_port)
+
+
 def _config_requires_database(config: dict[str, Any]) -> bool:
     """True for ``run_peer_server`` configs (proxy/master); not echo-only PEER fleets."""
     proxy = config.get("PROXY")
@@ -352,6 +419,12 @@ def validate_config(config: dict[str, Any], *, config_path: str | None = None) -
 
     proxy_cfg = config.get("PROXY")
     _validate_proxy(proxy_cfg if isinstance(proxy_cfg, dict) else None, systems if isinstance(systems, dict) else {}, errors)
+    obp_proxy_cfg = config.get("OBP_PROXY")
+    _validate_obp_proxy(
+        obp_proxy_cfg if isinstance(obp_proxy_cfg, dict) else None,
+        systems if isinstance(systems, dict) else {},
+        errors,
+    )
     if _config_requires_database(config):
         _validate_database(config.get("DATABASE"), errors)
 

@@ -35,7 +35,6 @@ from ..domain import HBPF_SLT_VHEAD, HBPF_SLT_VTERM, bytes_3, bytes_4, int_id
 from .ports import VoiceProvider
 from .server_voice import (
     announcement_item_source_bytes,
-    server_voice_id,
     server_voice_rf_src_bytes,
 )
 
@@ -128,18 +127,21 @@ class VoiceUseCases:
         from .routing.helpers import master_dynamic_tg_slots, master_slot_holds_server_broadcast
         from .server_voice import all_server_voice_ids
 
+        if master_slot_holds_server_broadcast(
+            slot,
+            time.time(),
+            server_voice_rf_srcs=all_server_voice_ids(self._config),
+        ):
+            return False
+        # External QSO on RX while slot is in hangtime — defer announcement inject.
+        if slot.get("RX_TYPE") != HBPF_SLT_VTERM and slot.get("TX_TYPE") == HBPF_SLT_VTERM:
+            return True
         if wire_ts in master_dynamic_tg_slots(sys_cfg, int(tg)):
             return False
         ptt_system = self._announcement_ptt_system or ""
         if wire_ts in self._active_bridge_slots_for_tg(tg, ptt_system):
             return False
         if slot.get("RX_TYPE") == HBPF_SLT_VTERM and slot.get("TX_TYPE") == HBPF_SLT_VTERM:
-            return False
-        if master_slot_holds_server_broadcast(
-            slot,
-            time.time(),
-            server_voice_rf_srcs=all_server_voice_ids(self._config),
-        ):
             return False
         return True
 

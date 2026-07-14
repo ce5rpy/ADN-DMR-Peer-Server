@@ -75,7 +75,7 @@ def voice_master_scenario(tg: int = 91) -> tuple[DeterministicScenario, FakeMast
     master = FakeMasterForVoice("MASTER-A")
     config["PROXY"] = {"TARGET_SYSTEM": "MASTER-A"}
     config["SYSTEMS"]["MASTER-A"]["PEERS"] = {
-        "1001": {"CALLSIGN": "TEST", "IP": "127.0.0.1", "PORT": 62032},
+        "1001": {"CALLSIGN": "TEST", "IP": "127.0.0.1", "PORT": 62040},
     }
     bridges = active_routing_table(tg, (("MASTER-A", 2), ("MASTER-B", 2)))
     scenario = DeterministicScenario(config=config, routing_table=bridges)

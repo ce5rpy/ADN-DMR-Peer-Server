@@ -155,6 +155,20 @@ El ejemplo **echo** (`adn-echo.example.yaml`) es un PEER que se une al MASTER **
 
 Filtros de ingreso y control de bucle: [Protocolo OpenBridge](../protocols/openbridge.md) (incl. [DMRE frente a OpenBridge v5](../protocols/openbridge.md#dmre-and-openbridge-v5)) y [Números especiales — ingreso OpenBridge](special-numbers.md#openbridge-ingress--group-tg-filters).
 
+El UDP entrante de todos los OPENBRIDGE puede usar el fan-in compartido **`OBP_PROXY`** (puerto estándar **62032**). Ver [Proxy OBP](obp-proxy.md).
+
+---
+
+## `OBP_PROXY` (fan-in OpenBridge integrado)
+
+Activo cuando existe **`OBP_PROXY`** o algún sistema **OPENBRIDGE** (se aplican defaults). Todo el UDP OBP entrante se demultiplexa en **`LISTEN_PORT`** (default **62032**); los listeners legacy por bridge son opcionales. Guía completa: [Proxy OBP](obp-proxy.md).
+
+| Clave | Significado |
+|-------|-------------|
+| **LISTEN_PORT** / **LISTEN_IP** | Bind UDP del fan-in OpenBridge (pareja del **`PROXY`** hotspot **62031**). |
+| **BIND_LEGACY_PORTS** | Con `true`, también escucha cada **`SYSTEMS.*.PORT`** distinto de **`LISTEN_PORT`** (migración bridge a bridge). |
+| **ENABLED** | `false` restaura bind UDP por bridge (modo legacy). |
+
 ---
 
 ## `BRIDGES` (tiempo de ejecución)
@@ -295,3 +309,4 @@ Usa el intérprete del proyecto (ver reglas del workspace), p. ej. `python3.11` 
 - [Números especiales](special-numbers.md) — TG e IDs reservados.
 - [Echo](echo.md) — ejemplo PEER (proceso echo).
 - [Proxy hotspot](hotspot-proxy.md) — **`PROXY`** / **`SELF_SERVICE`** integrados.
+- [Proxy OBP](obp-proxy.md) — fan-in OpenBridge **`OBP_PROXY`** integrado.

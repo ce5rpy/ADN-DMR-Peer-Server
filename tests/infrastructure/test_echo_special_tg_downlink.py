@@ -44,7 +44,7 @@ def test_echo_9990_only_to_originating_peer() -> None:
     peer_b = bytes_4(730039210)
     proto._peers = {
         peer_a: {"CONNECTION": "YES", "OPTIONS": b"", "SOCKADDR": ("127.0.0.1", 62031)},
-        peer_b: {"CONNECTION": "YES", "OPTIONS": b"", "SOCKADDR": ("127.0.0.1", 62032)},
+        peer_b: {"CONNECTION": "YES", "OPTIONS": b"", "SOCKADDR": ("127.0.0.1", 62040)},
     }
     # Simulate: peer_a transmitted to TG 9990 on slot 2 (RX_PEER set by dmrd_received).
     proto.STATUS[2] = {
@@ -70,7 +70,7 @@ def test_echo_9990_no_fuzzy_match_when_no_rx_peer() -> None:
     peer_b = bytes_4(730039210)
     proto._peers = {
         peer_a: {"CONNECTION": "YES", "OPTIONS": b"", "SOCKADDR": ("127.0.0.1", 62031)},
-        peer_b: {"CONNECTION": "YES", "OPTIONS": b"", "SOCKADDR": ("127.0.0.1", 62032)},
+        peer_b: {"CONNECTION": "YES", "OPTIONS": b"", "SOCKADDR": ("127.0.0.1", 62040)},
     }
     # RX_PEER not set (stale / different TG on slot)
     proto.STATUS[2] = {
@@ -110,7 +110,7 @@ def test_special_tg_9991_same_isolation() -> None:
     peer_b = bytes_4(730039210)
     proto._peers = {
         peer_a: {"CONNECTION": "YES", "OPTIONS": b"", "SOCKADDR": ("127.0.0.1", 62031)},
-        peer_b: {"CONNECTION": "YES", "OPTIONS": b"", "SOCKADDR": ("127.0.0.1", 62032)},
+        peer_b: {"CONNECTION": "YES", "OPTIONS": b"", "SOCKADDR": ("127.0.0.1", 62040)},
     }
     proto.STATUS[2] = {
         "RX_PEER": peer_b,

@@ -23,11 +23,13 @@ Routing, timers, OpenBridge loop control, and protocol handling are implemented 
 | **Voice** | AMBE files, scheduled announcements, TTS pipeline, on-demand playback (TG 9991–9999). |
 | **Reporting** | TCP netstring channel to **adn-monitor** (and compatible dashboards): config, bridge state, call events (report v2 JSON). |
 | **Hotspot proxy** | Optional integrated UDP fan-in (`PROXY` in `adn-server.yaml`) plus MySQL **self-service** (`SELF_SERVICE`) for dashboard-driven hotspot options. |
+| **OBP proxy** | Optional integrated OpenBridge UDP fan-in (`OBP_PROXY` in `adn-server.yaml`; default when OPENBRIDGE systems exist). |
 
 ## Related programs
 
 - **Echo / playback** — `adn-server.py --echo` with minimal `adn-echo.yaml`; see [Echo](echo.md).
 - **Integrated hotspot proxy** — `PROXY` in **`adn-server.yaml`**; see [Hotspot proxy](hotspot-proxy.md).
+- **Integrated OBP proxy** — `OBP_PROXY` fan-in for OpenBridge; see [OBP proxy](obp-proxy.md).
 - **Report proxy (legacy dashboards)** — optional **[ADN-report-proxy](https://github.com/ce5rpy/ADN-report-proxy)** so **adn-server 2.x** can feed old HBMonitor / FDMR-style monitors (v1 wire); see [Report proxy](report-proxy.md). Not used with **adn-monitor 2.x**.
 
 ## Next steps
@@ -37,6 +39,7 @@ Routing, timers, OpenBridge loop control, and protocol handling are implemented 
 - [Voice routing and contention](../development/routing-and-contention.md) — the full packet flow, contention rules, SINGLE, slot mapping, and divergences.
 - [Special numbers](special-numbers.md) — TG 4000, information services, echo.
 - [Hotspot proxy](hotspot-proxy.md) — integrated **`PROXY`** / **`SELF_SERVICE`** in `adn-server.yaml`.
+- [OBP proxy](obp-proxy.md) — integrated **`OBP_PROXY`** OpenBridge fan-in.
 - [ADN Monitor](../../monitor/index.md) — dashboard, `adn-monitor.yaml`, self-service UI (separate repo, deployed with the server).
 - [Performance (2.x)](../development/performance.md) — CPU/RAM improvements in this release and what causes them.
 - [Credits & license](attribution.md) — ADN → FreeDMR → hblink3, license.
