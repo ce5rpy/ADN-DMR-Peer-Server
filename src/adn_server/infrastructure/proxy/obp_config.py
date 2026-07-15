@@ -1,4 +1,4 @@
-# ADN DMR Peer Server - application proxy   init
+# ADN DMR Peer Server - infrastructure proxy obp config
 #
 # Copyright (C) 2026  Rodrigo Pérez, CE5RPY <ce5rpy@qmd.cl>
 #
@@ -18,31 +18,24 @@
 #   Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301  USA
 ###############################################################################
 
-"""Proxy application layer (Phase 3)."""
+"""OBP_PROXY runtime settings from config dict (infrastructure; no business rules)."""
 
-from .deployment import (
-    is_obp_proxy_managed,
-    is_proxy_inject_only,
-    normalize_obp_proxy_targets,
-    normalize_proxy_target,
-    obp_bridge_legacy_listen_port,
-    obp_proxy_bind_legacy_ports,
-    obp_proxy_enabled,
-    proxy_target_system,
-)
-from .packet_helpers import peer_id_from_packet
-from .use_cases import ProxySlotError, ProxyUseCases
+from __future__ import annotations
 
-__all__ = [
-    "ProxySlotError",
-    "ProxyUseCases",
-    "is_obp_proxy_managed",
-    "is_proxy_inject_only",
-    "normalize_obp_proxy_targets",
-    "normalize_proxy_target",
-    "obp_bridge_legacy_listen_port",
-    "obp_proxy_bind_legacy_ports",
-    "obp_proxy_enabled",
-    "peer_id_from_packet",
-    "proxy_target_system",
-]
+from typing import Any
+
+from adn_server.application.proxy.deployment import obp_proxy_bind_legacy_ports, obp_proxy_enabled
+
+
+def obp_proxy_settings(config: dict[str, Any]) -> dict[str, Any]:
+    """Resolved OBP_PROXY runtime settings with defaults (block may be absent)."""
+    block = config.get("OBP_PROXY", {})
+    if not isinstance(block, dict):
+        block = {}
+    return {
+        "enabled": obp_proxy_enabled(config),
+        "listen_port": int(block.get("LISTEN_PORT", 62032)),
+        "listen_ip": str(block.get("LISTEN_IP") or ""),
+        "bind_legacy_ports": obp_proxy_bind_legacy_ports(config),
+        "debug": bool(block.get("DEBUG")),
+    }

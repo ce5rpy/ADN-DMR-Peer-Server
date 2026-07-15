@@ -69,7 +69,7 @@ def _dashboard_systems() -> dict:
             "MODE": "MASTER",
             "ENABLED": True,
             "IP": "10.0.0.2",
-            "PORT": 62032,
+            "PORT": 62040,
             "PEERS": {
                 bytes_4(3120002): {
                     "CONNECTION": "YES",

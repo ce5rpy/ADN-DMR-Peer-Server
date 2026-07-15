@@ -1,99 +1,50 @@
 # Rendimiento (2.x)
 
-**adn-server 2.x** y **adn-monitor 2.x** incluyen varios cambios que reducen trabajo de CPU y huella de memoria frente a **adn-dmr-server** y al stack antiguo de monitor/proxy. Esta página resume **qué** mejora y **qué lo provoca**.
+**adn-server 2.x** y **adn-monitor 2.x** consumen menos CPU y RAM que **adn-dmr-server**
+y el stack antiguo de monitor/proxy. No hace falta ajustar nada — las mejoras vienen de
+cómo están hechos el enrutado, los informes y el proxy integrado.
 
-## Resumen
+Empareja **servidor 2.x con monitor 2.x** para aprovechar también el lado del panel.
 
-| Área | Efecto típico | Causa principal |
-|------|---------------|-----------------|
-| **Downlink de voz (proxy inject)** | Menos CPU con tráfico de grupo intenso | **`PeerDownlinkIndex`** — fan-out solo a peers que encajan `(slot, TG)` en lugar de escanear todos los hotspots por paquete |
-| **Origen ACTIVE en bridge** | Lookup más rápido | **Índices del `SubscriptionStore`** (`relay_tables_with_active_source`) — O(1) por `(system, slot, tgid)` frente a recorrer filas |
-| **CPU de fondo** | Menos despertares | **OPTIONS / TG estática por eventos** — eliminado el bucle legacy cada **26 s** `options_config_loop` ([Comportamiento y temporizadores](behaviour-and-timers.md)) |
-| **Ráfaga de logins** | Menos CONFIG redundante | **`ConfigPushThrottle`** — debounce adaptativo al empujar CONFIG al monitor |
-| **Informes vs voz** | La voz se bloquea menos por informes | **`BoundedReportQueue`** — snapshots coalescidos, drenado acotado por tick |
-| **Cable servidor → monitor** | Menos serializar/enviar | **Informe v2** JSON (`routing_table`, `topology`, `voice_event`) en lugar de pickle periódico de `CONFIG`/`BRIDGES` ([Protocolo de informes v2](../protocols/report-v2.md)) |
-| **Procesos (RAM)** | Un proceso Python en lugar de dos | **`PROXY` integrado** en `adn-server.py` — sin proceso **adn-proxy** aparte ([Proxy hotspot](../user-guide/hotspot-proxy.md)) |
-| **RAM / WS del monitor** | Estado de panel más compacto | **Wire slim `dashboard_state`**, `clean_sys_dict`, fingerprints WS más ligeros ([Arquitectura del monitor](../../monitor/architecture.md)) |
+## Qué mejoró
 
-## Servidor: índice de downlink inject-only
-
-La mayor ganancia de **CPU** en muchas redes ADN está en el camino **MASTER inject-only** (`PROXY` en modo inject-only).
-
-**Legacy:** `send_peers` recorre **todos los peers registrados** por cada paquete de downlink → coste **O(peers × paquetes/s)**.
-
-**2.x:** `PeerDownlinkIndex` precalcula candidatos desde **OPTIONS** (TG estáticas) y estado **UA** de cada peer. Por cada frame de voz de grupo solo se consideran peers que **podrían** querer ese `(slot, TG)`; cada candidato sigue pasando `peer_should_receive_group_voice`.
-
-```text
-Legacy:  cada DMRD  →  probar los N peers
-2.x:     cada DMRD  →  lookup en índice  →  probar k peers  (k ≪ N en proxies cargados)
-```
-
-El parse de OPTIONS se **guarda en caché por peer** (`_CACHED_OPTIONS_STATIC`): si el blob OPTIONS no cambió, se reutilizan las TG estáticas ya parseadas en lugar de volver a interpretarlo en cada paquete.
-
-| Código | Rol |
-|--------|-----|
-| `application/routing/peer_downlink_index.py` | Construcción del índice y `(slot, tgid) → candidatos` |
-| `infrastructure/twisted_adapters/udp_hbp.py` | `_iter_downlink_peers`, `send_peers` |
-| `tests/infrastructure/test_peer_downlink_fanout.py` | Tests de fan-out inject-only |
-
-**Cuándo se nota:** proxy con **decenas o cientos** de hotspots y voz de grupo continua. En una conferencia pequeña con pocos peers, la diferencia es pequeña.
-
-## Servidor: índices de enrutado
-
-En cada frame de voz de grupo el servidor debe encontrar tablas donde **este system es origen ACTIVE**.
-
-**Legacy:** recorrer filas dentro de `BRIDGES[clave]`.
-
-**2.x:** `InMemorySubscriptionStore.relay_tables_with_active_source()` usa el índice **`_source_tables`** — lookup por `(system, slot, dst_tgid)` sin recorrer todas las patas.
-
-Está en la implementación del store; es un **índice algorítmico**, no una opción de configuración aparte.
-
-| Código | Rol |
-|--------|-----|
-| `infrastructure/subscription_store.py` | `_source_tables`, `_by_table`, `_active_target_counts` |
-| `application/subscription/router.py` | `SubscriptionRouter.resolve()` |
-
-## Servidor: menos trabajo periódico y en tormenta de logins
-
-| Cambio | Qué evita |
+| Mejora | Qué ganas |
 |--------|-----------|
-| **Sin bucle OPTIONS 26 s** | Timer cada 26 s en todos los systems cuando RPTO/arranque/reload ya refrescan bridges estáticos |
-| **`ConfigPushThrottle`** | Inundar al monitor con snapshots CONFIG cuando muchos peers conectan en pocos segundos (debounce ~0,3 s → ~2 s en ráfaga) |
-| **`BoundedReportQueue`** | Encode pickle/JSON y envío TCP en el hot path de voz; coalesce de snapshots config/bridge duplicados |
+| **Enrutado de voz más eficiente** | Con tráfico de grupo intenso el servidor hace menos trabajo por paquete — sobre todo en proxies con muchos hotspots y en nodos con muchos OpenBridge. |
+| **Proxy hotspot integrado** | Un solo proceso `adn-server` en lugar de servidor + **adn-proxy** aparte — menos RAM y operación más simple. Ver [Proxy hotspot](../user-guide/hotspot-proxy.md). |
+| **Sin timer legacy de 26 s** | Las TG estáticas se refrescan por eventos (arranque, recarga de config, OPTIONS del peer), no con un bucle de fondo cada 26 segundos. Ver [Comportamiento y temporizadores](behaviour-and-timers.md). |
+| **Cable al monitor más liviano** | **Informe v2** envía JSON compacto en lugar de volcados pickle pesados. Ver [Protocolo de informes v2](../protocols/report-v2.md). |
+| **Monitor 2.x** | Estado de panel más compacto, menos crecimiento de memoria con el panel abierto días. Ver [Arquitectura del monitor](../../monitor/architecture.md). |
 
-## Servidor: informes y despliegue
+## Servidores con muchos OpenBridge (2.3.3+)
 
-- **Informe v2** — JSON estructurado sustituye snapshots pickle opacos de bridge/config en el cable hacia **monitor 2.x**. Ver [Monitor e informes](../user-guide/monitoring.md) y [Protocolo de informes v2](../protocols/report-v2.md).
-- **Proxy integrado** — `PROXY` **in-process**; quitar **adn-proxy** standalone ahorra **RAM** base (un intérprete, config compartida) y simplifica operación.
+Si tienes **muchos OpenBridge** y actualizas desde un **2.x** anterior a **2.3.3 o
+superior**, un nodo en producción con carga OBP comparable mostró aproximadamente:
 
-## Monitor (adn-monitor 2.x)
+| | Antes (2.x) | Después (2.3.3+) |
+|--|-------------|------------------|
+| **CPU** | línea base | **~25% de la línea base** |
+| **RAM** | línea base | **~75% de la línea base** |
 
-Empareja **adn-server 2.x** con **adn-monitor 2.x** para las mejoras del lado informes:
+Las cifras exactas dependen del tráfico y del hardware; tómalo como referencia, no como garantía.
 
-| Cambio | Efecto |
+## Cuándo se nota más
+
+| Tu red | Efecto |
 |--------|--------|
-| **Wire slim / `dashboard_state`** | El monitor ingiere JSON compacto en lugar de duplicar árboles pickle v1 |
-| **`clean_sys_dict`** | Expulsión periódica de entradas obsoletas en memoria (tope de crecimiento en paneles largos) |
-| **Caché lastheard, fingerprints WS ligeros** | Menos trabajo por refresco del dashboard |
-| **Stack FastAPI unificado** | Eliminados API PHP y proceso **proxy** standalone del monitor |
+| Instalación pequeña, pocos peers, poco tráfico | Moderado — el stack es más liviano en general. |
+| **Proxy inject con muchos hotspots** | **Ganancia clara de CPU** con voz de grupo activa. |
+| **Muchos OpenBridge, tráfico mesh continuo** | **Ganancia clara de CPU y RAM** tras **2.3.3+** (ver tabla anterior). |
+| **Muchos hotspots conectando a la vez** | Menos carga en servidor y monitor en ráfagas de login. |
+| **Monitor abierto 24/7** | RAM más baja y estable en **adn-monitor 2.x**. |
 
-Detalle: [Arquitectura del monitor](../../monitor/architecture.md).
-
-## Cuándo se nota la diferencia
-
-| Despliegue | CPU | RAM |
-|------------|-----|-----|
-| Pocos masters, sin proxy inject, tráfico bajo | Poca | Poca |
-| **Proxy inject-only, muchos hotspots, TG activa** | **Clara** (índice downlink) | Moderada (un proceso servidor vs servidor+proxy) |
-| Monitor largo + informe v2 | Moderada (menos serializar en cable) | **Más clara** en monitor (estado slim, `clean_sys_dict`) |
-
-Crypto, AMBE y MAC OpenBridge siguen dominando en tramos OBP cargados — optimizar la tabla de bridge no elimina ese coste.
+Crypto, AMBE y el trabajo de cable OpenBridge siguen costando CPU en tramos OBP
+cargados — las optimizaciones de routing quitan trabajo redundante de bridges, no el
+codec de voz ni el cifrado.
 
 ## Lecturas relacionadas
 
-- [Arquitectura](architecture.md) — capas y entrypoint
-- [BRIDGES vs Subscriptions](bridges-vs-subscriptions.md) — modelo de enrutado (no es feature de rendimiento)
-- [Comportamiento y temporizadores](behaviour-and-timers.md) — OPTIONS por eventos vs bucle 26 s legacy
-- [Proxy hotspot](../user-guide/hotspot-proxy.md) — `PROXY` integrado / inject-only
-- [Protocolo de informes v2](../protocols/report-v2.md) — cable JSON al monitor
-- Notas de versión: `CHANGELOG.md` en la raíz del repositorio (`Performance` en **2.0.0-rc.1**).
+- [Proxy hotspot](../user-guide/hotspot-proxy.md) — `PROXY` integrado
+- [Monitor e informes](../user-guide/monitoring.md) — emparejar informe v2
+- [Comportamiento y temporizadores](behaviour-and-timers.md) — OPTIONS por eventos
+- Notas de versión: `CHANGELOG.md` en la raíz del repositorio

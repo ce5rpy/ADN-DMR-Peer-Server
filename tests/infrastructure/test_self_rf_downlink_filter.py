@@ -70,7 +70,7 @@ def test_group_downlink_allowed_for_shared_base_rf_when_not_tx() -> None:
         other: {
             "CONNECTION": "YES",
             "OPTIONS": b"TS2=730502;",
-            "SOCKADDR": ("127.0.0.1", 62032),
+            "SOCKADDR": ("127.0.0.1", 62040),
         },
     }
     foreign_rf = bytes_3(730039265 // 100)

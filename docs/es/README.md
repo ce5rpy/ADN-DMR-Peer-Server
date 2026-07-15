@@ -24,7 +24,7 @@ El **ADN DMR Peer Server** es un puente de conferencia [GPL-3.0](https://www.gnu
 | Llamadas privadas | [Llamadas privadas](server/user-guide/private-calls.md) |
 | Voz / TTS | [Voz, anuncios y TTS](server/user-guide/voice-and-tts.md) |
 | Panel legacy + servidor 2.x | [Proxy de informes](server/user-guide/report-proxy.md) |
-| OpenBridge / DMRE | [OpenBridge](server/protocols/openbridge.md), [DMRE v5](server/protocols/dmre-v5.md) |
+| OpenBridge / DMRE | [OpenBridge](server/protocols/openbridge.md), [DMRE v5](server/protocols/dmre-v5.md), [Proxy OBP](server/user-guide/obp-proxy.md) |
 | HBP | [HBP](server/protocols/hbp.md) |
 | Código | [Arquitectura](server/development/architecture.md), [Comportamiento y temporizadores](server/development/behaviour-and-timers.md) |
 | Créditos, licencia, linaje | [Créditos y licencia](server/user-guide/attribution.md) |
@@ -49,6 +49,7 @@ Panel, **WebSocket** en vivo, API FastAPI, **MySQL** self-service — ver [Descr
 | Quiero… | Empieza aquí |
 |---------|----------------|
 | `adn-server.yaml` — `PROXY` / `SELF_SERVICE` integrados | [Proxy hotspot (integrado)](server/user-guide/hotspot-proxy.md) |
+| `adn-server.yaml` — fan-in OpenBridge `OBP_PROXY` | [Proxy OBP](server/user-guide/obp-proxy.md) |
 | `adn-monitor.yaml`, despliegue | [Configuración del monitor](monitor/configuration.md) |
 | Proxy hotspot integrado | [Proxy hotspot](server/user-guide/hotspot-proxy.md) |
 | Proxy hotspot (UDP, `PROXY`, rango de puertos) | [Proxy hotspot](monitor/hotspot-proxy.md) |

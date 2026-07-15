@@ -25,7 +25,7 @@ The **ADN DMR Peer Server** is a [GPL-3.0](https://www.gnu.org/licenses/gpl-3.0.
 | Private calls | [Private calls](server/user-guide/private-calls.md) |
 | Voice / TTS | [Voice, announcements, and TTS](server/user-guide/voice-and-tts.md) |
 | Legacy dashboard + server 2.x | [Report proxy](server/user-guide/report-proxy.md) |
-| OpenBridge / DMRE | [OpenBridge](server/protocols/openbridge.md), [DMRE v5](server/protocols/dmre-v5.md) |
+| OpenBridge / DMRE | [OpenBridge](server/protocols/openbridge.md), [DMRE v5](server/protocols/dmre-v5.md), [OBP proxy](server/user-guide/obp-proxy.md) |
 | HBP | [HBP](server/protocols/hbp.md) |
 | Code layout | [Architecture](server/development/architecture.md), [Behaviour and timers](server/development/behaviour-and-timers.md) |
 | Credits, license, lineage | [Credits & license](server/user-guide/attribution.md) |
@@ -50,6 +50,7 @@ Dashboard, WebSocket live view, FastAPI API, **MySQL** self-service — see [Mon
 | I want to… | Start here |
 |------------|------------|
 | `adn-server.yaml` — integrated `PROXY` / `SELF_SERVICE` | [Hotspot proxy (integrated)](server/user-guide/hotspot-proxy.md) |
+| `adn-server.yaml` — `OBP_PROXY` OpenBridge fan-in | [OBP proxy](server/user-guide/obp-proxy.md) |
 | `adn-monitor.yaml`, layout | [Monitor configuration](monitor/configuration.md) |
 | Integrated hotspot proxy | [Hotspot proxy](server/user-guide/hotspot-proxy.md) |
 | Standalone hotspot proxy (removed) | [Hotspot proxy — moved](monitor/hotspot-proxy.md) |

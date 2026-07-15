@@ -105,7 +105,7 @@ def test_existing_client_refreshes_endpoint_before_inject() -> None:
     packet = RPTL + _PEER
     protocol.datagramReceived(packet, _CLIENT_ADDR)
     inject_spy.reset_mock()
-    new_addr = ("192.168.1.51", 62032)
+    new_addr = ("192.168.1.51", 62040)
     protocol.datagramReceived(packet, new_addr)
     inject_spy.assert_called_once_with(packet, new_addr)
     client = proxy.resolve_client(_PEER)

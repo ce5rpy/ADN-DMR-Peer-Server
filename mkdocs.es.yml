@@ -63,6 +63,7 @@ nav:
           - Monitor e informes: server/user-guide/monitoring.md
           - Proxy de informes (paneles legacy): server/user-guide/report-proxy.md
           - Proxy hotspot (integrado): server/user-guide/hotspot-proxy.md
+          - Proxy OBP (fan-in OpenBridge): server/user-guide/obp-proxy.md
           - Echo (reproducción): server/user-guide/echo.md
           - Créditos y licencia: server/user-guide/attribution.md
       - Protocolos:

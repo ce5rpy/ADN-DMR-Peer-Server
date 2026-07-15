@@ -80,6 +80,16 @@ PROXY:
   BLACK_LIST: []
   IP_BLACK_LIST: {}
 
+# OpenBridge fan-in (standard with OPENBRIDGE). Hotspots: PROXY 62031; OBP mesh: OBP_PROXY 62032.
+# OBP_PROXY block is optional: when absent, defaults apply (ENABLED, LISTEN_PORT 62032, BIND_LEGACY_PORTS).
+# BIND_LEGACY_PORTS: true keeps each SYSTEMS.*.PORT open during migration; false = LISTEN_PORT only.
+OBP_PROXY:
+  ENABLED: true
+  LISTEN_PORT: 62032
+  LISTEN_IP: ""
+  BIND_LEGACY_PORTS: true
+  DEBUG: false
+
 # MariaDB (required): dynamic TG persistence + optional self-service (Clients table).
 DATABASE:
   DB_SERVER: localhost

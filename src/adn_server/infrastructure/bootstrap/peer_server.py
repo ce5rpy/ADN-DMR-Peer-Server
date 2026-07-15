@@ -39,8 +39,11 @@ from adn_server.application import (
 )
 from adn_server.application.dynamic_tg_use_cases import DynamicTgUseCases
 from adn_server.application.proxy.deployment import (
+    is_obp_proxy_managed,
     is_proxy_inject_only,
+    normalize_obp_proxy_targets,
     normalize_proxy_target,
+    obp_proxy_enabled,
     proxy_target_system,
 )
 from adn_server.application.report.queue import BoundedReportQueue, QueuedReportSender
@@ -77,6 +80,10 @@ from adn_server.infrastructure.persistence.dynamic_tg_repository import MysqlDyn
 from adn_server.infrastructure.persistence.keys_store import JsonKeysStore
 from adn_server.infrastructure.persistence.mysql_pool import create_mysql_pool, ensure_database_sync
 from adn_server.infrastructure.proxy import apply_proxy_config_reload, start_proxy_service
+from adn_server.infrastructure.proxy.obp_runtime import (
+    apply_obp_proxy_config_reload,
+    start_obp_proxy_service,
+)
 from adn_server.infrastructure.security.password_download import (
     DefaultSecurityDownloader,
     StubSecurityDownloader,
@@ -219,6 +226,7 @@ def run_peer_server(
     _ensure_system_runtime_config(config)
     _normalize_peer_config(config)
     _normalize_obp_config(config)
+    normalize_obp_proxy_targets(config)
 
     runtime_holder = RuntimeContextHolder(RuntimeContext(config=config, config_path=config_path))
     config = ConfigProxy(runtime_holder)
@@ -592,10 +600,16 @@ def run_peer_server(
 
     # UDP / proxy listeners (proxy_state declared before reload handler uses nonlocal)
     proxy_state = None
+    obp_proxy_state = None
     proxy_enabled = not no_proxy and proxy_target_system(config) is not None
+    obp_proxy_on = obp_proxy_enabled(config)
 
     def _should_bind_udp(system_name: str, sys_cfg: dict[str, Any]) -> bool:
-        return not is_proxy_inject_only(config, system_name)
+        if is_proxy_inject_only(config, system_name):
+            return False
+        if is_obp_proxy_managed(config, system_name):
+            return False
+        return True
 
     def _on_config_systems_changed() -> None:
         routing_use_cases.apply_startup_subscriptions()
@@ -604,9 +618,10 @@ def run_peer_server(
         user_passwords_loader.load(config)
 
     def _apply_reload_success(result: Any, *, new_config: dict[str, Any], mqtt_before: Any) -> None:
-        nonlocal report_mqtt, proxy_state
+        nonlocal report_mqtt, proxy_state, obp_proxy_state
         swap_runtime_config(runtime_holder, new_config, config_path=config_path)
         normalize_proxy_target(config)
+        normalize_obp_proxy_targets(config)
         report_factory.set_config(config)
         mqtt_after = mqtt_settings_from_config(config)
         report_mqtt = reconcile_mqtt_publisher(
@@ -631,11 +646,20 @@ def run_peer_server(
             _wire_proxy_report_slots(report_factory, proxy_state)
         else:
             _wire_proxy_report_slots(report_factory, None)
+        if obp_proxy_state is not None:
+            apply_obp_proxy_config_reload(
+                obp_proxy_state,
+                config,
+                protocols,
+                logger=logger,
+            )
+        elif obp_proxy_enabled(config):
+            obp_proxy_state = start_obp_proxy_service(config, protocols, logger=logger)
         if result.added or result.removed or result.updated or result.rebound:
             _on_config_systems_changed()
 
     def _do_config_reload() -> None:
-        nonlocal report_mqtt, proxy_state
+        nonlocal report_mqtt, proxy_state, obp_proxy_state
         mqtt_before = mqtt_settings_from_config(config)
         new_config = prepare_reload_config(runtime_holder)
 
@@ -732,7 +756,10 @@ def run_peer_server(
         protocol = _create_hbp_protocol(system_name)
         protocols[system_name] = protocol
         if not _should_bind_udp(system_name, sys_cfg):
-            logger.info("(PROXY) %s inject-only (no UDP bind)", system_name)
+            if is_obp_proxy_managed(config, system_name):
+                logger.info("(OBP_PROXY) %s inject-only (no UDP bind)", system_name)
+            else:
+                logger.info("(PROXY) %s inject-only (no UDP bind)", system_name)
             continue
         bind = BindSpec(ip=str(sys_cfg.get("IP") or "0.0.0.0"), port=int(sys_cfg.get("PORT", 56400)))
         udp_ports[system_name] = _listen_system(system_name, bind, protocol)
@@ -783,6 +810,21 @@ def run_peer_server(
 
         reactor.addSystemEventTrigger("before", "shutdown", _stop_proxy)
         _wire_proxy_report_slots(report_factory, proxy_state)
+
+    if obp_proxy_on:
+        try:
+            obp_proxy_state = start_obp_proxy_service(config, protocols, logger=logger)
+        except Exception as exc:
+            logger.error("(OBP_PROXY) failed to start OBP proxy: %s", exc)
+            raise
+
+        def _stop_obp_proxy(_: Any = None) -> None:
+            if obp_proxy_state is not None:
+                for deferred in obp_proxy_state.stop():
+                    if deferred is not None:
+                        pass
+
+        reactor.addSystemEventTrigger("before", "shutdown", _stop_obp_proxy)
 
     if proxy_state is None or proxy_state.self_service is None:
         def dynamic_reload_loop() -> None:

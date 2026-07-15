@@ -53,9 +53,9 @@ def test_attach_creates_session_and_refreshes_client() -> None:
     slot = first.value
     assert slot.client == ClientEndpoint(host="10.0.0.1", port=62031)
 
-    again = svc.attach_client(_PEER_A, "10.0.0.2", 62032)
+    again = svc.attach_client(_PEER_A, "10.0.0.2", 62040)
     assert isinstance(again, Success)
-    assert again.value.client == ClientEndpoint(host="10.0.0.2", port=62032)
+    assert again.value.client == ClientEndpoint(host="10.0.0.2", port=62040)
     assert len(svc.list_slots()) == 1
 
 
@@ -117,7 +117,7 @@ def test_ip_blacklist_blocks_attach() -> None:
 def test_attach_client_assigns_report_slot() -> None:
     svc = _service(max_peers=4)
     first = svc.attach_client(_PEER_A, "10.0.0.1", 62031)
-    second = svc.attach_client(_PEER_B, "10.0.0.2", 62032)
+    second = svc.attach_client(_PEER_B, "10.0.0.2", 62040)
     assert isinstance(first, Success)
     assert isinstance(second, Success)
     assert first.value.report_slot == 0
