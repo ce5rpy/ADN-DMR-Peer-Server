@@ -4,6 +4,19 @@ All notable changes to **adn-server** are documented here.
 
 <!-- version list -->
 
+## v2.4.0 (2026-07-15)
+
+### Bug Fixes
+
+- OBP_PROXY fan-in for centralized OpenBridge ingress
+  ([`770523c`](https://github.com/ce5rpy/ADN-DMR-Peer-Server/commit/770523cc3e22a2815009b10077b540f66fac1d73))
+
+### Features
+
+- Publish OBP keepalive connected status in dashboard_state
+  ([`b27c166`](https://github.com/ce5rpy/ADN-DMR-Peer-Server/commit/b27c1663c62cc25b3d4671b7114a1cded43da5c5))
+
+
 ## v2.3.3 (2026-07-13)
 
 ### Bug Fixes
