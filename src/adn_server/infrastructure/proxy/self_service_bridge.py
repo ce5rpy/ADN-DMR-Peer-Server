@@ -128,7 +128,7 @@ class ProxySelfServiceBridge:
             self._log.info(
                 "(SELF_SERVICE) RPTO from %s:%s peer=%s len=%d payload=%s",
                 host, port, int_id(peer_id), len(data),
-                redact_pass_in_options(data[8:8 + 40]),
+                redact_pass_in_options(data[8:] if len(data) > 8 else b""),
             )
             return self._handle_rpto(data, peer_id, host, port)
         if command == RPTC and len(data) >= 5 and data[:5] != RPTCL:
@@ -149,7 +149,7 @@ class ProxySelfServiceBridge:
             )
             return
         mode = data[97:98].decode("utf-8", errors="replace") if len(data) >= 98 else "4"
-        callsign = data[8:16].rstrip().decode("utf-8", errors="replace")
+        callsign = data[8:16].rstrip(b"\x00 ").decode("utf-8", errors="replace")
         self._store.ins_conf(int_id(peer_id), peer_id, callsign, host, mode)
         if peer_id in self._mysql_option_peers:
             self._fetch_options_now(peer_id)

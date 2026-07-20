@@ -1577,12 +1577,18 @@ class HBPProtocol(DatagramProtocol):
             _peer_id = _data[4:8]
             if _peer_id in self._peers and self._peers[_peer_id]["SOCKADDR"] == _sockaddr:
                 _this_peer = self._peers[_peer_id]
-                _this_peer["OPTIONS"] = _data[8:]
+                # RPTO body is fixed-width; bridges may NUL-pad (same as RPTC fields).
+                _this_peer["OPTIONS"] = _data[8:].rstrip(b"\x00 ")
                 invalidate_peer_options_cache(_this_peer)
                 self._mark_downlink_index_dirty()
                 self.send_peer(_peer_id, b"".join([RPTACK, _peer_id]))
                 _opt_log = redact_pass_in_options(_this_peer["OPTIONS"])
-                logger.info("(%s) Peer %s has sent options %s", self._system, _this_peer["CALLSIGN"], _opt_log)
+                logger.info(
+                    "(%s) Peer %s has sent options %s",
+                    self._system,
+                    _rptc_field_str(_this_peer["CALLSIGN"]),
+                    _opt_log,
+                )
                 # Inject-only multi-hotspot: OPTIONS live on each peer; do not let last RPTO
                 # overwrite the shared SYSTEM row (legacy had one peer per virtual master).
                 if not is_proxy_inject_only(self._CONFIG, self._system):
