@@ -148,6 +148,15 @@ def _get_passphrase_bytes(sys_cfg: dict) -> bytes:
     return p if isinstance(p, bytes) else p.encode("utf-8")
 
 
+def _rptc_field_str(raw: bytes) -> str:
+    """Decode a fixed-width RPTC ASCII field (space- or NUL-padded).
+
+    MMDVMHost typically pads with spaces; some bridges (e.g. ipsc2hbp) use NUL.
+    ``str.rstrip()`` alone leaves trailing ``\\x00``, so callsign checks falsely fail.
+    """
+    return raw.decode("utf8", errors="replace").rstrip("\x00 ")
+
+
 def _calc_hash(salt_str: bytes, password: bytes) -> bytes:
     """Same as legacy: bhex(sha256(salt_str + password).hexdigest())."""
     return bhex(sha256(salt_str + password).hexdigest())
@@ -1530,16 +1539,25 @@ class HBPProtocol(DatagramProtocol):
                     _this_peer["URL"] = _data[98:222]
                     _this_peer["SOFTWARE_ID"] = _data[222:262]
                     _this_peer["PACKAGE_ID"] = _data[262:302]
-                    if ("ALLOW_UNREG_ID" in self._config and not self._config["ALLOW_UNREG_ID"]) and _this_peer["CALLSIGN"].decode("utf8", errors="replace").rstrip() != self.validate_id(_peer_id):
+                    _sent_call = _rptc_field_str(_this_peer["CALLSIGN"])
+                    if ("ALLOW_UNREG_ID" in self._config and not self._config["ALLOW_UNREG_ID"]) and _sent_call != self.validate_id(_peer_id):
                         self._remove_peer(_peer_id)
                         if self._config.get("PROXY_CONTROL"):
                             self.proxy_IPBlackList(_peer_id, _sockaddr)
                         self.transport.write(b"".join([MSTNAK, _peer_id]), _sockaddr)
                         self._CONFIG.setdefault("SYSTEMS", {}).setdefault(self._system, {})["_reset"] = True
-                        logger.info("(%s) Callsign does not match subscriber database: ID: %s, Sent Call: %s, DB call %s", self._system, int_id(_peer_id), _this_peer["CALLSIGN"].decode("utf8", errors="replace").rstrip(), self.validate_id(_peer_id))
+                        logger.info("(%s) Callsign does not match subscriber database: ID: %s, Sent Call: %s, DB call %s", self._system, int_id(_peer_id), _sent_call, self.validate_id(_peer_id))
                     else:
                         self.send_peer(_peer_id, b"".join([RPTACK, _peer_id]))
-                        logger.info("(%s) Peer %s (%s) has sent repeater configuration, Package ID: %s, Software ID: %s, Desc: %s", self._system, _this_peer["CALLSIGN"], _this_peer["RADIO_ID"], self._peers[_peer_id]["PACKAGE_ID"].decode("utf8", errors="replace").rstrip(), self._peers[_peer_id]["SOFTWARE_ID"].decode("utf8", errors="replace").rstrip(), self._peers[_peer_id]["DESCRIPTION"].decode("utf8", errors="replace").rstrip())
+                        logger.info(
+                            "(%s) Peer %s (%s) has sent repeater configuration, Package ID: %s, Software ID: %s, Desc: %s",
+                            self._system,
+                            _sent_call,
+                            _this_peer["RADIO_ID"],
+                            _rptc_field_str(self._peers[_peer_id]["PACKAGE_ID"]),
+                            _rptc_field_str(self._peers[_peer_id]["SOFTWARE_ID"]),
+                            _rptc_field_str(self._peers[_peer_id]["DESCRIPTION"]),
+                        )
                         self._refresh_connected_peer_count()
                         self._mark_downlink_index_dirty()
                         self._config_push_throttle.note_peer_connected()

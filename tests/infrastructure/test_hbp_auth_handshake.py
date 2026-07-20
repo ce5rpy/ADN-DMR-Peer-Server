@@ -118,3 +118,42 @@ def test_hbp_auth_wrong_password_mstnak() -> None:
     assert nak.startswith(MSTNAK)
     assert addr == _CLIENT_ADDR
     assert _PEER not in hbp._peers
+
+
+def _auth_to_waiting_config(hbp: HBPProtocol, transport: _RecordingTransport) -> None:
+    hbp.datagramReceived(RPTL + _PEER, _CLIENT_ADDR)
+    salt_str = bytes_4(hbp._peers[_PEER]["SALT"])
+    auth_hash = _calc_hash(salt_str, _get_passphrase_bytes(hbp._config))
+    transport.sent.clear()
+    hbp.datagramReceived(RPTK + _PEER + auth_hash, _CLIENT_ADDR)
+    transport.sent.clear()
+
+
+def test_rptc_accepts_nul_padded_callsign_with_allow_unreg_false() -> None:
+    """RPTC callsign fields may be NUL-padded (ipsc2hbp); must match DB like space pad."""
+    hbp, transport = _master_protocol()
+    hbp._config["ALLOW_UNREG_ID"] = False
+    hbp._CONFIG["_SUB_IDS"] = {1234567: "Bridge"}
+    _auth_to_waiting_config(hbp, transport)
+
+    # 8-byte field: "Bridge" + two NUL pads (not spaces)
+    rptc = RPTC + _PEER + b"Bridge\x00\x00" + b"\x00" * 85 + b"4"
+    hbp.datagramReceived(rptc, _CLIENT_ADDR)
+
+    assert len(transport.sent) == 1
+    assert transport.sent[0][0].startswith(RPTACK)
+    assert hbp._peers[_PEER]["CONNECTION"] == "YES"
+
+
+def test_rptc_rejects_wrong_callsign_with_allow_unreg_false() -> None:
+    hbp, transport = _master_protocol()
+    hbp._config["ALLOW_UNREG_ID"] = False
+    hbp._CONFIG["_SUB_IDS"] = {1234567: "Bridge"}
+    _auth_to_waiting_config(hbp, transport)
+
+    rptc = RPTC + _PEER + b"WRONG   " + b"\x00" * 85 + b"4"
+    hbp.datagramReceived(rptc, _CLIENT_ADDR)
+
+    assert len(transport.sent) == 1
+    assert transport.sent[0][0].startswith(MSTNAK)
+    assert _PEER not in hbp._peers
