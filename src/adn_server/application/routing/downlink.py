@@ -91,7 +91,12 @@ def normalize_ua_voice_slot(peer: dict[str, Any], wire_slot: int) -> int:
 
 
 def peer_listen_slots(peer: dict[str, Any], tgid: int) -> list[int]:
-    """Voice slots where this peer listens for ``tgid`` (static OPTIONS or wire fallback)."""
+    """Candidate RF slots where this peer is subscribed to ``tgid`` (OPTIONS).
+
+    When the same TG is listed on both TS1 and TS2, both slots are returned as
+    candidates; :func:`iter_downlink_voice_slots` collapses that to **one**
+    delivery slot (never duplicate DMRD).
+    """
     from adn_server.application.report.payloads import parse_peer_options_static
 
     ts1, ts2 = parse_peer_options_static(peer.get("OPTIONS"))
@@ -651,10 +656,20 @@ def iter_downlink_voice_slots(
     wire_slot: int,
     tgid: int,
 ) -> list[int]:
-    """P4: slots to deliver when static TG spans TS1+TS2."""
+    """Exactly one voice slot for group downlink to this peer.
+
+    Legacy ``send_peers`` sends one DMRD per peer. If OPTIONS lists the same TG
+    on TS1 and TS2, keep a single copy on the bridge/OBP wire slot (remap only
+    when the peer listens on a different unambiguous slot).
+    """
     listen = peer_listen_slots(peer, tgid)
+    if len(listen) > 1:
+        ws = int(wire_slot)
+        if ws in listen:
+            return [ws]
+        return [int(peer_downlink_voice_slot(peer, wire_slot, tgid))]
     if listen:
         return listen
     if peer_receives_group_tgid(peer, wire_slot, tgid):
         return [peer_downlink_voice_slot(peer, wire_slot, tgid)]
-    return [wire_slot]
+    return [int(wire_slot)]
