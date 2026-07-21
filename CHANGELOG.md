@@ -4,6 +4,31 @@ All notable changes to **adn-server** are documented here.
 
 <!-- version list -->
 
+## v2.4.1 (2026-07-21)
+
+### Bug Fixes
+
+- Accept NUL-padded RPTC callsigns in login check
+  ([#52](https://github.com/ce5rpy/ADN-DMR-Peer-Server/pull/52),
+  [`5f2f69d`](https://github.com/ce5rpy/ADN-DMR-Peer-Server/commit/5f2f69dd1979f2b27a86d413b4bccefb6609f711))
+
+- Accept NUL-padded RPTC/RPTO from ipsc2hbp
+  ([#52](https://github.com/ce5rpy/ADN-DMR-Peer-Server/pull/52),
+  [`5f2f69d`](https://github.com/ce5rpy/ADN-DMR-Peer-Server/commit/5f2f69dd1979f2b27a86d413b4bccefb6609f711))
+
+- Deliver one DMRD when TG is on both OPTIONS slots
+  ([#53](https://github.com/ce5rpy/ADN-DMR-Peer-Server/pull/53),
+  [`7ff3010`](https://github.com/ce5rpy/ADN-DMR-Peer-Server/commit/7ff3010c23cd84400144842749539dc39c93b0c0))
+
+- Strip NUL padding from monitor export and shared HBP fields
+  ([#52](https://github.com/ce5rpy/ADN-DMR-Peer-Server/pull/52),
+  [`5f2f69d`](https://github.com/ce5rpy/ADN-DMR-Peer-Server/commit/5f2f69dd1979f2b27a86d413b4bccefb6609f711))
+
+- Strip NUL padding from RPTO OPTIONS in logs and storage
+  ([#52](https://github.com/ce5rpy/ADN-DMR-Peer-Server/pull/52),
+  [`5f2f69d`](https://github.com/ce5rpy/ADN-DMR-Peer-Server/commit/5f2f69dd1979f2b27a86d413b4bccefb6609f711))
+
+
 ## v2.4.0 (2026-07-15)
 
 ### Bug Fixes
