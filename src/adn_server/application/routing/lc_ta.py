@@ -326,6 +326,11 @@ class LcTaMixin:
         """Emit DMRA to an HBP target on VHEAD (once per target stream)."""
         if not self._send_dmra_to_system:
             return
+        settings = talker_alias_settings(self._config, source_system)
+        if not settings["enabled"] or not settings["send_dmra"]:
+            # Embedded TA in DMRD B–E still runs via _rewrite_embed_lc; this gate is
+            # standalone DMRA UDP only (legacy parity default: off).
+            return
         tgt_mode = self._config.get("SYSTEMS", {}).get(target_system, {}).get("MODE")
         if tgt_mode not in ("MASTER", "PEER"):
             return
