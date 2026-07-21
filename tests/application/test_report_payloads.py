@@ -323,6 +323,30 @@ def test_build_topology_includes_peer_display_fields() -> None:
     assert peer["slots"] == "2"
 
 
+def test_topology_strips_nul_padded_callsign() -> None:
+    systems = {
+        "MASTER-A": {
+            "MODE": "MASTER",
+            "ENABLED": True,
+            "PEERS": {
+                bytes_3(3120001): {
+                    "CONNECTION": "YES",
+                    "CALLSIGN": b"Bridge\x00\x00",
+                }
+            },
+        }
+    }
+    doc = build_topology(systems, seq=1, ts=1.0)
+    assert doc["systems"][0]["peers"][0]["callsign"] == "Bridge"
+
+
+def test_parse_peer_options_static_strips_nul_padding() -> None:
+    raw = b"TS1=73080;TS2=73081;SINGLE=1;" + b"\x00" * 12
+    ts1, ts2 = parse_peer_options_static(raw)
+    assert ts1 == ["73080"]
+    assert ts2 == ["73081"]
+
+
 def test_hello_connected_system_names_only_live_systems() -> None:
     systems = {
         "SYSTEM-0": {
