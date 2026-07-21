@@ -38,6 +38,7 @@ from adn_server.application.ports import (
     ProxySelfServiceStore,
 )
 from adn_server.application.proxy import ProxyUseCases
+from adn_server.domain.hbp_protocol import normalize_fixed_width_ascii, normalize_fixed_width_bytes
 from adn_server.domain.proxy import ClientEndpoint
 from adn_server.domain.value_objects import int_id
 from adn_server.infrastructure.hbp_constants import RPTACK, RPTC, RPTCL, RPTO
@@ -149,7 +150,7 @@ class ProxySelfServiceBridge:
             )
             return
         mode = data[97:98].decode("utf-8", errors="replace") if len(data) >= 98 else "4"
-        callsign = data[8:16].rstrip(b"\x00 ").decode("utf-8", errors="replace")
+        callsign = normalize_fixed_width_ascii(data[8:16])
         self._store.ins_conf(int_id(peer_id), peer_id, callsign, host, mode)
         if peer_id in self._mysql_option_peers:
             self._fetch_options_now(peer_id)
@@ -173,7 +174,7 @@ class ProxySelfServiceBridge:
                 host, port, int_id(peer_id),
             )
             return False
-        payload = data[8:].rstrip(b"\x00")
+        payload = normalize_fixed_width_bytes(data[8:]) if len(data) > 8 else b""
         if payload.upper().startswith(b"PASS="):
             psswd_raw = payload[5:]
             if len(psswd_raw) < 6:

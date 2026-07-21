@@ -5,18 +5,14 @@ from __future__ import annotations
 import re
 from typing import Any
 
+from adn_server.domain.hbp_protocol import normalize_fixed_width_ascii
+
 _PASS_RE = re.compile(r"(?i)(PASS=)[^;]*")
 
 
 def normalize_options_text(options: Any) -> str:
     """Decode OPTIONS and strip fixed-width NUL/space padding (e.g. ipsc2hbp RPTO)."""
-    if options is None:
-        return ""
-    if isinstance(options, (bytes, bytearray)):
-        text = bytes(options).decode("utf-8", errors="replace")
-    else:
-        text = str(options)
-    return text.rstrip("\x00 ")
+    return normalize_fixed_width_ascii(options)
 
 
 def redact_pass_in_options(options: Any) -> str:

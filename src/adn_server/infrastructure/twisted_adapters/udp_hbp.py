@@ -77,6 +77,7 @@ from ...application.server_voice import all_server_voice_ids
 from ...domain import bytes_3, bytes_4, int_id
 from ...domain.dmr import decode
 from ...domain.dmr.const import LC_OPT
+from ...domain.hbp_protocol import normalize_fixed_width_ascii, normalize_fixed_width_bytes
 from ...domain.mesh_routing import MeshEgress, MeshIngress, PeerMeshConfig
 from ...domain.talker_alias import (
     DMRA_PACKET_LEN,
@@ -149,12 +150,8 @@ def _get_passphrase_bytes(sys_cfg: dict) -> bytes:
 
 
 def _rptc_field_str(raw: bytes) -> str:
-    """Decode a fixed-width RPTC ASCII field (space- or NUL-padded).
-
-    MMDVMHost typically pads with spaces; some bridges (e.g. ipsc2hbp) use NUL.
-    ``str.rstrip()`` alone leaves trailing ``\\x00``, so callsign checks falsely fail.
-    """
-    return raw.decode("utf8", errors="replace").rstrip("\x00 ")
+    """Decode a fixed-width RPTC ASCII field (space- or NUL-padded)."""
+    return normalize_fixed_width_ascii(raw)
 
 
 def _calc_hash(salt_str: bytes, password: bytes) -> bytes:
@@ -979,7 +976,7 @@ class HBPProtocol(DatagramProtocol):
         if mode == "MASTER":
             for _peer in self._peers:
                 self.send_peer(_peer, b"".join([MSTCL, _peer]))
-                logger.info("(%s) De-Registration sent to Peer: %s (%s)", self._system, self._peers[_peer].get("CALLSIGN", b""), self._peers[_peer].get("RADIO_ID", b""))
+                logger.info("(%s) De-Registration sent to Peer: %s (%s)", self._system, _rptc_field_str(self._peers[_peer].get("CALLSIGN", b"")), self._peers[_peer].get("RADIO_ID", b""))
         elif mode == "PEER":
             self.send_master(b"".join([RPTCL, self._config.get("RADIO_ID", b"\x00\x00\x00\x00")]))
             logger.info("(%s) De-Registration sent to Master: %s:%s", self._system, self._config.get("MASTER_SOCKADDR", ("?", "?"))[0], self._config.get("MASTER_SOCKADDR", ("?", "?"))[1])
@@ -1082,7 +1079,7 @@ class HBPProtocol(DatagramProtocol):
         for peer in remove_list:
             logger.info(
                 "(%s) Peer %s (%s) has timed out and is being removed",
-                self._system, self._peers[peer].get("CALLSIGN", b""), self._peers[peer].get("RADIO_ID", b""),
+                self._system, _rptc_field_str(self._peers[peer].get("CALLSIGN", b"")), self._peers[peer].get("RADIO_ID", b""),
             )
             self.transport.write(b"".join([MSTCL, peer]), self._peers[peer]["SOCKADDR"])
             self._remove_peer(peer)
@@ -1505,7 +1502,7 @@ class HBPProtocol(DatagramProtocol):
             if _data[:5] == RPTCL:
                 _peer_id = _data[5:9]
                 if _peer_id in self._peers and self._peers[_peer_id]["CONNECTION"] == "YES" and self._peers[_peer_id]["SOCKADDR"] == _sockaddr:
-                    logger.info("(%s) Peer is closing down: %s (%s)", self._system, self._peers[_peer_id]["CALLSIGN"], int_id(_peer_id))
+                    logger.info("(%s) Peer is closing down: %s (%s)", self._system, _rptc_field_str(self._peers[_peer_id]["CALLSIGN"]), int_id(_peer_id))
                     self.transport.write(b"".join([MSTNAK, _peer_id]), _sockaddr)
                     self._remove_peer(_peer_id)
                     sys_cfg = self._CONFIG.get("SYSTEMS", {}).get(self._system, {})
@@ -1578,7 +1575,7 @@ class HBPProtocol(DatagramProtocol):
             if _peer_id in self._peers and self._peers[_peer_id]["SOCKADDR"] == _sockaddr:
                 _this_peer = self._peers[_peer_id]
                 # RPTO body is fixed-width; bridges may NUL-pad (same as RPTC fields).
-                _this_peer["OPTIONS"] = _data[8:].rstrip(b"\x00 ")
+                _this_peer["OPTIONS"] = normalize_fixed_width_bytes(_data[8:])
                 invalidate_peer_options_cache(_this_peer)
                 self._mark_downlink_index_dirty()
                 self.send_peer(_peer_id, b"".join([RPTACK, _peer_id]))
@@ -1626,7 +1623,7 @@ class HBPProtocol(DatagramProtocol):
                 self._peers[_peer_id]["PINGS_RECEIVED"] += 1
                 self._peers[_peer_id]["LAST_PING"] = time.time()
                 self.send_peer(_peer_id, b"".join([MSTPONG, _peer_id]))
-                logger.log(logging.TRACE if hasattr(logging, "TRACE") else logging.DEBUG, "(%s) Received and answered RPTPING from peer %s (%s)", self._system, self._peers[_peer_id]["CALLSIGN"], int_id(_peer_id))
+                logger.log(logging.TRACE if hasattr(logging, "TRACE") else logging.DEBUG, "(%s) Received and answered RPTPING from peer %s (%s)", self._system, _rptc_field_str(self._peers[_peer_id]["CALLSIGN"]), int_id(_peer_id))
             else:
                 self.transport.write(b"".join([MSTNAK, _peer_id]), _sockaddr)
                 logger.info("(%s) Ping from Radio ID that is not logged in: %s", self._system, int_id(_peer_id))

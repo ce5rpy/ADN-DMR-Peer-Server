@@ -32,6 +32,7 @@ from adn_server.application.routing.helpers import (
     peer_rf_mode,
 )
 from adn_server.domain import int_id
+from adn_server.domain.hbp_protocol import normalize_fixed_width_ascii
 from adn_server.domain.ua_timer import normalize_ua_timer_minutes, ua_timer_is_infinite
 
 REPORT_PROTOCOL = 2
@@ -68,11 +69,8 @@ def _parse_options_kv(options: Any) -> dict[str, str]:
     """Parse RPTO OPTIONS string into upper-case keys (legacy normalisation)."""
     if options is None:
         return {}
-    if isinstance(options, bytes):
-        text = options.decode("utf-8", errors="replace")
-    else:
-        text = str(options)
-    text = text.rstrip("\x00").encode("ascii", "ignore").decode()
+    text = normalize_fixed_width_ascii(options)
+    text = text.encode("ascii", "ignore").decode()
     text = re.sub(r"['\"]", "", text).strip()
     if not text:
         return {}
@@ -262,10 +260,7 @@ def _peer_field_json(value: Any) -> str | None:
     """Sanitize a legacy peer field for JSON (no secrets)."""
     if value is None:
         return None
-    if isinstance(value, bytes):
-        text = value.decode("utf-8", errors="replace").strip()
-        return text or None
-    text = str(value).strip()
+    text = normalize_fixed_width_ascii(value)
     return text or None
 
 
@@ -301,11 +296,7 @@ def _sanitized_peer_options_text(options: Any) -> str | None:
     """RPTO OPTIONS for monitor display (omit ``PASS=`` secrets)."""
     if options is None:
         return None
-    if isinstance(options, bytes):
-        text = options.decode("utf-8", errors="replace")
-    else:
-        text = str(options)
-    text = text.rstrip("\x00").strip()
+    text = normalize_fixed_width_ascii(options)
     if not text:
         return None
     parts: list[str] = []
