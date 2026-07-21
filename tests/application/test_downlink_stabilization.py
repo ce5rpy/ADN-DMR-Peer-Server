@@ -25,6 +25,7 @@ from __future__ import annotations
 from adn_server.application.routing.downlink import (
     DownlinkContext,
     iter_downlink_voice_slots,
+    peer_listen_slots,
     peer_slot_blocks_downlink,
     synthetic_group_dmrd_route_packet,
     touch_peer_voice_slot,
@@ -169,10 +170,20 @@ def test_inject_only_hangtime_blocks_static_tg_after_dynamic_tx() -> None:
     assert not peer_slot_blocks_downlink(ctx, peer_id, peer, same7306, pkt_time=now + 8)
 
 
-def test_same_static_tg_on_both_slots_delivers_twice() -> None:
-    """P4: TG listed in TS1 and TS2 OPTIONS maps to both voice slots."""
+def test_same_static_tg_on_both_slots_delivers_once_on_wire_slot() -> None:
+    """TG on TS1+TS2 OPTIONS: one DMRD on the bridge wire slot (not dual fan-out)."""
     peer = {"OPTIONS": b"TS1=730444;TS2=730444;"}
-    assert iter_downlink_voice_slots(peer, 1, 730444) == [1, 2]
+    assert iter_downlink_voice_slots(peer, 1, 730444) == [1]
+    assert iter_downlink_voice_slots(peer, 2, 730444) == [2]
+    # Subscription still visible on both; delivery collapses in iter_*.
+    assert peer_listen_slots(peer, 730444) == [1, 2]
+
+
+def test_static_tg_on_one_slot_unchanged() -> None:
+    peer_ts2 = {"OPTIONS": b"TS2=9140;"}
+    assert iter_downlink_voice_slots(peer_ts2, 1, 9140) == [2]
+    peer_ts1 = {"OPTIONS": b"TS1=9140;"}
+    assert iter_downlink_voice_slots(peer_ts1, 2, 9140) == [1]
 
 
 def test_hp3icc_style_slot_busy_until_vterm() -> None:
