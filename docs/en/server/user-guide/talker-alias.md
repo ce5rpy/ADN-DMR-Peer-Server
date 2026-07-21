@@ -18,7 +18,7 @@ When enabled on a **MASTER** system, the server can:
 | **`passthrough`** | Relay the source's TA only (buffered `DMRA` and the source embedded LC, both untouched). Never inject the template. |
 | **`inject`** | Always build TA from the configured template and alias data, overwriting the embedded LC and sending `DMRA` packets. |
 
-On **bridge forward** at voice header (`VHEAD`), the server sends four `DMRA` packets to each HBP target (**MASTER** peers or **PEER** upstream) once per stream, then forwards `DMRD` as usual.
+On **bridge forward** at voice header (`VHEAD`), when **`TALKER_ALIAS_SEND_DMRA`** is `true`, the server may send up to four `DMRA` packets to each HBP target (**MASTER** peers or **PEER** upstream) once per stream, then forwards `DMRD` as usual. With the default (`false`), only embedded LC is used — closer to legacy ADN masters that often show **no** `DMRA` on the wire.
 
 **MMDVMHost / DMRGateway (Pi-Star, WPSD):** stock MMDVMHost does **not** consume standalone downlink `DMRA` UDP; it decodes Talker Alias from **embedded LC inside `DMRD` voice** (FLCO 4–7).
 
@@ -43,6 +43,7 @@ GLOBAL:
   TALKER_ALIAS_MODE: both
   TALKER_ALIAS_FORMAT: "TA {callsign} {fname}"
   TALKER_ALIAS_TEXT_FORMAT: "utf8,iso8"
+  TALKER_ALIAS_SEND_DMRA: false
 ```
 
 | Key | Meaning |
@@ -51,6 +52,7 @@ GLOBAL:
 | **TALKER_ALIAS_MODE** | `both`, `passthrough`, or `inject`. Default **`both`** if omitted. |
 | **TALKER_ALIAS_FORMAT** | Python format string; fields: `{callsign}`, `{fname}`, `{surname}`, `{id}`. |
 | **TALKER_ALIAS_TEXT_FORMAT** | TA payload encoding: `utf8` (Motorola / MMDVMHost default), `iso8` (ISO-8859-1, many Hytera models), or `7bit` (oldest radios). Comma-separated list (e.g. `utf8,iso8`) emits **both** encodings back-to-back in embedded LC so each vendor can pick the format it displays; standalone `DMRA` UDP uses the **first** format only. Default **`utf8`**. |
+| **TALKER_ALIAS_SEND_DMRA** | Send standalone HBP `DMRA` UDP on VHEAD (`false` by default). Radios / MMDVMHost use **embedded LC** in `DMRD`; leaving this off matches typical legacy wire (no `DMRA` toward the peer). Set `true` only if a client needs the UDP packets. |
 
 Maximum string length is **29 characters** (ETSI / MMDVMHost). This limit is fixed in code and is **not** configurable, to avoid incompatible payloads on radios and hotspots.
 

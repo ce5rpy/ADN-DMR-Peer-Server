@@ -94,6 +94,8 @@ def apply_talker_alias_defaults(config: dict) -> None:
     g.setdefault("TALKER_ALIAS_MODE", "both")
     g.setdefault("TALKER_ALIAS_FORMAT", "{callsign} {fname}")
     g.setdefault("TALKER_ALIAS_TEXT_FORMAT", "utf8")
+    # Standalone DMRA UDP off by default (radios use embedded LC; matches legacy wire).
+    g.setdefault("TALKER_ALIAS_SEND_DMRA", False)
 
 
 def normalize_peer_config(config: dict) -> None:

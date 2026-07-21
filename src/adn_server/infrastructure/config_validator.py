@@ -145,6 +145,7 @@ def _validate_global(global_cfg: dict[str, Any], errors: list[str]) -> None:
         "DEBUG_BRIDGES",
         "ENABLE_API",
         "TALKER_ALIAS",
+        "TALKER_ALIAS_SEND_DMRA",
     ):
         if key in global_cfg:
             _expect_bool(f"GLOBAL.{key}", global_cfg[key], errors)

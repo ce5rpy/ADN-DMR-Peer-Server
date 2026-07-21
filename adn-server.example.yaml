@@ -17,12 +17,14 @@ GLOBAL:
   PASS_SECURITY: "<set-in-adn-server.yaml>"
   USERS_PASS: user_passwords.json
   HASH_ENCRYPT: encryption_key.secret
-  # Talker Alias (HBP DMRA): see docs/en/server/user-guide/talker-alias.md
+  # Talker Alias (embedded LC + optional HBP DMRA): see docs/en/server/user-guide/talker-alias.md
   TALKER_ALIAS: false
   TALKER_ALIAS_MODE: both
   TALKER_ALIAS_FORMAT: "{callsign} {fname}"
   # utf8 (Motorola), iso8 (Hytera), 7bit; both vendors by default
   TALKER_ALIAS_TEXT_FORMAT: "utf8,iso8"
+  # Standalone DMRA UDP (default false — legacy-like; radios use embedded LC in DMRD)
+  TALKER_ALIAS_SEND_DMRA: false
   # UDP SO_RCVBUF for voice listeners (bytes); default 4 MB avoids kernel RcvbufErrors under load
   # UDP_RCVBUF: 4194304
 

@@ -49,6 +49,8 @@ def talker_alias_config() -> dict[str, Any]:
     config["GLOBAL"]["TALKER_ALIAS"] = True
     config["GLOBAL"]["TALKER_ALIAS_MODE"] = "inject"
     config["GLOBAL"]["TALKER_ALIAS_FORMAT"] = "{callsign} {fname}"
+    # Tests that assert dmra_capture need explicit opt-in (production default is false).
+    config["GLOBAL"]["TALKER_ALIAS_SEND_DMRA"] = True
     rid = 3120001
     config["_SUB_PROFILES"] = {
         rid: {"callsign": "CE5RPY", "fname": "Rodrigo", "surname": "Perez"},
