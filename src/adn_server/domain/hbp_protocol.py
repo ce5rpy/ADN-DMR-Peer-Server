@@ -28,6 +28,10 @@ belong in the domain layer so application use cases can reference them
 without importing infrastructure.
 """
 
+from __future__ import annotations
+
+from typing import Any
+
 # Frame types (bits)
 HBPF_VOICE = 0x0
 HBPF_VOICE_SYNC = 0x1
@@ -41,3 +45,23 @@ PROTO_VER = 5
 
 # Stream timeout (seconds) for contention (legacy const.py)
 STREAM_TO = 0.36
+
+
+def normalize_fixed_width_ascii(value: Any) -> str:
+    """Decode fixed-width HBP ASCII (RPTC field, RPTO body) and strip NUL/space pad.
+
+    MMDVMHost pads with spaces; some bridges (e.g. ipsc2hbp) NUL-pad to width.
+    ``str.strip()`` / ``str.rstrip()`` without ``\\x00`` leave false suffix bytes.
+    """
+    if value is None:
+        return ""
+    if isinstance(value, (bytes, bytearray)):
+        text = bytes(value).decode("utf-8", errors="replace")
+    else:
+        text = str(value)
+    return text.rstrip("\x00 ")
+
+
+def normalize_fixed_width_bytes(value: bytes) -> bytes:
+    """Strip NUL/space padding from a fixed-width RPTO/RPTC byte slice."""
+    return value.rstrip(b"\x00 ")

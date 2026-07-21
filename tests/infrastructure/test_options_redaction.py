@@ -45,3 +45,8 @@ def test_redact_pass_accepts_str() -> None:
 
 def test_redact_pass_none_returns_empty() -> None:
     assert redact_pass_in_options(None) == ""
+
+
+def test_redact_pass_strips_nul_padding() -> None:
+    raw = b"TS1=73080;TS2=73081" + b"\x00" * 20
+    assert redact_pass_in_options(raw) == "TS1=73080;TS2=73081"
