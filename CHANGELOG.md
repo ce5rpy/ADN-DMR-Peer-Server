@@ -4,6 +4,14 @@ All notable changes to **adn-server** are documented here.
 
 <!-- version list -->
 
+## v2.4.2 (2026-07-22)
+
+### Bug Fixes
+
+- Default TALKER_ALIAS_SEND_DMRA off for legacy wire parity
+  ([`169467e`](https://github.com/ce5rpy/ADN-DMR-Peer-Server/commit/169467ecbb3114f1dd0605cafa77ad83821e347b))
+
+
 ## v2.4.1 (2026-07-21)
 
 ### Bug Fixes
