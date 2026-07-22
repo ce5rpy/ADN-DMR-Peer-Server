@@ -443,6 +443,27 @@ class RoutingUseCases(
             bridge_match_slot=bridge_match_slot,
             dst_int=dst_int,
         )
+        # A BRIDGES scan (legacy parity, kept in SubscriptionRouter.resolve()) can list the
+        # same MASTER/PEER target on both TS1 and TS2 (e.g. an inject-only proxy whose
+        # connected hotspots collectively use both slots for one TG). Legacy's dumb
+        # send_peers() broadcast made that harmless — each hotspot's own radio dropped the
+        # slot it didn't want. This server's send_peers() instead resolves each peer's
+        # actual listen slot from its OPTIONS (iter_downlink_voice_slots) regardless of the
+        # wire slot, so a second identical leg to the same target delivers the same audio
+        # twice — doubling the downlink rate and making unpaced bridges (e.g. ysf2dmr) sound
+        # slow. OpenBridge targets keep distinct per-slot legs (real separate links); collapse
+        # only same-(target, translated TGID) duplicates for MASTER/PEER targets.
+        if forward_legs:
+            _seen_hbp_leg: set[tuple[str, int]] = set()
+            _deduped_legs = []
+            for _leg in forward_legs:
+                if systems_cfg.get(_leg.target_system, {}).get("MODE") != "OPENBRIDGE":
+                    _hbp_key = (_leg.target_system, int(_leg.target_tgid))
+                    if _hbp_key in _seen_hbp_leg:
+                        continue
+                    _seen_hbp_leg.add(_hbp_key)
+                _deduped_legs.append(_leg)
+            forward_legs = tuple(_deduped_legs)
         _tx_report_peer = int_id(peer_id)
         if not source_is_obp:
             _tx_report_peer = int_id(
