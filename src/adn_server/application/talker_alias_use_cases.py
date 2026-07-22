@@ -65,11 +65,16 @@ def talker_alias_settings(config: dict[str, Any], system_name: str | None = None
     tfmt = sys_cfg.get("TALKER_ALIAS_TEXT_FORMAT")
     if tfmt is None:
         tfmt = global_cfg.get("TALKER_ALIAS_TEXT_FORMAT", "utf8")
+    send_dmra = sys_cfg.get("TALKER_ALIAS_SEND_DMRA")
+    if send_dmra is None:
+        send_dmra = global_cfg.get("TALKER_ALIAS_SEND_DMRA", False)
     return {
         "enabled": bool(enabled),
         "mode": mode,
         "format": str(fmt),
         "text_formats": parse_ta_text_formats(tfmt),
+        # Standalone HBP DMRA UDP (legacy wire often omits this; radios use embedded LC).
+        "send_dmra": bool(send_dmra),
     }
 
 

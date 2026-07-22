@@ -50,6 +50,21 @@ def test_talker_alias_inject_dmra_on_bridge_vhead() -> None:
     assert b"CE5RPY" in payload
 
 
+def test_talker_alias_send_dmra_false_skips_standalone_dmra() -> None:
+    """TALKER_ALIAS_SEND_DMRA false: no DMRA UDP; embedded TA path still armed."""
+    config = talker_alias_config()
+    config["GLOBAL"]["TALKER_ALIAS_SEND_DMRA"] = False
+    bridges = active_routing_table(91, (("MASTER-A", 2), ("MASTER-B", 2)))
+    scenario = DeterministicScenario(config=config, routing_table=bridges)
+    base = PacketSpec(dst_id=91, rf_src=3120001, stream_id=0x90909091)
+
+    scenario.inject_hbp("MASTER-A", DeterministicScenario.voice_head_spec(base))
+
+    assert scenario.dmra_capture == []
+    ts_st = scenario.protocols["MASTER-B"].STATUS[2]
+    assert ts_st.get("TX_TA_EMB") is not None
+
+
 def test_talker_alias_vhead_sent_once_per_target_stream() -> None:
     bridges = active_routing_table(91, (("MASTER-A", 2), ("MASTER-B", 2)))
     scenario = DeterministicScenario(config=talker_alias_config(), routing_table=bridges)

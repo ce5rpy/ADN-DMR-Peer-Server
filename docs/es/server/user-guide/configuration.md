@@ -84,6 +84,7 @@ Talker Alias DMR opcional en HBP (paquetes `DMRA`). Guía completa: [Talker Alia
 | **TALKER_ALIAS** | Activa inyección/passthrough de TA (`false` por defecto). |
 | **TALKER_ALIAS_MODE** | `both` (por defecto), `passthrough` o `inject`. |
 | **TALKER_ALIAS_FORMAT** | Plantilla, p. ej. `{callsign} {fname}`. Máx. **29** caracteres (límite de protocolo, no YAML). |
+| **TALKER_ALIAS_SEND_DMRA** | Enviar `DMRA` UDP autónomo (`false` por defecto; las radios usan LC embebida). |
 | **TALKER_ALIAS_TEXT_FORMAT** | `utf8`, `iso8`, `7bit` o lista con comas (p. ej. `utf8,iso8`). Por defecto `utf8`. |
 
 ---

@@ -18,9 +18,9 @@ Con la función activada en un sistema **MASTER**, el servidor puede:
 | **`passthrough`** | Solo reenvía `DMRA` bufferizado. |
 | **`inject`** | Siempre genera TA desde la plantilla y datos de alias. |
 
-En el **reenvío por bridge** en cabecera de voz (`VHEAD`), el servidor envía cuatro paquetes `DMRA` a cada destino HBP (**MASTER** peers o **PEER** upstream) una vez por stream, y después reenvía `DMRD` como siempre.
+En el **reenvío por bridge** en cabecera de voz (`VHEAD`), si **`TALKER_ALIAS_SEND_DMRA`** es `true`, el servidor puede enviar hasta cuatro paquetes `DMRA` a cada destino HBP una vez por stream. Con el valor por defecto (`false`) solo se usa la LC embebida — más parecido a masters legacy que a menudo no muestran `DMRA` en el cable.
 
-**MMDVMHost / DMRGateway (Pi-Star, WPSD):** el MMDVMHost estándar **no** procesa `DMRA` UDP independiente en downlink; decodifica Talker Alias desde la **LC embebida en voz `DMRD`** (FLCO 4–7). Con TA activado, ADN inyecta el TA en la LC embebida de los bursts **B–E** (dtype 1–4) en el **reenvío por bridge** hacia destinos HBP, alternando LC de grupo y bloques TA durante todo el stream, además de los paquetes `DMRA` opcionales para clientes que los soporten.
+**MMDVMHost / DMRGateway (Pi-Star, WPSD):** el MMDVMHost estándar **no** procesa `DMRA` UDP independiente en downlink; decodifica Talker Alias desde la **LC embebida en voz `DMRD`** (FLCO 4–7). Con TA activado, ADN inyecta el TA en la LC embebida de los bursts **B–E** (dtype 1–4) en el **reenvío por bridge** hacia destinos HBP, alternando LC de grupo y bloques TA durante todo el stream; los paquetes `DMRA` son opcionales (`TALKER_ALIAS_SEND_DMRA`).
 
 En el **mismo MASTER**, cuando **`REPEAT`** copia voz de grupo a otros hotspots registrados, el servidor también envía esos cuatro `DMRA` en `VHEAD` (excluyendo el peer que transmite). Si el bridge apunta al mismo system, comparten la misma deduplicación por stream y el TA no se envía dos veces.
 
@@ -38,6 +38,7 @@ GLOBAL:
   TALKER_ALIAS_MODE: both
   TALKER_ALIAS_FORMAT: "{callsign} {fname}"
   TALKER_ALIAS_TEXT_FORMAT: "utf8,iso8"
+  TALKER_ALIAS_SEND_DMRA: false
 ```
 
 | Clave | Significado |
@@ -46,6 +47,7 @@ GLOBAL:
 | **TALKER_ALIAS_MODE** | `both`, `passthrough` o `inject`. Por defecto **`both`** si se omite. |
 | **TALKER_ALIAS_FORMAT** | Plantilla tipo Python; campos: `{callsign}`, `{fname}`, `{surname}`, `{id}`. |
 | **TALKER_ALIAS_TEXT_FORMAT** | Codificación del TA: `utf8` (Motorola), `iso8` (Hytera), `7bit`. Lista separada por comas (p. ej. `utf8,iso8`) emite ambas en LC embebido; `DMRA` UDP usa solo el **primer** formato. Por defecto **`utf8`**. |
+| **TALKER_ALIAS_SEND_DMRA** | Enviar `DMRA` UDP autónomo en VHEAD (`false` por defecto). Las radios / MMDVMHost usan la **LC embebida** en `DMRD`; dejarlo en off se acerca al cable legacy (sin `DMRA` hacia el peer). Pon `true` solo si un cliente necesita esos paquetes UDP. |
 
 La longitud máxima es **29 caracteres** (ETSI / MMDVMHost). Este límite está fijado en código y **no** es configurable, para evitar payloads incompatibles en radios y hotspots.
 
