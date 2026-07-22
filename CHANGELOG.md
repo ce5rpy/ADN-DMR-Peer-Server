@@ -4,6 +4,14 @@ All notable changes to **adn-server** are documented here.
 
 <!-- version list -->
 
+## v2.4.3 (2026-07-22)
+
+### Bug Fixes
+
+- Forward OBP group voice to an HBP target only once per TG
+  ([`6a66010`](https://github.com/ce5rpy/ADN-DMR-Peer-Server/commit/6a6601055e405ac9718807b31383fb66187077ab))
+
+
 ## v2.4.2 (2026-07-22)
 
 ### Bug Fixes
