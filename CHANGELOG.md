@@ -4,6 +4,22 @@ All notable changes to **adn-server** are documented here.
 
 <!-- version list -->
 
+## v2.5.0 (2026-07-23)
+
+### Bug Fixes
+
+- Don't attribute synthetic announcement PTT to a real connected peer
+  ([`99b6f8d`](https://github.com/ce5rpy/ADN-DMR-Peer-Server/commit/99b6f8da705ac199206237cd024b9b85bc4a8b60))
+
+- Log silent dynamic TG activation once per peer and TG
+  ([`278b10e`](https://github.com/ce5rpy/ADN-DMR-Peer-Server/commit/278b10eb585a07f7bf7e6cc9ff361c972db5b2e5))
+
+### Features
+
+- Add HP3ICC acknowledgments to README
+  ([`4bf378f`](https://github.com/ce5rpy/ADN-DMR-Peer-Server/commit/4bf378fe9523be2777d8bd711c70308a0391f87b))
+
+
 ## v2.4.3 (2026-07-22)
 
 ### Bug Fixes
