@@ -356,6 +356,11 @@ def remap_inject_proxy_voice_events(
     parts = event.split(",")
     if len(parts) < 6 or parts[3].strip() != target:
         return [event]
+    if len(parts) > 9 and parts[-1].strip() == "1":
+        # Synthetic announcement PTT: never attribute/fan-out to a real hotspot
+        # row — a connected peer's radio id may coincidentally match the
+        # announcement's spoofed rf_src (field 6).
+        return [event]
     sys_cfg = systems.get(target, {})
     if not isinstance(sys_cfg, dict):
         return [event]

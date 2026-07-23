@@ -96,4 +96,5 @@ def inject_announcement_ptt(
         stream_id,
         pkt,
         ingress_pkt_time=pkt_time,
+        synthetic_announcement=True,
     )

@@ -30,7 +30,7 @@ from adn_server.application.routing.announcement_ptt_inject import (
     inject_announcement_ptt,
 )
 from adn_server.application.server_voice import DEFAULT_SERVER_VOICE_ID
-from adn_server.domain import bytes_4
+from adn_server.domain import bytes_4, int_id
 
 
 def test_announcement_ptt_system_prefers_proxy_target() -> None:
@@ -75,3 +75,57 @@ def test_inject_forwards_to_obp_and_peer_master() -> None:
             ) is True
     assert len(scenario.capture.for_system("OBP-CL")) == 3
     assert len(scenario.capture.for_system("MASTER-A")) == 0
+
+
+def test_inject_does_not_attribute_call_to_real_peer_matching_rf_src() -> None:
+    """An announcement whose rf_src (e.g. 1000001) matches a real connected peer's
+
+    login id must never be reported as that peer's call: no RX/TX attribution,
+    no dynamic TG learned for it. Regression for the misattribution bug where
+    ``resolve_voice_peer_id``'s rf_src fallback fired for synthetic frames.
+    """
+    scenario = obp_bridge_scenario("OBP-CL", tg=91)
+    scenario.config["PROXY"] = {"TARGET_SYSTEM": "MASTER-A"}
+    real_peer_id = DEFAULT_SERVER_VOICE_ID
+    scenario.config["SYSTEMS"]["MASTER-A"]["PEERS"] = {
+        bytes_4(real_peer_id): {"CONNECTION": "YES", "OPTIONS": b"TS2=91;"},
+    }
+    server_id = scenario.config["GLOBAL"]["SERVER_ID"]
+    sid = server_id if isinstance(server_id, bytes) else bytes_4(int(server_id))
+    events: list[str] = []
+    scenario.routing._send_routing_event = events.append  # type: ignore[method-assign]
+    base = PacketSpec(
+        peer_id=int_id(sid),
+        rf_src=real_peer_id,
+        dst_id=91,
+        slot=2,
+        stream_id=0xB0B0B0B0,
+    )
+    with patch_routing_wall_time(scenario.clock):
+        vhead = DeterministicScenario.voice_head_spec(base)
+        inject_announcement_ptt(
+            scenario.routing,
+            "MASTER-A",
+            vhead.data(),
+            pkt_time=scenario.clock.time(),
+            server_id=sid,
+        )
+        for seq in range(1, 3):
+            spec = DeterministicScenario.voice_burst_spec(base, seq=seq, dtype_vseq=min(seq, 4))
+            inject_announcement_ptt(
+                scenario.routing,
+                "MASTER-A",
+                spec.data(),
+                pkt_time=scenario.clock.time(),
+                server_id=sid,
+            )
+
+    assert events, "expected at least one GROUP VOICE report"
+    rx_events = [e for e in events if e.startswith("GROUP VOICE,START,RX,") or e.startswith("GROUP VOICE,END,RX,")]
+    assert rx_events, "expected an RX report for the MASTER-A inject"
+    for event in rx_events:
+        fields = event.split(",")
+        reported_peer = int(fields[5])
+        assert reported_peer != real_peer_id
+        assert reported_peer == int_id(sid)
+        assert fields[-1] == "1"

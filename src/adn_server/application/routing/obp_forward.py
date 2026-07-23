@@ -217,7 +217,7 @@ class ObpForwardMixin:
             # INGRESS: debug-only (all OBP legs); monitor logs it but does not update OPENBRIDGES chips until START.
             if _do_report:
                 self._send_routing_event(
-                    "GROUP VOICE,INGRESS,RX,{},{},{},{},{},{}".format(
+                    "GROUP VOICE,INGRESS,RX,{},{},{},{},{},{},0".format(
                         system_name, int_id(stream_id), int_id(peer_id), int_id(rf_src), slot, int_id(dst_id)
                     )
                 )

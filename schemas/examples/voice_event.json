@@ -10,5 +10,6 @@
   "src_id": 3120001,
   "slot": 2,
   "dst_id": 52090,
-  "duration_s": null
+  "duration_s": null,
+  "is_announcement": false
 }
