@@ -365,7 +365,8 @@
         "peer_id",
         "src_id",
         "slot",
-        "dst_id"
+        "dst_id",
+        "is_announcement"
       ],
       "properties": {
         "type": { "const": "voice_event" },
@@ -394,6 +395,10 @@
           "type": ["number", "null"],
           "minimum": 0,
           "description": "Present on END events."
+        },
+        "is_announcement": {
+          "type": "boolean",
+          "description": "True when the call originated from the announcement/TTS synthetic PTT path, not a real connected peer."
         }
       }
     },

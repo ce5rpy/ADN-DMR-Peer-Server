@@ -174,6 +174,7 @@ class RoutingUseCases(
         obp_ber: bytes = b"\x00",
         obp_rssi: bytes = b"\x00",
         obp_source_rptr: bytes = b"\x00\x00\x00\x00",
+        synthetic_announcement: bool = False,
     ) -> bool:
         """Called by UDP when DMRD is received. Forward to other systems in same bridge (to_target).
 
@@ -182,6 +183,14 @@ class RoutingUseCases(
         parsing OPENBRIDGE DMRD v1 / DMRE (`hblink.py` ~309–416, ~592–596). When `obp_use_parsed` is True,
         the OBP path uses those values (1:1 with `bridge.py` `routerOBP.dmrd_received` → `send_system`).
         HBP sources should pass ``ingress_pkt_time`` from UDP receive (legacy single ``pkt_time`` at router entry).
+
+        ``synthetic_announcement=True`` marks a frame injected by the announcement/TTS
+        PTT path (`routing/announcement_ptt_inject.py`) rather than a real peer
+        connection. Its ``peer_id`` is already the global SERVER_ID (never a real
+        peer — see `_announcement_packet_peer`), so `resolve_voice_peer_id`'s rf_src/
+        fuzzy fallback must be skipped: matching the announcement's spoofed rf_src
+        against a real connected peer's ID would misattribute the call (TX state,
+        dynamic TG) to that peer.
         """
         if not self._send_to_system:
             return
@@ -294,7 +303,7 @@ class RoutingUseCases(
                             _suppress_uplink_rx = bool(slot_st.get("_suppress_uplink"))
                 if _is_new_rx_stream and not _suppress_uplink_rx:
                     _rx_report_peer = peer_id
-                    if not source_is_obp:
+                    if not source_is_obp and not synthetic_announcement:
                         _rx_report_peer = resolve_voice_peer_id(
                             peer_id,
                             rf_src,
@@ -302,13 +311,14 @@ class RoutingUseCases(
                             systems_cfg,
                         )
                     self._send_routing_event(
-                        "GROUP VOICE,START,RX,{},{},{},{},{},{}".format(
+                        "GROUP VOICE,START,RX,{},{},{},{},{},{},{}".format(
                             system_name,
                             int_id(stream_id),
                             int_id(_rx_report_peer),
                             int_id(rf_src),
                             slot,
                             int_id(dst_id),
+                            int(synthetic_announcement),
                         )
                     )
         elif frame_type == HBPF_DATA_SYNC and dtype_vseq == HBPF_SLT_VTERM:
@@ -328,9 +338,11 @@ class RoutingUseCases(
                     slot_st_vterm = st.get(slot, {})
                     if isinstance(slot_st_vterm, dict):
                         _suppress_uplink_vterm = bool(slot_st_vterm.get("_suppress_uplink"))
+                if _suppress_uplink_vterm:
+                    self._clear_silent_activation_log(system_name, peer_id, dst_id)
                 if not _suppress_uplink_vterm:
                     _rx_report_peer = peer_id
-                    if not source_is_obp:
+                    if not source_is_obp and not synthetic_announcement:
                         _rx_report_peer = resolve_voice_peer_id(
                             peer_id,
                             rf_src,
@@ -338,7 +350,7 @@ class RoutingUseCases(
                             systems_cfg,
                         )
                     self._send_routing_event(
-                        "GROUP VOICE,END,RX,{},{},{},{},{},{},{:.2f}".format(
+                        "GROUP VOICE,END,RX,{},{},{},{},{},{},{:.2f},{}".format(
                             system_name,
                             int_id(stream_id),
                             int_id(_rx_report_peer),
@@ -346,6 +358,7 @@ class RoutingUseCases(
                             slot,
                             int_id(dst_id),
                             duration,
+                            int(synthetic_announcement),
                         )
                     )
         has_source = bool(
@@ -465,7 +478,7 @@ class RoutingUseCases(
                 _deduped_legs.append(_leg)
             forward_legs = tuple(_deduped_legs)
         _tx_report_peer = int_id(peer_id)
-        if not source_is_obp:
+        if not source_is_obp and not synthetic_announcement:
             _tx_report_peer = int_id(
                 resolve_voice_peer_id(peer_id, rf_src, system_name, systems_cfg)
             )
@@ -574,8 +587,8 @@ class RoutingUseCases(
                                 system_name, _relay_table_key, entry["SYSTEM"], entry.get("TS", 1), int_id(target_tgid),
                             )
                             self._send_routing_event(
-                                "GROUP VOICE,START,TX,{},{},{},{},{},{}".format(
-                                    entry["SYSTEM"], int_id(stream_id), _tx_report_peer, int_id(rf_src), entry.get("TS", 1), int_id(target_tgid)
+                                "GROUP VOICE,START,TX,{},{},{},{},{},{},{}".format(
+                                    entry["SYSTEM"], int_id(stream_id), _tx_report_peer, int_id(rf_src), entry.get("TS", 1), int_id(target_tgid), int(synthetic_announcement)
                                 )
                             )
                         if "EMB_LC" not in _target_status[stream_id]:
@@ -611,8 +624,8 @@ class RoutingUseCases(
                             self._clear_talker_alias_embed(_target_status[stream_id])
                             call_duration = pkt_time - _target_status[stream_id].get("START", pkt_time)
                             self._send_routing_event(
-                                "GROUP VOICE,END,TX,{},{},{},{},{},{},{:.2f}".format(
-                                    entry["SYSTEM"], int_id(stream_id), _tx_report_peer, int_id(rf_src), entry.get("TS", 1), int_id(target_tgid), call_duration
+                                "GROUP VOICE,END,TX,{},{},{},{},{},{},{:.2f},{}".format(
+                                    entry["SYSTEM"], int_id(stream_id), _tx_report_peer, int_id(rf_src), entry.get("TS", 1), int_id(target_tgid), call_duration, int(synthetic_announcement)
                                 )
                             )
                         elif dtype_vseq in (1, 2, 3, 4):
@@ -693,14 +706,14 @@ class RoutingUseCases(
                             call_duration = pkt_time - _ts_st.get("TX_START", pkt_time)
                             _end_peer = _ts_st.get("TX_PEER", peer_id)
                         _end_report_peer = int_id(_end_peer)
-                        if not source_is_obp:
+                        if not source_is_obp and not synthetic_announcement:
                             _end_report_peer = int_id(
                                 resolve_voice_peer_id(
                                     _end_peer, rf_src, system_name, systems_cfg
                                 )
                             )
                         self._send_routing_event(
-                            "GROUP VOICE,END,TX,{},{},{},{},{},{},{:.2f}".format(
+                            "GROUP VOICE,END,TX,{},{},{},{},{},{},{:.2f},{}".format(
                                 entry["SYSTEM"],
                                 int_id(stream_id),
                                 _end_report_peer,
@@ -708,6 +721,7 @@ class RoutingUseCases(
                                 entry_ts,
                                 int_id(entry_tgid_b),
                                 call_duration,
+                                int(synthetic_announcement),
                             )
                         )
                         if not _obp_deferred_bridge:
@@ -810,13 +824,14 @@ class RoutingUseCases(
                             system_name, _relay_table_key, entry["SYSTEM"], entry_ts, int_id(entry_tgid_b),
                         )
                         self._send_routing_event(
-                            "GROUP VOICE,START,TX,{},{},{},{},{},{}".format(
+                            "GROUP VOICE,START,TX,{},{},{},{},{},{},{}".format(
                                 entry["SYSTEM"],
                                 int_id(stream_id),
                                 _tx_report_peer,
                                 int_id(rf_src),
                                 entry_ts,
                                 int_id(entry_tgid_b),
+                                int(synthetic_announcement),
                             )
                         )
                     if _obp_deferred_bridge and _bridge_tx_leg is not None:
@@ -848,14 +863,14 @@ class RoutingUseCases(
                                 call_duration = pkt_time - _ts_st.get("TX_START", pkt_time)
                                 _end_peer = _ts_st.get("TX_PEER", peer_id)
                             _end_report_peer = int_id(_end_peer)
-                            if not source_is_obp:
+                            if not source_is_obp and not synthetic_announcement:
                                 _end_report_peer = int_id(
                                     resolve_voice_peer_id(
                                         _end_peer, rf_src, system_name, systems_cfg
                                     )
                                 )
                             self._send_routing_event(
-                                "GROUP VOICE,END,TX,{},{},{},{},{},{},{:.2f}".format(
+                                "GROUP VOICE,END,TX,{},{},{},{},{},{},{:.2f},{}".format(
                                     entry["SYSTEM"],
                                     int_id(stream_id),
                                     _end_report_peer,
@@ -863,6 +878,7 @@ class RoutingUseCases(
                                     entry_ts,
                                     int_id(entry_tgid_b),
                                     call_duration,
+                                    int(synthetic_announcement),
                                 )
                             )
                         if not _obp_deferred_bridge:
@@ -924,7 +940,7 @@ class RoutingUseCases(
                     loss_pct,
                 )
                 self._send_routing_event(
-                    "GROUP VOICE,END,RX,{},{},{},{},{},{},{:.2f}".format(
+                    "GROUP VOICE,END,RX,{},{},{},{},{},{},{:.2f},{}".format(
                         system_name,
                         int_id(stream_id),
                         int_id(peer_id),
@@ -932,6 +948,7 @@ class RoutingUseCases(
                         slot,
                         int_id(dst_id),
                         call_duration,
+                        int(synthetic_announcement),
                     )
                 )
                 ost["_fin"] = True

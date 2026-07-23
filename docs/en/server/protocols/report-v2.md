@@ -249,7 +249,8 @@ v2 equivalent:
   "src_id": 3120001,
   "slot": 2,
   "dst_id": 52090,
-  "duration_s": null
+  "duration_s": null,
+  "is_announcement": false
 }
 ```
 
@@ -262,6 +263,7 @@ v2 equivalent:
 | `peer_id`, `src_id`, `dst_id` | int | yes | DMR ids (1–16777215). |
 | `slot` | int | yes | `1` or `2`. |
 | `duration_s` | float \| null | no | Set on `END`. |
+| `is_announcement` | bool | yes | `true` when the call is the announcement/TTS synthetic PTT, not a real connected peer — the reported `peer_id`/`src_id` must not be attributed to any logged-in bridge. |
 
 OpenBridge **INGRESS** vs **START** semantics match [Monitoring and reports](../user-guide/monitoring.md#openbridge-monitor-semantics): use `phase: "INGRESS"` for first sight, `phase: "START"` after loop control.
 

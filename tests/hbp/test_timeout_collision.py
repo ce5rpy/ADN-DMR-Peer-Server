@@ -22,6 +22,8 @@
 
 from __future__ import annotations
 
+import logging
+
 import pytest
 from tests.harness.assertions import assert_forwarded, assert_inject_ok
 from tests.harness.deterministic import DeterministicScenario, PacketSpec, active_routing_table
@@ -85,6 +87,47 @@ def test_hbp_stream_collision_silent_activation_on_busy_tg() -> None:
     assert len(scenario.capture.for_system("MASTER-B")) == 0
     # Silent activation marker is set on the source slot
     assert scenario.protocols["MASTER-A"].STATUS[2].get("_suppress_uplink") is True
+
+
+def test_hbp_silent_activation_logs_once_per_peer_tg(caplog: pytest.LogCaptureFixture) -> None:
+    """Connect-PTT style bursts may open many stream IDs; log silent activation once."""
+    bridges = active_routing_table(91, (("MASTER-A", 2), ("MASTER-B", 2)))
+    scenario = DeterministicScenario(routing_table=bridges)
+    t0 = scenario.clock.time()
+    slot = scenario.protocols["MASTER-A"].STATUS[2]
+    slot.update(
+        {
+            "RX_STREAM_ID": bytes_4(0x80808080),
+            "RX_TYPE": HBPF_SLT_VHEAD,
+            "RX_RFS": bytes_3(1111111),
+            "RX_TGID": bytes_3(91),
+            "RX_TIME": t0,
+            "RX_START": t0,
+        }
+    )
+    peer = 2222222
+    streams = (0x70707070, 0x71717171, 0x72727272)
+
+    with caplog.at_level(logging.INFO):
+        for sid in streams:
+            base = PacketSpec(dst_id=91, stream_id=sid, rf_src=peer)
+            ok = scenario.inject_hbp(
+                "MASTER-A",
+                DeterministicScenario.voice_head_spec(base),
+                ingress_pkt_time=t0 + 0.1,
+            )
+            assert_inject_ok(ok)
+            burst = DeterministicScenario.voice_burst_spec(base, seq=1, dtype_vseq=1)
+            assert_inject_ok(
+                scenario.inject_hbp("MASTER-A", burst, ingress_pkt_time=t0 + 0.12)
+            )
+
+    hits = [
+        r.message
+        for r in caplog.records
+        if "activating dynamic TG silently" in r.message
+    ]
+    assert len(hits) == 1
 
 
 @pytest.mark.behavior
