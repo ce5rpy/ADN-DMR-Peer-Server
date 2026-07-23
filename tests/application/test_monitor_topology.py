@@ -229,6 +229,22 @@ def test_local_hotspot_rx_fans_out_tx_only_to_peers_with_matching_tg() -> None:
     assert "SYSTEM-4" not in by_system
 
 
+def test_remap_inject_proxy_skips_announcement_even_if_rf_src_matches_peer() -> None:
+    """Announcement rf_src (field 6) coincidentally matching a real connected peer's
+
+    login id must not be attributed/remapped to that peer's SYSTEM-N row — the
+    trailing ``is_announcement=1`` field short-circuits the fuzzy peer match in
+    ``_peer_key_from_voice_csv``.
+    """
+    real_peer = bytes_4(1000001)
+    peers = {real_peer: _peer()}
+    config = _proxy_config(peers)
+    peer_slots = {real_peer: 1}
+    raw = "GROUP VOICE,START,RX,SYSTEM,3262598598,9990001,1000001,2,91,1"
+    events = remap_inject_proxy_voice_events(raw, config, config["SYSTEMS"], peer_slots)
+    assert events == [raw]
+
+
 def test_obp_tx_single_hotspot_remaps_dynamic_tg_not_in_static() -> None:
     """One HS online: downlink/monitor must remap TX even when TG is UA-only (not in OPTIONS)."""
     peer = bytes_4(730039101)

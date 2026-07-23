@@ -205,7 +205,8 @@ Equivalente v2:
   "src_id": 3120001,
   "slot": 2,
   "dst_id": 52090,
-  "duration_s": null
+  "duration_s": null,
+  "is_announcement": false
 }
 ```
 
@@ -217,6 +218,7 @@ Equivalente v2:
 | `stream_id` | int | sí | Stream HBP 32 bits. |
 | `peer_id`, `src_id`, `dst_id` | int | sí | IDs DMR (1–16777215). |
 | `slot` | int | sí | `1` o `2`. |
+| `is_announcement` | bool | sí | `true` cuando la llamada es el PTT sintético de anuncio/TTS, no un peer real conectado — el `peer_id`/`src_id` reportado no debe atribuirse a ningún bridge logueado. |
 | `duration_s` | float \| null | no | En eventos `END`. |
 
 Semántica OpenBridge INGRESS/START: ver [Monitor e informes](../user-guide/monitoring.md).

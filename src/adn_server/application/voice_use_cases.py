@@ -301,6 +301,7 @@ class VoiceUseCases:
         ]
         if duration is not None:
             parts.append(f"{duration:.2f}")
+        parts.append("1")
         self._send_routing_event(",".join(parts))
 
     def _maybe_begin_legacy_voice_report(

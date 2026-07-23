@@ -515,6 +515,7 @@ def parse_bridge_event_csv(event: str, *, ts: float | None = None) -> dict[str, 
             voice["duration_s"] = None
     elif phase != "END":
         voice["duration_s"] = None
+    voice["is_announcement"] = len(parts) > 9 and parts[-1] == "1"
     return voice
 
 
