@@ -102,6 +102,36 @@ class HbpForwardMixin:
         cache.add(key)
         logger.warning(msg, *args)
 
+    def _silent_activation_log_key(
+        self,
+        system_name: str,
+        peer_id: bytes,
+        dst_id: bytes,
+    ) -> tuple:
+        return ("silent_activation", system_name, bytes_4(int_id(peer_id)), dst_id)
+
+    def _log_ingress_info_once(
+        self,
+        key: tuple,
+        msg: str,
+        *args: object,
+    ) -> None:
+        cache = self._ingress_drop_log_cache()
+        if key in cache:
+            return
+        cache.add(key)
+        logger.info(msg, *args)
+
+    def _clear_silent_activation_log(
+        self,
+        system_name: str,
+        peer_id: bytes,
+        dst_id: bytes,
+    ) -> None:
+        self._ingress_drop_log_cache().discard(
+            self._silent_activation_log_key(system_name, peer_id, dst_id),
+        )
+
     def _clear_ingress_drop_log(
         self,
         system_name: str,
@@ -174,12 +204,16 @@ class HbpForwardMixin:
                 if tg_has_active_conversation(
                     protocols, systems_cfg, dst_id, stream_id, rf_src, pkt_time,
                 ):
-                    logger.info(
+                    self._log_ingress_info_once(
+                        self._silent_activation_log_key(system_name, peer_id, dst_id),
                         "(%s) TG %s has active QSO — activating dynamic TG silently for peer %s (uplink suppressed)",
                         system_name, int_id(dst_id), int_id(peer_id),
                     )
                     _slot_st["_suppress_uplink"] = True
                     _slot_st["_silent_activation_tg"] = int_id(dst_id)
+                    # Bind stream early so voice frames do not re-enter the new-stream
+                    # path and spam silent-activation logs (udp_hbp parity).
+                    _slot_st["RX_STREAM_ID"] = stream_id
                 else:
                     self._log_ingress_warning_once(
                         self._ingress_drop_key(

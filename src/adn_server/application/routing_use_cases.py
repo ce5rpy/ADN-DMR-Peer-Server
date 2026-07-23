@@ -328,6 +328,8 @@ class RoutingUseCases(
                     slot_st_vterm = st.get(slot, {})
                     if isinstance(slot_st_vterm, dict):
                         _suppress_uplink_vterm = bool(slot_st_vterm.get("_suppress_uplink"))
+                if _suppress_uplink_vterm:
+                    self._clear_silent_activation_log(system_name, peer_id, dst_id)
                 if not _suppress_uplink_vterm:
                     _rx_report_peer = peer_id
                     if not source_is_obp:
