@@ -82,3 +82,11 @@ python adn-server.py --echo -c adn-echo.yaml
 See [Echo (playback)](docs/en/server/user-guide/echo.md) in the docs site for an overview.
 
 **systemd:** example units in `examples/systemd/` (`adn-server.service`, `adn-echo.service`).
+
+## Acknowledgments
+
+Thanks to **[Esteban Mackay, HP3ICC](https://gitlab.com/hp3icc)**, for ideas, help, testing, and suggestions throughout development.
+
+---
+
+[Español](README_es.md)
