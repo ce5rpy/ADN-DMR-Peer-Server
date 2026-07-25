@@ -1161,7 +1161,9 @@ class RoutingUseCases(
         # SUB_MAP lookup (legacy ~2297-2312 / ~3099-3114)
         sub_map = self._config.get("_SUB_MAP", {})
         if dst_id in sub_map:
-            _d_system, _d_slot, _d_time = sub_map[dst_id]
+            _sub_map_entry = sub_map[dst_id]
+            _d_system, _d_slot, _d_time = _sub_map_entry[:3]
+            _d_peer_id = _sub_map_entry[3] if len(_sub_map_entry) > 3 else None
             _d_proto = protocols.get(_d_system)
             if _d_proto:
                 _dst_slot = getattr(_d_proto, "STATUS", {}).get(_d_slot, {})
@@ -1170,7 +1172,7 @@ class RoutingUseCases(
                 _hangtime = _d_sys_cfg.get("GROUP_HANGTIME", 5)
                 if unit_data_hbp_target_idle(_dst_slot, pkt_time, _hangtime):
                     _tmp_bits = _bits ^ (1 << 7) if slot != _d_slot else _bits
-                    self._send_data_to_hbp(system_name, _d_system, _d_slot, dst_id, _tmp_bits, data, dmrpkt, rf_src, stream_id, peer_id)
+                    self._send_data_to_hbp(system_name, _d_system, _d_slot, dst_id, _tmp_bits, data, dmrpkt, rf_src, stream_id, peer_id, d_peer_id=_d_peer_id)
                 elif not is_private_subscriber_dst(dst_id):
                     self._log_unit_data_hbp_busy(
                         system_name, _d_system, _d_slot, _int_dst_id, _dst_slot, _d_sys_cfg, pkt_time,
@@ -1197,7 +1199,7 @@ class RoutingUseCases(
                             _hangtime = _d_sys_cfg.get("GROUP_HANGTIME", 5)
                             if unit_data_hbp_target_idle(_dst_slot, pkt_time, _hangtime):
                                 _tmp_bits = _bits ^ (1 << 7) if slot != 2 else _bits
-                                self._send_data_to_hbp(system_name, _d_system, _d_slot, dst_id, _tmp_bits, data, dmrpkt, rf_src, stream_id, peer_id)
+                                self._send_data_to_hbp(system_name, _d_system, _d_slot, dst_id, _tmp_bits, data, dmrpkt, rf_src, stream_id, peer_id, d_peer_id=_to_peer)
                             elif not is_private_subscriber_dst(dst_id):
                                 self._log_unit_data_hbp_busy(
                                     system_name, _d_system, _d_slot, _int_dst_id, _dst_slot, _d_sys_cfg, pkt_time,
@@ -1212,7 +1214,7 @@ class RoutingUseCases(
                             _hangtime = _d_sys_cfg.get("GROUP_HANGTIME", 5)
                             if unit_data_hbp_target_idle(_dst_slot, pkt_time, _hangtime):
                                 _tmp_bits = _bits ^ (1 << 7) if slot != 2 else _bits
-                                self._send_data_to_hbp(system_name, _d_system, _d_slot, dst_id, _tmp_bits, data, dmrpkt, rf_src, stream_id, peer_id)
+                                self._send_data_to_hbp(system_name, _d_system, _d_slot, dst_id, _tmp_bits, data, dmrpkt, rf_src, stream_id, peer_id, d_peer_id=_to_peer)
                             elif not is_private_subscriber_dst(dst_id):
                                 self._log_unit_data_hbp_busy(
                                     system_name, _d_system, _d_slot, _int_dst_id, _dst_slot, _d_sys_cfg, pkt_time,
@@ -1241,7 +1243,7 @@ class RoutingUseCases(
         _bits = data[15] if len(data) > 15 else 0
         sub_map = self._config.get("_SUB_MAP", {})
         if sub_map is not None:
-            sub_map[rf_src] = (system_name, slot, pkt_time)
+            sub_map[rf_src] = (system_name, slot, pkt_time, peer_id)
         systems_cfg = self._config.get("SYSTEMS", {})
         protocols = self._get_protocols() if self._get_protocols else {}
         source_proto = protocols.get(system_name)
@@ -1260,14 +1262,31 @@ class RoutingUseCases(
                 )
                 return
             slot_st["RX_START"] = pkt_time
+            self._pvt_same_system_dst_peer_id = None
             if dst_id in sub_map:
-                if sub_map[dst_id][0] != system_name:
-                    self._pvt_targets = [sub_map[dst_id][0]]
+                _dst_entry = sub_map[dst_id]
+                if _dst_entry[0] != system_name:
+                    self._pvt_targets = [_dst_entry[0]]
+                    # Exact hotspot the destination was last heard on, if SUB_MAP has it
+                    # (4th element) -- lets delivery target that one peer on the target
+                    # system instead of send_to_system's broadcast-to-every-peer default.
+                    self._pvt_target_peer_ids = {
+                        _dst_entry[0]: (_dst_entry[3] if len(_dst_entry) > 3 else None)
+                    }
                 else:
                     self._pvt_targets = []
+                    self._pvt_target_peer_ids = {}
                     logger.error("PRIVATE call to a subscriber on the same system, send nothing")
+                    # Delivery is already handled by the MASTER's own local REPEAT
+                    # (_pvt_repeat_targets in udp_hbp.py) -- this branch only exists so the
+                    # monitor also learns who is *receiving*, which nothing else reports.
+                    if len(_dst_entry) > 3 and _dst_entry[3] is not None:
+                        _dest_peers = getattr(source_proto, "_peers", {}) if source_proto else {}
+                        if _dst_entry[3] in _dest_peers:
+                            self._pvt_same_system_dst_peer_id = _dst_entry[3]
             else:
                 self._pvt_targets = []
+                self._pvt_target_peer_ids = {}
             logger.info(
                 "(%s) *PRIVATE CALL START* STREAM ID: %s SUB: %s PEER: %s DST: %s, TS: %s, FORWARD: %s",
                 system_name, int_id(stream_id), int_id(rf_src), int_id(peer_id), int_id(dst_id), slot, self._pvt_targets,
@@ -1280,12 +1299,22 @@ class RoutingUseCases(
                         system_name, int_id(stream_id), int_id(peer_id), int_id(rf_src), slot, int_id(dst_id)
                     )
                 )
+                if self._pvt_same_system_dst_peer_id is not None:
+                    self._send_routing_event(
+                        "PRIVATE VOICE,START,TX,{},{},{},{},{},{},{}".format(
+                            system_name, int_id(stream_id), int_id(peer_id), int_id(rf_src), slot, int_id(dst_id),
+                            int_id(self._pvt_same_system_dst_peer_id),
+                        )
+                    )
         for _target in getattr(self, "_pvt_targets", []):
             target_proto = protocols.get(_target)
             if not target_proto:
                 continue
             _target_status = getattr(target_proto, "STATUS", {})
             _target_system = systems_cfg.get(_target, {})
+            _target_peer_id = None
+            if _target_system.get("MODE") != "OPENBRIDGE":
+                _target_peer_id = getattr(self, "_pvt_target_peer_ids", {}).get(_target)
             if _target_system.get("MODE") == "OPENBRIDGE":
                 if _target_system.get("ENHANCED_OBP") and "_bcka" in _target_system and _target_system["_bcka"] < pkt_time - 60:
                     continue
@@ -1345,16 +1374,27 @@ class RoutingUseCases(
                     ts_st["TX_PEER"] = peer_id
                     logger.info("(%s) PRIVATE call bridged to HBP System: %s TS: %s, DST: %s", system_name, _target, slot, int_id(dst_id))
                     if not _unit_data:
-                        self._send_routing_event(
-                            "PRIVATE VOICE,START,TX,{},{},{},{},{},{}".format(
-                                _target, int_id(stream_id), int_id(peer_id), int_id(rf_src), slot, int_id(dst_id),
-                            ).encode("utf-8", "ignore")
-                        )
+                        if _target_peer_id is not None and _target_peer_id in getattr(target_proto, "_peers", {}):
+                            self._send_routing_event(
+                                "PRIVATE VOICE,START,TX,{},{},{},{},{},{},{}".format(
+                                    _target, int_id(stream_id), int_id(peer_id), int_id(rf_src), slot, int_id(dst_id),
+                                    int_id(_target_peer_id),
+                                )
+                            )
+                        else:
+                            self._send_routing_event(
+                                "PRIVATE VOICE,START,TX,{},{},{},{},{},{}".format(
+                                    _target, int_id(stream_id), int_id(peer_id), int_id(rf_src), slot, int_id(dst_id),
+                                )
+                            )
                 ts_st["TX_TIME"] = pkt_time
                 ts_st["TX_TYPE"] = dtype_vseq
                 send_data = data
             try:
-                self._send_to_system(_target, send_data)
+                if _target_peer_id is not None and target_proto is not None and _target_peer_id in getattr(target_proto, "_peers", {}):
+                    target_proto.send_peer(_target_peer_id, send_data)
+                else:
+                    self._send_to_system(_target, send_data)
             except Exception as e:
                 logger.warning("(ROUTER) send_to_system %s failed: %s", _target, e)
         if frame_type == HBPF_DATA_SYNC and dtype_vseq == HBPF_SLT_VTERM and slot_st.get("RX_TYPE") != HBPF_SLT_VTERM:
@@ -1375,6 +1415,21 @@ class RoutingUseCases(
                     call_duration,
                 )
             )
+            _same_system_dst_peer_id = getattr(self, "_pvt_same_system_dst_peer_id", None)
+            if _same_system_dst_peer_id is not None:
+                self._send_routing_event(
+                    "PRIVATE VOICE,END,TX,{},{},{},{},{},{},{:.2f},{}".format(
+                        system_name,
+                        int_id(stream_id),
+                        int_id(peer_id),
+                        int_id(rf_src),
+                        slot,
+                        int_id(dst_id),
+                        call_duration,
+                        int_id(_same_system_dst_peer_id),
+                    )
+                )
+            self._pvt_same_system_dst_peer_id = None
         if slot_st:
             if _unit_data:
                 # Keep stream continuity for multi-frame unit data without marking the

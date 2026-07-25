@@ -353,11 +353,28 @@ class HbpForwardMixin:
         rf_src: bytes,
         stream_id: bytes,
         peer_id: bytes,
+        d_peer_id: bytes | None = None,
     ) -> None:
-        """Legacy sendDataToHBP: forward a unit-data packet to an HBP (MASTER/PEER) target."""
+        """Legacy sendDataToHBP: forward a unit-data packet to an HBP (MASTER/PEER) target.
+
+        ``d_peer_id`` (the exact hotspot the destination was last heard on, from SUB_MAP
+        or the 6/7-digit peer-ID match) lets this go directly to that one peer via
+        ``send_peer`` instead of ``send_system``/``send_peers`` broadcasting the private
+        DATA to every other hotspot connected to ``d_system`` — the same cross-talk this
+        server already avoids for private voice REPEAT (``_pvt_repeat_targets``). Falls
+        back to the system-wide broadcast when the target peer isn't known or connected
+        (unchanged legacy parity for that case)."""
         _tmp_data = b"".join([data[:15], tmp_bits.to_bytes(1, "big"), data[16:20], dmrpkt])
         try:
-            self._send_to_system(d_system, _tmp_data)
+            if d_peer_id is not None:
+                protocols = self._get_protocols() if self._get_protocols else {}
+                proto = protocols.get(d_system)
+                if proto is not None and d_peer_id in getattr(proto, "_peers", {}):
+                    proto.send_peer(d_peer_id, _tmp_data)
+                else:
+                    self._send_to_system(d_system, _tmp_data)
+            else:
+                self._send_to_system(d_system, _tmp_data)
         except Exception as exc:
             logger.warning("(%s) send_data_to_hbp %s failed: %s", source_system, d_system, exc)
             return

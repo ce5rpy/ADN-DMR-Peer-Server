@@ -687,6 +687,12 @@ def run_peer_server(
     def sighup_reload_config(_sig, _frame):
         """Reload adn-server.yaml (SYSTEMS, GLOBAL); keeps active streams on unchanged listeners."""
         logger.info("(CONFIG-RELOAD) SIGHUP received, scheduling reload")
+        if aliases_cfg.get("SUB_MAP_FILE"):
+            try:
+                sub_map_store.save(sub_map_path, sub_map)
+                logger.info("(SUBSCRIBER) Writing SUB_MAP to disk (SIGHUP)")
+            except Exception as e:
+                logger.warning("(SUBSCRIBER) Cannot write SUB_MAP to file: %s", e)
         reactor.callLater(0, _do_config_reload)
 
     signal.signal(signal.SIGTERM, sig_handler)
