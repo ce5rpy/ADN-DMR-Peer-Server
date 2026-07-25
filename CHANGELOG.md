@@ -4,6 +4,14 @@ All notable changes to **adn-server** are documented here.
 
 <!-- version list -->
 
+## v2.5.1 (2026-07-25)
+
+### Bug Fixes
+
+- Target private calls to the known hotspot instead of broadcasting
+  ([`11970e0`](https://github.com/ce5rpy/ADN-DMR-Peer-Server/commit/11970e0552203fa1e013121c8997f805504898b4))
+
+
 ## v2.5.0 (2026-07-23)
 
 ### Bug Fixes
