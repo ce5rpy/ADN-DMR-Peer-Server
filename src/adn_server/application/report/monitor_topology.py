@@ -221,6 +221,26 @@ def _voice_event_stream_id(parts: list[str]) -> bytes | None:
         return None
 
 
+def _private_voice_tx_dest_peer_id(parts: list[str]) -> int | None:
+    """Destination hotspot peer id trailing a PRIVATE VOICE TX event, if present.
+
+    routing_use_cases._pvt_call_received appends this (SUB_MAP's known peer for the
+    destination) after the legacy 9 START / 10 END fields. Private call destinations
+    are subscriber ids, never a real static TG -- _peers_receiving_tgid's group-voice
+    subscription fan-out can never resolve one, so this field is the only way to know
+    which single hotspot slot the event belongs to.
+    """
+    if len(parts) < 2 or parts[0].strip() != "PRIVATE VOICE" or parts[2].strip() != "TX":
+        return None
+    base_len = 10 if parts[1].strip() == "END" else 9
+    if len(parts) <= base_len:
+        return None
+    try:
+        return int(parts[-1].strip())
+    except ValueError:
+        return None
+
+
 def _peers_receiving_tgid(
     connected: list[tuple[Any, dict[str, Any]]],
     *,
@@ -374,6 +394,19 @@ def remap_inject_proxy_voice_events(
     stream_id = _voice_event_stream_id(parts)
 
     if trx == "TX":
+        dest_peer_id = _private_voice_tx_dest_peer_id(parts)
+        if dest_peer_id is not None:
+            peer_key = bytes_4(dest_peer_id)
+            if peer_key not in _connected_peer_keys(peers):
+                return []
+            slot = slot_map.get(peer_key)
+            if slot is None:
+                return []
+            return [
+                _remap_voice_event_to_slot(
+                    parts, target=target, slot=slot, peer_key=peer_key
+                )
+            ]
         tgid_slot = _voice_event_tgid_slot(parts)
         echo_peer = _echo_tx_target_peer(
             parts, peers, status=downlink_ctx.status if downlink_ctx else None

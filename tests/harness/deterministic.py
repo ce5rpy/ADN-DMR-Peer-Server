@@ -207,6 +207,11 @@ class FakeHbpProtocol:
     def __init__(self, name: str) -> None:
         self.name = name
         self.STATUS: dict[int, dict[str, Any]] = {1: {}, 2: {}}
+        self._peers: dict[bytes, Any] = {}
+        self.sent_to_peer: list[tuple[bytes, bytes]] = []
+
+    def send_peer(self, peer_id: bytes, packet: bytes) -> None:
+        self.sent_to_peer.append((peer_id, packet))
 
 
 class FakeReportSender:
