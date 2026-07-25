@@ -253,6 +253,63 @@ def test_parse_group_voice_start_matches_example(validator: jsonschema.Draft2020
     validator.validate(doc)
 
 
+@pytest.mark.parametrize(
+    "label",
+    [
+        "UNIT CSBK",
+        "UNIT DATA HEADER",
+        "UNIT VCSBK 1/2 DATA BLOCK",
+        "UNIT VCSBK 3/4 DATA BLOCK",
+    ],
+)
+def test_parse_unit_dtype_labels_map_to_unit_family(label: str) -> None:
+    """Regression: routing_use_cases._dtype_labels emits these instead of the
+    generic "UNIT DATA" for dtype_vseq in (3, 6, 7, 8) — private-call CSBK
+    setup and SMS/GPS header/VCSBK blocks. Before these were added to
+    _CSV_FAMILIES, parse_bridge_event_csv() returned None and the event was
+    silently dropped, so a private call whose CSBK handshake never escalates
+    to voice never reached the monitor's Last Heard log at all."""
+    csv = f"{label},DATA,RX,SYSTEM-8,656846929,730039210,7300392,2,714001"
+    doc = parse_bridge_event_csv(csv)
+    assert doc is not None
+    assert doc["call_family"] == "UNIT"
+    assert doc["phase"] == "DATA"
+
+
+def test_parse_bridge_event_csv_unknown_family_still_none() -> None:
+    csv = "SOMETHING ELSE,DATA,RX,SYSTEM-8,656846929,730039210,7300392,2,714001"
+    assert parse_bridge_event_csv(csv) is None
+
+
+def test_parse_private_voice_tx_captures_trailing_dest_peer_id() -> None:
+    """Regression: the JSON voice_event schema had no field for the destination
+    hotspot's peer id (routing_use_cases._pvt_call_received appends it after the
+    legacy CSV fields) -- it was silently dropped in this CSV->JSON conversion,
+    so the monitor could never know which single hotspot was receiving a private
+    call, and always reconstructed a bare "0" in its place (report_mapper.
+    voice_event_to_csv_parts's is_announcement default)."""
+    csv = "PRIVATE VOICE,START,TX,SYSTEM,1610544978,730039110,7300391,2,7300392,730039101"
+    doc = parse_bridge_event_csv(csv)
+    assert doc is not None
+    assert doc["dest_peer_id"] == 730039101
+    assert doc["is_announcement"] is False
+
+
+def test_parse_private_voice_end_tx_captures_dest_peer_id_after_duration() -> None:
+    csv = "PRIVATE VOICE,END,TX,SYSTEM,1610544978,730039110,7300391,2,7300392,5.87,730039101"
+    doc = parse_bridge_event_csv(csv)
+    assert doc is not None
+    assert doc["dest_peer_id"] == 730039101
+    assert doc["duration_s"] == pytest.approx(5.87)
+
+
+def test_parse_private_voice_rx_has_no_dest_peer_id() -> None:
+    csv = "PRIVATE VOICE,START,RX,SYSTEM,1610544978,730039110,7300391,2,7300392"
+    doc = parse_bridge_event_csv(csv)
+    assert doc is not None
+    assert "dest_peer_id" not in doc
+
+
 def test_routing_delta_matches_example(validator: jsonschema.Draft202012Validator) -> None:
     with (_EXAMPLES_DIR / "routing_table.json").open(encoding="utf-8") as fh:
         previous = json.load(fh)

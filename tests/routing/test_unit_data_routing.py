@@ -34,7 +34,7 @@ from tests.harness.deterministic import (
 )
 from tests.routing.unit_data_helpers import idle_hbp_slot
 
-from adn_server.domain import bytes_3
+from adn_server.domain import bytes_3, bytes_4
 from adn_server.domain.hbp_protocol import HBPF_SLT_VHEAD, HBPF_SLT_VTERM
 
 DAPRS_GATEWAY_ID = 900999
@@ -311,3 +311,68 @@ def test_unit_data_pvt_call_does_not_emit_private_voice_monitor_events() -> None
     assert scenario.report_factory is not None
     private_voice = [e for e in scenario.report_factory.events if e.startswith("PRIVATE VOICE")]
     assert private_voice == []
+
+
+@pytest.mark.behavior
+def test_unit_data_sub_map_with_peer_id_targets_only_that_peer() -> None:
+    """Regression: cross-talk -- unit DATA to a known subscriber must reach only the
+    one hotspot it was last heard on, not every peer of the destination system
+    (send_to_system/send_peers broadcasts to all peers when no peer is targeted)."""
+    dst_sub = 712345
+    dst_peer = bytes_4(730039101)
+    config = minimal_config(("MASTER-A", "MASTER-B"))
+    config["_SUB_MAP"] = {bytes_3(dst_sub): ("MASTER-B", 2, 1000.0, dst_peer)}
+    scenario = DeterministicScenario(config=config)
+    scenario.protocols["MASTER-B"].STATUS[2] = idle_hbp_slot()
+    scenario.protocols["MASTER-B"]._peers[dst_peer] = {}
+    base = PacketSpec(call_type="unit", dst_id=dst_sub, stream_id=0x52525253, slot=2)
+
+    scenario.inject_unit("MASTER-A", DeterministicScenario.unit_data_header_spec(base))
+
+    assert scenario.protocols["MASTER-B"].sent_to_peer, "must deliver directly to the known peer"
+    assert scenario.protocols["MASTER-B"].sent_to_peer[0][0] == dst_peer
+    assert_not_forwarded(scenario, "MASTER-B")
+
+
+@pytest.mark.behavior
+def test_unit_data_sub_map_peer_not_connected_falls_back_to_broadcast() -> None:
+    """When the known peer isn't (or is no longer) connected, fall back to the old
+    broadcast-to-system behavior rather than silently dropping the packet."""
+    dst_sub = 712345
+    dst_peer = bytes_4(730039101)
+    config = minimal_config(("MASTER-A", "MASTER-B"))
+    config["_SUB_MAP"] = {bytes_3(dst_sub): ("MASTER-B", 2, 1000.0, dst_peer)}
+    scenario = DeterministicScenario(config=config)
+    scenario.protocols["MASTER-B"].STATUS[2] = idle_hbp_slot()
+    # dst_peer intentionally NOT registered in scenario.protocols["MASTER-B"]._peers.
+    base = PacketSpec(call_type="unit", dst_id=dst_sub, stream_id=0x52525254, slot=2)
+
+    scenario.inject_unit("MASTER-A", DeterministicScenario.unit_data_header_spec(base))
+
+    assert not scenario.protocols["MASTER-B"].sent_to_peer
+    assert_forwarded(scenario, "MASTER-B", count=1, call_type="unit")
+
+
+@pytest.mark.behavior
+def test_pvt_call_sub_map_with_peer_id_targets_only_that_peer() -> None:
+    """Same cross-talk fix for the 7-digit pvt_call_received cross-system path (private
+    voice and ARS/LRRP downlink use this, independent of the unit-data SUB_MAP branch)."""
+    dst_peer = bytes_4(730039101)
+    config = minimal_config(("D-APRS", "SYSTEM"))
+    config["_SUB_MAP"] = {bytes_3(HOTSPOT_SUB_ID): ("SYSTEM", 2, 1000.0, dst_peer)}
+    scenario = DeterministicScenario(config=config)
+    scenario.protocols["SYSTEM"].STATUS[2] = idle_hbp_slot()
+    scenario.protocols["SYSTEM"]._peers[dst_peer] = {}
+    base = PacketSpec(
+        call_type="unit",
+        rf_src=DAPRS_GATEWAY_ID,
+        dst_id=HOTSPOT_SUB_ID,
+        stream_id=0x33416425,
+        slot=2,
+    )
+
+    scenario.inject_unit("D-APRS", DeterministicScenario.unit_data_header_spec(base))
+
+    assert scenario.protocols["SYSTEM"].sent_to_peer, "must deliver directly to the known peer"
+    assert scenario.protocols["SYSTEM"].sent_to_peer[0][0] == dst_peer
+    assert_not_forwarded(scenario, "SYSTEM")

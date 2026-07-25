@@ -49,7 +49,7 @@ from typing import Any
 from bitarray import bitarray
 
 from ...domain import int_id
-from ...domain.dmr.const import LC_OPT
+from ...domain.dmr.const import LC_OPT_G, LC_OPT_U
 from ...domain.talker_alias import DMRA_BLOCK_COUNT
 from ..talker_alias_use_cases import passthrough_complete, talker_alias_settings
 from .helpers import EMB_LC_SLICE
@@ -417,11 +417,14 @@ class LcTaMixin:
         dst_id: bytes,
         slot: int,
         stream_id: bytes,
+        call_type: str = "group",
     ) -> None:
         """REPEAT on VHEAD: standalone DMRA plus embedded TA state for downlink DMRD.
 
         WPSD/MMDVMHost ignores standalone DMRA UDP; it only displays Talker Alias decoded
-        from embedded LC inside repeated voice bursts (B–E).
+        from embedded LC inside repeated voice bursts (B–E). Private (unit) calls use the
+        same passthrough/inject policy as group calls -- only the LC FLCO opt byte differs
+        (LC_OPT_U vs LC_OPT_G), since the destination is a subscriber ID, not a talkgroup.
         """
         settings = talker_alias_settings(self._config, system_name)
         if settings["enabled"] and self._get_protocols:
@@ -433,7 +436,8 @@ class LcTaMixin:
                     st = {}
                     status[slot] = st
                 if st.get("REP_STREAM_ID") != stream_id:
-                    dst_lc = LC_OPT + dst_id + rf_src
+                    lc_opt = LC_OPT_U if call_type == "unit" else LC_OPT_G
+                    dst_lc = lc_opt + dst_id + rf_src
                     st["REP_STREAM_ID"] = stream_id
                     st["REP_EMB_LC"] = self._encode_emblc(dst_lc)
                     self._init_talker_alias_embed(
@@ -563,8 +567,8 @@ class LcTaMixin:
     ) -> None:
         """Replace embedded LC on voice bursts B–E (legacy bridge.py parity).
 
-        Group-call superframes always carry the **destination** group LC (``emb_key``),
-        re-encoded for the rewritten TGID — this is required for the voice to be accepted
+        Superframes always carry the **destination** LC (``emb_key`` — group LC re-encoded
+        for the rewritten TGID, or unit LC for private calls) — this is required for the voice to be accepted
         by the receiving MMDVM (a mismatched embedded LC causes packet loss). When a
         Talker Alias is available (``TX_TA_EMB``: injected template or the source TA
         re-encoded from its DMRA/voice blocks) it is overlaid on alternate superframes.

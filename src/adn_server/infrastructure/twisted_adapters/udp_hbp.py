@@ -207,7 +207,7 @@ class HBPProtocol(DatagramProtocol):
         on_deactivate_dynamic_relays: Callable[[str], None] | None = None,
         on_obp_bcsq_received: Callable[[str, bytes, bytes], None] | None = None,
         on_talker_alias_local_repeat: Callable[[str, bytes, bytes, bytes], None] | None = None,
-        on_talker_alias_repeat_prepare: Callable[[str, bytes, bytes, bytes, int, bytes], None] | None = None,
+        on_talker_alias_repeat_prepare: Callable[[str, bytes, bytes, bytes, int, bytes, str], None] | None = None,
         on_talker_alias_repeat_burst: Callable[[str, int, bytes, int, bytes], bytes] | None = None,
         on_talker_alias_stream_end: Callable[[str, bytes], None] | None = None,
         on_dmra_fragment_stored: Callable[[str, bytes, bytes, bytes], None] | None = None,
@@ -423,6 +423,57 @@ class HBPProtocol(DatagramProtocol):
         index = self._ensure_downlink_index()
         return index.candidates(slot, tgid, connected_count=connected)
 
+    def _pvt_repeat_targets(self, dst_id: bytes) -> tuple[bytes, ...] | None:
+        """Which peer(s) get a private-call REPEAT, using _SUB_MAP's last-heard peer.
+
+        Returns ``None`` when we've never heard this destination transmit —
+        the caller should fall back to broadcasting to every peer (legacy
+        parity: hblink.py's master_datagramReceived repeats unconditionally
+        when the destination is unknown). Returns ``()`` when we know the
+        destination isn't reachable from here at all (heard on a different
+        system, or that specific peer isn't currently connected) — refusing
+        to blast the call to peers it can't possibly be for. Returns a
+        1-tuple with the exact peer_id when it's still connected here.
+
+        The report_slot / "SYSTEM-N" monitor display name is NOT used for
+        this — it's cosmetic and can be reassigned to a different peer across
+        refreshes (self-service peers without a stable report_slot fall back
+        to a sorted-by-id allocation recomputed each time). The raw peer_id
+        is what's actually stable.
+        """
+        sub_map = self._CONFIG.get("_SUB_MAP")
+        if not sub_map:
+            return None
+        entry = sub_map.get(dst_id)
+        if entry is None:
+            return None
+        d_system = entry[0]
+        d_peer_id = entry[3] if len(entry) > 3 else None
+        if d_system != self._system or d_peer_id is None:
+            return ()
+        if d_peer_id in self._peers:
+            return (d_peer_id,)
+        return ()
+
+    def _purge_sub_map_for_peer(self, peer_id: bytes) -> None:
+        """Drop every SUB_MAP entry last heard on ``peer_id``.
+
+        Called when a hotspot finishes (re)connecting (RPTC -> CONNECTION
+        "YES"). A subscriber's last-known hotspot is only trustworthy between
+        that hotspot's connects: while it was offline the radio may have
+        moved elsewhere, and there's no way to tell without seeing it
+        transmit again. So on reconnect we forget where any subscriber was
+        last heard on this peer, rather than risk a stale entry silently
+        misdirecting a private call. The subscriber simply can't receive a
+        private call again until it transmits and gets re-learned.
+        """
+        sub_map = self._CONFIG.get("_SUB_MAP")
+        if not sub_map:
+            return
+        stale = [rf_src for rf_src, entry in sub_map.items() if len(entry) > 3 and entry[3] == peer_id]
+        for rf_src in stale:
+            del sub_map[rf_src]
+
     def _peer_mesh_config(self) -> PeerMeshConfig:
         _global = self._CONFIG.get("GLOBAL", {})
         _sid = _global.get("SERVER_ID", b"\x00\x00\x00\x00")
@@ -579,6 +630,15 @@ class HBPProtocol(DatagramProtocol):
     def _peer_should_receive_dmrd(self, peer_id: bytes, packet: bytes) -> bool:
         if peer_id not in self._peers:
             return False
+        if len(packet) >= 16 and (packet[15] & 0x40):
+            # Private (unit) call: parse_dmrd_route_fields()/parse_dmrd_burst_fields()
+            # return None for these by design (they're group/vcsbk-only helpers), which
+            # would otherwise fall into the "parsed is None" branch below and, with more
+            # than one connected peer, incorrectly block delivery to everyone. Legacy
+            # repeats private calls unconditionally to every peer of the same master
+            # (hblink.py master_datagramReceived) — no per-peer OPTIONS/TG filtering
+            # applies, since the destination radio (not the hotspot) decides relevance.
+            return True
         parsed = parse_dmrd_route_fields(packet)
         if parsed is None:
             if self._inject_multi_peer_options_filter():
@@ -1190,10 +1250,12 @@ class HBPProtocol(DatagramProtocol):
                             logger.info("(%s) CALL DROPPED WITH STREAM ID %s ON TGID %s BY SYSTEM TS2 ACL", self._system, int_id(_stream_id), int_id(_dst_id))
                             self._laststrid[_slot] = _stream_id
                         return
-                # SUB_MAP update (legacy routerHBP.dmrd_received)
+                # SUB_MAP update (legacy routerHBP.dmrd_received). 4th element
+                # (peer_id) is new — lets same-system private-call repeat target
+                # the exact hotspot instead of broadcasting to every peer.
                 sub_map = self._CONFIG.get("_SUB_MAP")
                 if sub_map is not None:
-                    sub_map[_rf_src] = (self._system, _slot, pkt_time)
+                    sub_map[_rf_src] = (self._system, _slot, pkt_time, _peer_id)
                 self.note_dmrd_stream(_peer_id, _rf_src, _stream_id)
                 if (
                     _call_type in ("group", "vcsbk")
@@ -1274,26 +1336,23 @@ class HBPProtocol(DatagramProtocol):
                 if (
                     _repeat_ok
                     and self._config.get("REPEAT", True)
-                    and _call_type in ("group", "vcsbk")
+                    and _call_type in ("group", "vcsbk", "unit")
                     and _frame_type == HBPF_DATA_SYNC
                     and _dtype_vseq == HBPF_SLT_VHEAD
                 ):
                     if self._on_talker_alias_repeat_prepare:
                         self._on_talker_alias_repeat_prepare(
-                            self._system, _peer_id, _rf_src, _dst_id, _slot, _stream_id,
+                            self._system, _peer_id, _rf_src, _dst_id, _slot, _stream_id, _call_type,
                         )
                     elif self._on_talker_alias_local_repeat:
                         self._on_talker_alias_local_repeat(
                             self._system, _peer_id, _rf_src, _stream_id,
                         )
-                if (
-                    _repeat_ok
-                    and self._config.get("REPEAT", True)
-                    and _call_type in ("group", "vcsbk")
-                ):
+                if _repeat_ok and self._config.get("REPEAT", True):
                     _repeat_tail = _data[15:]
                     if (
-                        _dtype_vseq in (1, 2, 3, 4)
+                        _call_type in ("group", "vcsbk", "unit")
+                        and _dtype_vseq in (1, 2, 3, 4)
                         and len(_data) >= 53
                         and self._on_talker_alias_repeat_burst
                     ):
@@ -1302,9 +1361,18 @@ class HBPProtocol(DatagramProtocol):
                         )
                         _repeat_tail = b"".join([_data[15:20], _dmrpkt_out, _data[53:]])
                     _repeat_pkt = b"".join([_data[:11], _peer_id, _repeat_tail])
-                    for _peer in self._iter_downlink_peers(_repeat_pkt):
-                        if _peer != _peer_id:
-                            self.send_peer(_peer, _repeat_pkt)
+                    if _call_type == "unit":
+                        _pvt_targets = self._pvt_repeat_targets(_dst_id)
+                    else:
+                        _pvt_targets = None
+                    if _pvt_targets is None:
+                        for _peer in self._iter_downlink_peers(_repeat_pkt):
+                            if _peer != _peer_id:
+                                self.send_peer(_peer, _repeat_pkt)
+                    else:
+                        for _peer in _pvt_targets:
+                            if _peer != _peer_id:
+                                self.send_peer(_peer, _repeat_pkt)
                 # TG 4000: reset after REPEAT so peers see the packet (legacy order)
                 if self._handle_tg4000_packet(
                     _peer_id, _slot, _int_dst_id, _call_type, _frame_type, _dtype_vseq,
@@ -1388,7 +1456,7 @@ class HBPProtocol(DatagramProtocol):
                     self._on_in_band_signalling(self._system, _slot, _dst_id, pkt_time)
                 if (
                     _accepted
-                    and _call_type in ("group", "vcsbk")
+                    and _call_type in ("group", "vcsbk", "unit")
                     and _frame_type == HBPF_DATA_SYNC
                     and _dtype_vseq == HBPF_SLT_VTERM
                     and _slot in self.STATUS
@@ -1555,6 +1623,7 @@ class HBPProtocol(DatagramProtocol):
                             _rptc_field_str(self._peers[_peer_id]["SOFTWARE_ID"]),
                             _rptc_field_str(self._peers[_peer_id]["DESCRIPTION"]),
                         )
+                        self._purge_sub_map_for_peer(_peer_id)
                         self._refresh_connected_peer_count()
                         self._mark_downlink_index_dirty()
                         self._config_push_throttle.note_peer_connected()
@@ -1748,10 +1817,11 @@ class HBPProtocol(DatagramProtocol):
                             logger.info("(%s) CALL DROPPED WITH STREAM ID %s ON TGID %s BY SYSTEM TS2 ACL", self._system, int_id(_stream_id), int_id(_dst_id))
                             self._laststrid[_slot] = _stream_id
                         return
-                # SUB_MAP update (legacy routerHBP.dmrd_received)
+                # SUB_MAP update (legacy routerHBP.dmrd_received). 4th element
+                # (peer_id) is new — see the MASTER-mode write site for why.
                 sub_map = self._CONFIG.get("_SUB_MAP")
                 if sub_map is not None:
-                    sub_map[_rf_src] = (self._system, _slot, pkt_time)
+                    sub_map[_rf_src] = (self._system, _slot, pkt_time, _peer_id)
                 # TG 4000: reset after ACL/SUB_MAP (legacy order — routerHBP.dmrd_received)
                 if self._handle_tg4000_packet(
                     _peer_id, _slot, _int_dst_id, _call_type, _frame_type, _dtype_vseq,
@@ -2389,7 +2459,7 @@ def HBPProtocolFactory(
     on_deactivate_dynamic_relays: Callable[[str], None] | None = None,
     on_obp_bcsq_received: Callable[[str, bytes, bytes], None] | None = None,
     on_talker_alias_local_repeat: Callable[[str, bytes, bytes, bytes], None] | None = None,
-    on_talker_alias_repeat_prepare: Callable[[str, bytes, bytes, bytes, int, bytes], None] | None = None,
+    on_talker_alias_repeat_prepare: Callable[[str, bytes, bytes, bytes, int, bytes, str], None] | None = None,
     on_talker_alias_repeat_burst: Callable[[str, int, bytes, int, bytes], bytes] | None = None,
     on_talker_alias_stream_end: Callable[[str, bytes], None] | None = None,
     on_dmra_fragment_stored: Callable[[str, bytes, bytes, bytes], None] | None = None,

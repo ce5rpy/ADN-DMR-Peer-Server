@@ -303,6 +303,65 @@ def test_remap_voice_event_passes_through_non_proxy_systems() -> None:
     assert remap_inject_proxy_voice_event(raw, {}, {}) == raw
 
 
+def test_private_voice_tx_remaps_to_dest_peer_id_not_tg_subscription() -> None:
+    """Regression: a PRIVATE VOICE TX event was silently dropped -- the generic TX
+    path treats field 8 as a talkgroup and fans out via TG-subscription eligibility
+    (_peers_receiving_tgid), which a subscriber-id destination never matches. The
+    trailing dest_peer_id field (routing_use_cases._pvt_call_received) must route it
+    directly to that one hotspot's SYSTEM-N row instead."""
+    peers = {
+        bytes_4(730039110): _peer(),
+        bytes_4(730039101): _peer(),
+    }
+    peer_slots = {bytes_4(730039110): 1, bytes_4(730039101): 8}
+    config = _proxy_config(peers)
+    raw = "PRIVATE VOICE,START,TX,SYSTEM,1610544978,730039110,7300391,2,7300392,730039101"
+    events = remap_inject_proxy_voice_events(raw, config, config["SYSTEMS"], peer_slots)
+    assert len(events) == 1
+    parts = events[0].split(",")
+    assert parts[3] == "SYSTEM-8"
+    assert parts[2] == "TX"
+    assert parts[-1] == "730039101"
+
+
+def test_private_voice_tx_dropped_when_dest_peer_not_connected() -> None:
+    peers = {bytes_4(730039110): _peer()}
+    peer_slots = {bytes_4(730039110): 1}
+    config = _proxy_config(peers)
+    raw = "PRIVATE VOICE,START,TX,SYSTEM,1610544978,730039110,7300391,2,7300392,730039101"
+    events = remap_inject_proxy_voice_events(raw, config, config["SYSTEMS"], peer_slots)
+    assert events == []
+
+
+def test_private_voice_tx_without_dest_peer_id_falls_back_to_legacy_tg_fanout() -> None:
+    """Old-server-format event (no trailing peer id) -- must not crash, and since a
+    subscriber id is never a static TG, no companion TX is fabricated."""
+    peers = {
+        bytes_4(730039110): _peer(),
+        bytes_4(730039101): _peer(),
+    }
+    peer_slots = {bytes_4(730039110): 1, bytes_4(730039101): 8}
+    config = _proxy_config(peers)
+    raw = "PRIVATE VOICE,START,TX,SYSTEM,1610544978,730039110,7300391,2,7300392"
+    events = remap_inject_proxy_voice_events(raw, config, config["SYSTEMS"], peer_slots)
+    assert events == []
+
+
+def test_private_voice_end_tx_remaps_to_dest_peer_id_with_duration_field() -> None:
+    peers = {
+        bytes_4(730039110): _peer(),
+        bytes_4(730039101): _peer(),
+    }
+    peer_slots = {bytes_4(730039110): 1, bytes_4(730039101): 8}
+    config = _proxy_config(peers)
+    raw = "PRIVATE VOICE,END,TX,SYSTEM,1610544978,730039110,7300391,2,7300392,5.87,730039101"
+    events = remap_inject_proxy_voice_events(raw, config, config["SYSTEMS"], peer_slots)
+    assert len(events) == 1
+    parts = events[0].split(",")
+    assert parts[3] == "SYSTEM-8"
+    assert parts[-1] == "730039101"
+
+
 def test_hangtime_blocks_monitor_tx_fanout_to_blocked_peer() -> None:
     """Companion TX / OBP fan-out must not light peers blocked by GROUP_HANGTIME."""
     import time

@@ -52,6 +52,17 @@ _CSV_FAMILIES = {
     "GROUP VOICE": "GROUP",
     "PRIVATE VOICE": "PRIVATE",
     "UNIT DATA": "UNIT",
+    # routing_use_cases._dtype_labels emits one of these instead of the generic
+    # "UNIT DATA" label for dtype_vseq in (3, 6, 7, 8) — private-call CSBK setup
+    # signaling and SMS/GPS (ARS/LRRP) header + VCSBK blocks. Without these,
+    # parse_bridge_event_csv() returns None and the event is silently dropped
+    # ("voice_event not emitted (unmapped CSV)"), so a private call whose CSBK
+    # handshake never escalates to voice (e.g. destination unreachable) never
+    # shows up in the monitor at all.
+    "UNIT CSBK": "UNIT",
+    "UNIT DATA HEADER": "UNIT",
+    "UNIT VCSBK 1/2 DATA BLOCK": "UNIT",
+    "UNIT VCSBK 3/4 DATA BLOCK": "UNIT",
 }
 
 
@@ -515,7 +526,20 @@ def parse_bridge_event_csv(event: str, *, ts: float | None = None) -> dict[str, 
             voice["duration_s"] = None
     elif phase != "END":
         voice["duration_s"] = None
-    voice["is_announcement"] = len(parts) > 9 and parts[-1] == "1"
+    if call_family == "PRIVATE" and direction == "TX":
+        # routing_use_cases._pvt_call_received appends the destination hotspot's own
+        # peer id (from SUB_MAP) after the legacy fields -- there's no static TG a
+        # private call's subscriber-id destination could ever match, so this is the
+        # only way the monitor can know which single hotspot is receiving.
+        voice["is_announcement"] = False
+        base_len = 10 if phase == "END" else 9
+        if len(parts) > base_len:
+            try:
+                voice["dest_peer_id"] = int(parts[-1])
+            except ValueError:
+                pass
+    else:
+        voice["is_announcement"] = len(parts) > 9 and parts[-1] == "1"
     return voice
 
 
