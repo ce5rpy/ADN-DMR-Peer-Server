@@ -45,6 +45,7 @@ from ...application.routing.downlink import (
     normalize_ua_voice_slot,
     peer_accepts_dmra,
     peer_accepts_group_dmrd_packet,
+    peer_slot_block_reason,
     remap_dmrd_for_peer,
     track_peer_group_dmrd,
 )
@@ -354,7 +355,7 @@ class HBPProtocol(DatagramProtocol):
             if not isinstance(peer, dict) or call_type not in ("group", "vcsbk"):
                 self.send_peer(_peer, _packet)
                 continue
-            voice_slots = iter_downlink_voice_slots(peer, wire_slot, tgid)
+            voice_slots = iter_downlink_voice_slots(peer, wire_slot, tgid, self._config, peer_id=_peer)
             if not voice_slots:
                 voice_slots = [
                     peer_downlink_voice_slot(
@@ -752,16 +753,28 @@ class HBPProtocol(DatagramProtocol):
         stream_id = route_pkt[16:20] if len(route_pkt) >= 20 else b""
         return pk, stream_id
 
-    def _log_downlink_drop_once(self, peer_id: bytes, route_pkt: bytes) -> None:
+    def _log_downlink_drop_once(
+        self, peer_id: bytes, route_pkt: bytes, peer: dict[str, Any] | None,
+    ) -> None:
         key = self._downlink_drop_key(peer_id, route_pkt)
         if key in self._downlink_drop_logged:
             return
         self._downlink_drop_logged.add(key)
+        # By the time send_peer reaches this call, _peer_should_receive_dmrd
+        # already passed (it returns silently, without logging, on its own
+        # earlier check) -- so the only thing left that could have rejected
+        # it here is slot-busy/GROUP_HANGTIME. peer_slot_block_reason shares
+        # its logic with the actual accept/reject check (peer_slot_blocks_downlink),
+        # so this can't drift from the real decision.
+        reason = "unknown"
+        if isinstance(peer, dict):
+            reason = peer_slot_block_reason(self._downlink_ctx(), peer_id, peer, route_pkt) or "unknown"
         logger.info(
-            "(%s) Downlink dropped for peer %s TG %s (OPTIONS filter, slot busy, or GROUP_HANGTIME)",
+            "(%s) Downlink dropped for peer %s TG %s (%s)",
             self._system,
             int_id(peer_id),
             int_id(route_pkt[8:11]),
+            reason,
         )
 
     def send_peer(self, _peer: bytes, _packet: bytes, *, _skip_dual_expand: bool = False) -> None:
@@ -770,20 +783,34 @@ class HBPProtocol(DatagramProtocol):
                 return
             peer = self._peers.get(_peer)
             route_pkt = _packet
-            if peer is not None:
+            if peer is not None and not _skip_dual_expand:
+                # Caller already remapped to the intended slot via
+                # iter_downlink_voice_slots' explicit per-slot loop -- re-running
+                # the single-slot remap here would collapse a dual-slot delivery
+                # (e.g. a dynamically-locked TG active on both slots) back onto
+                # whichever slot that single-slot decision happens to prefer.
                 route_pkt = remap_dmrd_for_peer(
                     _packet, peer, self._config, peer_id=_peer,
                 )
             if not self._peer_would_accept_group_dmrd(
                 _peer, _packet if not _skip_dual_expand else route_pkt, routed=_skip_dual_expand,
             ):
-                self._log_downlink_drop_once(_peer, route_pkt)
+                self._log_downlink_drop_once(_peer, route_pkt, peer)
                 return
             self._downlink_drop_logged.discard(self._downlink_drop_key(_peer, route_pkt))
             _packet = b"".join([route_pkt[:11], _peer, route_pkt[15:]])
             ctx = self._downlink_ctx()
             if isinstance(peer, dict):
-                track_peer_group_dmrd(ctx, _peer, _packet, peer, from_ingress=False)
+                # Pass the packet's own (already-decided) slot explicitly --
+                # track_peer_group_dmrd's own voice_slot=None fallback re-derives
+                # it via peer_downlink_voice_slot, which always prefers slot 1
+                # when a dynamic TG is locked on both slots, mistracking state
+                # for whichever delivery actually used slot 2.
+                _route_parsed = parse_dmrd_route_fields(_packet)
+                track_peer_group_dmrd(
+                    ctx, _peer, _packet, peer, from_ingress=False,
+                    voice_slot=_route_parsed[0] if _route_parsed else None,
+                )
         self.transport.write(_packet, self._peers[_peer]["SOCKADDR"])
 
     def _ta_buffer_enabled(self) -> bool:
@@ -1367,8 +1394,23 @@ class HBPProtocol(DatagramProtocol):
                         _pvt_targets = None
                     if _pvt_targets is None:
                         for _peer in self._iter_downlink_peers(_repeat_pkt):
-                            if _peer != _peer_id:
-                                self.send_peer(_peer, _repeat_pkt)
+                            if _peer == _peer_id:
+                                continue
+                            _repeat_peer_obj = self._peers.get(_peer)
+                            if _call_type in ("group", "vcsbk") and isinstance(_repeat_peer_obj, dict):
+                                _repeat_voice_slots = iter_downlink_voice_slots(
+                                    _repeat_peer_obj, _slot, int_id(_dst_id),
+                                    self._config, peer_id=_peer,
+                                )
+                                if len(_repeat_voice_slots) > 1:
+                                    for _repeat_vs in _repeat_voice_slots:
+                                        _repeat_remapped = remap_dmrd_for_peer(
+                                            _repeat_pkt, _repeat_peer_obj, self._config,
+                                            peer_id=_peer, voice_slot=_repeat_vs,
+                                        )
+                                        self.send_peer(_peer, _repeat_remapped, _skip_dual_expand=True)
+                                    continue
+                            self.send_peer(_peer, _repeat_pkt)
                     else:
                         for _peer in _pvt_targets:
                             if _peer != _peer_id:

@@ -1208,6 +1208,27 @@ def _peer_ua_multi_store(sys_cfg: dict[str, Any]) -> dict[bytes, dict[int, set[i
     return store
 
 
+def _peer_static_tg_blocks_slot(peer: dict[str, Any], slot: int, tgid: int) -> bool:
+    """Does this peer's static OPTIONS already cover ``tgid`` for this exact
+    slot? Simplex peers have one real RF path regardless of nominal TS1/TS2,
+    so any static match blocks (matches peer_receives_group_tgid's
+    either-slot check); duplex peers are checked per-slot, since a static
+    match on one slot must not block genuinely independent dynamic activity
+    on the *other* slot (e.g. TG static on TS2, this same peer separately
+    keying up the same TG on TS1)."""
+    from adn_server.application.report.payloads import parse_peer_options_static
+
+    ts1, ts2 = parse_peer_options_static(peer.get("OPTIONS"))
+    tg = str(tgid)
+    if peer_is_simplex(peer):
+        return tg in ts1 or tg in ts2
+    if int(slot) == 1:
+        return tg in ts1
+    if int(slot) == 2:
+        return tg in ts2
+    return False
+
+
 def register_peer_ua_multi_tg(
     peer: dict[str, Any],
     peer_id: bytes,
@@ -1221,7 +1242,7 @@ def register_peer_ua_multi_tg(
     tgid_i = int(tgid)
     if not is_ua_session_tgid(tgid_i):
         return
-    if peer_receives_group_tgid(peer, slot, tgid_i):
+    if _peer_static_tg_blocks_slot(peer, slot, tgid_i):
         return
     pk = bytes_4(int_id(peer_id))
     per_peer = _peer_ua_multi_store(sys_cfg).setdefault(pk, {})
@@ -1257,6 +1278,50 @@ def peer_owns_multi_dynamic_ua(
         if isinstance(slot_set, set) and tgid_i in slot_set:
             return True
     return False
+
+
+def peer_dynamic_tg_active_on_slot(
+    peer: dict[str, Any],
+    tgid: int,
+    slot: int,
+    sys_cfg: dict[str, Any] | None,
+    *,
+    peer_id: bytes | None = None,
+) -> bool:
+    """True when a *dynamic* (non-static OPTIONS) TG is active on this
+    specific slot for this peer right now. Covers SINGLE=1 (independent
+    exclusive session per slot) and SINGLE=0 (independently keyed multi-TG
+    set per slot)."""
+    if not sys_cfg or peer_id is None:
+        return False
+    tgid_i = int(tgid)
+    if peer_single_mode(peer, sys_cfg):
+        locked = peer_single_exclusive_tgid(peer, slot, sys_cfg, peer_id=peer_id)
+        return locked is not None and locked == tgid_i
+    store = sys_cfg.get("_PEER_UA_MULTI_TGS")
+    if not isinstance(store, dict):
+        return False
+    per_peer = store.get(bytes_4(int_id(peer_id)))
+    if not isinstance(per_peer, dict):
+        return False
+    slot_set = per_peer.get(slot)
+    return isinstance(slot_set, set) and tgid_i in slot_set
+
+
+def peer_dynamic_tg_active_on_both_slots(
+    peer: dict[str, Any],
+    tgid: int,
+    sys_cfg: dict[str, Any] | None,
+    *,
+    peer_id: bytes | None = None,
+) -> bool:
+    """True when a *dynamic* (non-static OPTIONS) TG is active on both slot 1
+    and slot 2 for this peer right now -- static-or-dynamic makes no
+    difference to whether a duplex peer should get the call on both slots."""
+    return (
+        peer_dynamic_tg_active_on_slot(peer, tgid, 1, sys_cfg, peer_id=peer_id)
+        and peer_dynamic_tg_active_on_slot(peer, tgid, 2, sys_cfg, peer_id=peer_id)
+    )
 
 
 def register_peer_ua_session(
