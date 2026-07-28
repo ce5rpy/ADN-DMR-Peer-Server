@@ -31,6 +31,7 @@ import time
 from typing import Any, Callable
 
 from ..domain import HBPF_SLT_VTERM, bytes_3, int_id
+from ..domain.hbp_protocol import normalize_fixed_width_ascii
 from .server_voice import server_voice_rf_src_bytes
 
 logger = logging.getLogger(__name__)
@@ -97,8 +98,7 @@ class IdentUseCases:
             for _peerid in peers:
                 peer_cfg = peers.get(_peerid, {})
                 if isinstance(peer_cfg, dict) and peer_cfg.get("CALLSIGN"):
-                    cs = peer_cfg["CALLSIGN"]
-                    _callsign = cs.decode("utf-8", errors="replace") if isinstance(cs, bytes) else cs
+                    _callsign = normalize_fixed_width_ascii(peer_cfg["CALLSIGN"])
                     break
             if not _callsign:
                 logger.debug("(IDENT) %s System has no peers or no recorded callsign, skipping", system)

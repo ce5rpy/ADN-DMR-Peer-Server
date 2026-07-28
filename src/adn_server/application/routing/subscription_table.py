@@ -51,6 +51,7 @@ from typing import Any
 from ...domain import bytes_3, bytes_4, int_id
 from ...domain.config_coerce import coerce_bool, parse_options_single
 from ...domain.dynamic_tg import DynamicTgEntry
+from ...domain.hbp_protocol import normalize_fixed_width_ascii
 from ..proxy.deployment import is_proxy_inject_only
 
 logger = logging.getLogger(__name__)
@@ -805,10 +806,7 @@ class SubscriptionTableMixin:
                 parts.append(f"peers_connected={len(connected)}")
                 if connected:
                     def _cs(c):
-                        v = c.get("CALLSIGN") or b""
-                        if isinstance(v, bytes):
-                            return v.decode("utf8", errors="replace").strip() or "?"
-                        return str(v).strip() or "?"
+                        return normalize_fixed_width_ascii(c.get("CALLSIGN")) or "?"
                     parts.append(
                         "peers=[%s]"
                         % ", ".join("%s/%s" % (p.get("RADIO_ID", "?"), _cs(p)) for p in connected[:10])
