@@ -41,6 +41,8 @@ from .helpers import (
     parse_dmrd_burst_fields,
     parse_dmrd_route_fields,
     peer_downlink_voice_slot,
+    peer_dynamic_tg_active_on_both_slots,
+    peer_dynamic_tg_active_on_slot,
     peer_is_simplex,
     peer_options_static_tg_slot,
     peer_receives_group_tgid,
@@ -165,23 +167,28 @@ def peer_hangtime_voice_slots(
     return {int(rf_slot), int(wire_slot), int(listen_slot)}
 
 
-def peer_slot_blocks_downlink(
+def peer_slot_block_reason(
     ctx: DownlinkContext,
     peer_id: bytes,
     peer: dict[str, Any],
     packet: bytes,
     *,
     pkt_time: float | None = None,
-) -> bool:
-    """P2/P3: True when slot busy or GROUP_HANGTIME blocks this downlink."""
+) -> str | None:
+    """P2/P3: reason this downlink is slot-busy/hangtime blocked, or None if not.
+
+    Same logic as ``peer_slot_blocks_downlink`` (which just checks ``is not
+    None``) -- kept as one function so the diagnostic reason can never drift
+    from the actual accept/reject decision.
+    """
     if packet[:4] != b"DMRD":
-        return False
+        return None
     parsed = parse_dmrd_route_fields(packet)
     if parsed is None:
-        return False
+        return None
     wire_slot, tgid, call_type = parsed
     if call_type not in ("group", "vcsbk"):
-        return False
+        return None
     pk = bytes_4(int_id(peer_id))
     burst = parse_dmrd_burst_fields(packet)
     stream_id = burst[3] if burst is not None else b""
@@ -218,22 +225,22 @@ def peer_slot_blocks_downlink(
                                 and int_id(slot_st.get("RX_TGID", b"")) == active_tg
                             )
                             if not rx_listening:
-                                return True
+                                return f"VTERM: other stream TG {active_tg} still active on this peer"
             active = per_slot.get(int(listen_slot))
             if not isinstance(active, dict):
                 for row in per_slot.values():
                     if not isinstance(row, dict):
                         continue
                     if int(row.get("tgid", 0) or 0) == int_id(dst_id):
-                        return False
-                return False
+                        return None
+                return None
             if active.get("stream_id") == stream_id:
-                return False
+                return None
             if int(active.get("tgid", 0) or 0) == int_id(dst_id):
-                return False
-            return True
+                return None
+            return f"VTERM: listen slot busy with TG {int(active.get('tgid', 0) or 0)}"
     if not ctx.per_peer_contention():
-        return False
+        return None
     hang = float(ctx.sys_cfg.get("GROUP_HANGTIME", 0) or 0)
     now = time.time() if pkt_time is None else float(pkt_time)
     seed_hangtime_for_stale_ingress_voice_slots(ctx, peer_id, pkt_time=now)
@@ -241,7 +248,7 @@ def peer_slot_blocks_downlink(
     if hang > 0:
         for hang_row in ctx.peer_voice_hangtime.get(pk, {}).values():
             if _peer_transmit_hangtime_blocks(hang_row, incoming_tgid_b, now, hang):
-                return True
+                return "GROUP_HANGTIME: recent local transmit still hanging on this peer"
     peer_slots = ctx.peer_voice_slots.get(pk)
     voice_slots = peer_hangtime_voice_slots(
         peer, wire_slot, tgid, ctx.sys_cfg, peer_id=peer_id,
@@ -263,8 +270,20 @@ def peer_slot_blocks_downlink(
             voice_slot=voice_slot,
             sys_cfg=ctx.sys_cfg,
         ):
-            return True
-    return False
+            return f"slot {voice_slot} busy or in GROUP_HANGTIME"
+    return None
+
+
+def peer_slot_blocks_downlink(
+    ctx: DownlinkContext,
+    peer_id: bytes,
+    peer: dict[str, Any],
+    packet: bytes,
+    *,
+    pkt_time: float | None = None,
+) -> bool:
+    """P2/P3: True when slot busy or GROUP_HANGTIME blocks this downlink."""
+    return peer_slot_block_reason(ctx, peer_id, peer, packet, pkt_time=pkt_time) is not None
 
 
 def remap_dmrd_for_peer(
@@ -656,17 +675,38 @@ def iter_downlink_voice_slots(
     peer: dict[str, Any],
     wire_slot: int,
     tgid: int,
+    sys_cfg: dict[str, Any] | None = None,
+    *,
+    peer_id: bytes | None = None,
 ) -> list[int]:
     """Voice slot(s) to deliver a group downlink to this peer.
 
     Trusts ``peer_listen_slots`` -- it already collapses simplex peers/bridges
     to one slot via ``peer_is_simplex``, and only returns more than one slot
     for a peer confirmed duplex-capable with the TG on both TS1 and TS2, which
-    should genuinely receive on both (see peer_listen_slots docstring).
+    should genuinely receive on both (see peer_listen_slots docstring). Static
+    vs dynamic makes no difference here -- a TG independently activated on
+    both slots (SINGLE=0 keyed, or SINGLE=1 exclusive session per slot) gets
+    the same dual-slot treatment via peer_dynamic_tg_active_on_both_slots.
+
+    Mixed case: static on exactly one slot *and* dynamically active on the
+    other (e.g. TS1 static, TS2 keyed dynamically) must also deliver to both
+    -- checked via peer_dynamic_tg_active_on_slot on whichever slot the
+    static list didn't already claim.
     """
     listen = peer_listen_slots(peer, tgid)
+    if len(listen) > 1:
+        return listen
+    if len(listen) == 1 and not peer_is_simplex(peer):
+        static_slot = listen[0]
+        other_slot = 2 if static_slot == 1 else 1
+        if peer_dynamic_tg_active_on_slot(peer, tgid, other_slot, sys_cfg, peer_id=peer_id):
+            return sorted({static_slot, other_slot})
+        return listen
+    if peer_dynamic_tg_active_on_both_slots(peer, tgid, sys_cfg, peer_id=peer_id):
+        return [1, 2]
     if listen:
         return listen
     if peer_receives_group_tgid(peer, wire_slot, tgid):
-        return [peer_downlink_voice_slot(peer, wire_slot, tgid)]
+        return [peer_downlink_voice_slot(peer, wire_slot, tgid, sys_cfg, peer_id=peer_id)]
     return [int(wire_slot)]
