@@ -91,11 +91,12 @@ def normalize_ua_voice_slot(peer: dict[str, Any], wire_slot: int) -> int:
 
 
 def peer_listen_slots(peer: dict[str, Any], tgid: int) -> list[int]:
-    """Candidate RF slots where this peer is subscribed to ``tgid`` (OPTIONS).
+    """RF slots where this peer listens for ``tgid`` (static OPTIONS or wire fallback).
 
-    When the same TG is listed on both TS1 and TS2, both slots are returned as
-    candidates; :func:`iter_downlink_voice_slots` collapses that to **one**
-    delivery slot (never duplicate DMRD).
+    A genuinely duplex-capable peer (see ``peer_is_simplex``) with the same TG
+    listed on both TS1 and TS2 gets both slots back -- it has two independent
+    RF timeslots and is expected to key up on both, same as a real repeater
+    configured that way. Simplex peers/bridges always collapse to one slot.
     """
     from adn_server.application.report.payloads import parse_peer_options_static
 
@@ -656,18 +657,14 @@ def iter_downlink_voice_slots(
     wire_slot: int,
     tgid: int,
 ) -> list[int]:
-    """Exactly one voice slot for group downlink to this peer.
+    """Voice slot(s) to deliver a group downlink to this peer.
 
-    Legacy ``send_peers`` sends one DMRD per peer. If OPTIONS lists the same TG
-    on TS1 and TS2, keep a single copy on the bridge/OBP wire slot (remap only
-    when the peer listens on a different unambiguous slot).
+    Trusts ``peer_listen_slots`` -- it already collapses simplex peers/bridges
+    to one slot via ``peer_is_simplex``, and only returns more than one slot
+    for a peer confirmed duplex-capable with the TG on both TS1 and TS2, which
+    should genuinely receive on both (see peer_listen_slots docstring).
     """
     listen = peer_listen_slots(peer, tgid)
-    if len(listen) > 1:
-        ws = int(wire_slot)
-        if ws in listen:
-            return [ws]
-        return [int(peer_downlink_voice_slot(peer, wire_slot, tgid))]
     if listen:
         return listen
     if peer_receives_group_tgid(peer, wire_slot, tgid):
