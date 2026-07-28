@@ -4,6 +4,14 @@ All notable changes to **adn-server** are documented here.
 
 <!-- version list -->
 
+## v2.5.2 (2026-07-28)
+
+### Bug Fixes
+
+- Deliver a group call on both slots when a peer has the TG on TS1+TS2
+  ([`4360efa`](https://github.com/ce5rpy/ADN-DMR-Peer-Server/commit/4360efa3d984faf773fa3087d56592f10146571d))
+
+
 ## v2.5.1 (2026-07-25)
 
 ### Bug Fixes
