@@ -170,13 +170,26 @@ def test_inject_only_hangtime_blocks_static_tg_after_dynamic_tx() -> None:
     assert not peer_slot_blocks_downlink(ctx, peer_id, peer, same7306, pkt_time=now + 8)
 
 
-def test_same_static_tg_on_both_slots_delivers_once_on_wire_slot() -> None:
-    """TG on TS1+TS2 OPTIONS: one DMRD on the bridge wire slot (not dual fan-out)."""
+def test_same_static_tg_on_both_slots_delivers_twice() -> None:
+    """Duplex peer: TG listed in TS1 and TS2 OPTIONS delivers on both voice slots."""
     peer = {"OPTIONS": b"TS1=730444;TS2=730444;"}
-    assert iter_downlink_voice_slots(peer, 1, 730444) == [1]
-    assert iter_downlink_voice_slots(peer, 2, 730444) == [2]
-    # Subscription still visible on both; delivery collapses in iter_*.
+    assert iter_downlink_voice_slots(peer, 1, 730444) == [1, 2]
     assert peer_listen_slots(peer, 730444) == [1, 2]
+
+
+def test_same_static_tg_on_both_slots_bridge_delivers_once() -> None:
+    """Simplex peer (bridge, e.g. ysf2dmr/adn-bridge): TG on both OPTIONS slots
+    still collapses to a single copy -- it has one audio pipeline, not two
+    independent RF timeslots, so dual-slot fan-out would double its downlink
+    rate (see PR #53)."""
+    peer = {
+        "OPTIONS": b"TS1=730444;TS2=730444;",
+        "RX_FREQ": "000000000",
+        "TX_FREQ": "000000000",
+    }
+    assert iter_downlink_voice_slots(peer, 1, 730444) == [2]
+    assert iter_downlink_voice_slots(peer, 2, 730444) == [2]
+    assert peer_listen_slots(peer, 730444) == [2]
 
 
 def test_static_tg_on_one_slot_unchanged() -> None:
