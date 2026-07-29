@@ -152,6 +152,88 @@ def test_group_call_static_on_one_slot_dynamic_on_other_repeats_to_both() -> Non
     assert slots == [1, 2]
 
 
+def test_group_call_echoes_to_transmitting_peers_own_other_slot() -> None:
+    """New behavior: a repeater transmitting a TG on one slot, that is also
+    subscribed (static or dynamic) to that same TG on its OTHER slot, hears
+    its own call echoed there too -- that other slot is a genuinely
+    independent RF path also tuned to the TG."""
+    stack = build_hbp_repeat_stack(talker_alias=False)
+    stack.config["SYSTEMS"][stack.system_name]["SINGLE_MODE"] = False
+    # TG static on TS1 only; transmits on slot 2 -- slot 1 is the "other" slot.
+    stack.register_peer(_PEER_TX, _ADDR_TX, options=f"TS1={_TG};")
+
+    base = _group_spec(slot=2)
+    stack.inject_spec(DeterministicScenario.voice_head_spec(base), _ADDR_TX)
+    stack.transport.clear()
+    stack.inject_spec(
+        DeterministicScenario.voice_burst_spec(base, seq=1, dtype_vseq=1), _ADDR_TX,
+    )
+
+    echo = [pkt for pkt, addr in stack.transport.sent if addr == _ADDR_TX and pkt[:4] == DMRD]
+    slots = sorted(parse_dmr_fields(pkt)["slot"] for pkt in echo)
+    assert slots == [1], f"peer should hear itself echoed on its own other slot -- got {slots}"
+
+
+def test_group_call_echoes_to_own_dynamically_subscribed_other_slot() -> None:
+    """Same self-echo, but the other slot's subscription is dynamic (SINGLE=0
+    keyed), not static -- static vs dynamic must be treated identically."""
+    stack = build_hbp_repeat_stack(talker_alias=False)
+    stack.config["SYSTEMS"][stack.system_name]["SINGLE_MODE"] = False
+    stack.register_peer(_PEER_TX, _ADDR_TX, options="")
+    pk = bytes_4(int.from_bytes(_PEER_TX, "big"))
+    stack.config["SYSTEMS"][stack.system_name].setdefault("_PEER_UA_MULTI_TGS", {})[pk] = {
+        1: {_TG},
+    }
+
+    base = _group_spec(slot=2)
+    stack.inject_spec(DeterministicScenario.voice_head_spec(base), _ADDR_TX)
+    stack.transport.clear()
+    stack.inject_spec(
+        DeterministicScenario.voice_burst_spec(base, seq=1, dtype_vseq=1), _ADDR_TX,
+    )
+
+    echo = [pkt for pkt, addr in stack.transport.sent if addr == _ADDR_TX and pkt[:4] == DMRD]
+    slots = sorted(parse_dmr_fields(pkt)["slot"] for pkt in echo)
+    assert slots == [1], f"peer should hear itself echoed on its dynamically-subscribed other slot -- got {slots}"
+
+
+def test_group_call_echoes_symmetrically_on_opposite_slot() -> None:
+    """Same behavior, transmitting on the opposite slot: TG static on TS2,
+    transmits on slot 1 -- echoes back to itself on slot 2."""
+    stack = build_hbp_repeat_stack(talker_alias=False)
+    stack.config["SYSTEMS"][stack.system_name]["SINGLE_MODE"] = False
+    stack.register_peer(_PEER_TX, _ADDR_TX, options=f"TS2={_TG};")
+
+    base = _group_spec(slot=1)
+    stack.inject_spec(DeterministicScenario.voice_head_spec(base), _ADDR_TX)
+    stack.transport.clear()
+    stack.inject_spec(
+        DeterministicScenario.voice_burst_spec(base, seq=1, dtype_vseq=1), _ADDR_TX,
+    )
+
+    echo = [pkt for pkt, addr in stack.transport.sent if addr == _ADDR_TX and pkt[:4] == DMRD]
+    slots = sorted(parse_dmr_fields(pkt)["slot"] for pkt in echo)
+    assert slots == [2], f"peer should hear itself echoed on its own other slot -- got {slots}"
+
+
+def test_group_call_no_self_echo_when_not_subscribed_on_other_slot() -> None:
+    """No TG configured at all -- no self-echo, matching existing (unchanged)
+    single-peer behavior."""
+    stack = build_hbp_repeat_stack(talker_alias=False)
+    stack.config["SYSTEMS"][stack.system_name]["SINGLE_MODE"] = False
+    stack.register_peer(_PEER_TX, _ADDR_TX, options="")
+
+    base = _group_spec(slot=2)
+    stack.inject_spec(DeterministicScenario.voice_head_spec(base), _ADDR_TX)
+    stack.transport.clear()
+    stack.inject_spec(
+        DeterministicScenario.voice_burst_spec(base, seq=1, dtype_vseq=1), _ADDR_TX,
+    )
+
+    echo = [pkt for pkt, addr in stack.transport.sent if addr == _ADDR_TX and pkt[:4] == DMRD]
+    assert echo == []
+
+
 def test_group_call_on_dynamic_tg_single_mode_stays_exclusive_to_one_slot() -> None:
     """SINGLE=1 ("one exclusive dynamic TG per hotspot, either RF slot; new
     local TX replaces all others" -- register_peer_ua_session) cannot have
@@ -178,3 +260,69 @@ def test_group_call_on_dynamic_tg_single_mode_stays_exclusive_to_one_slot() -> N
     downlink = [pkt for pkt, addr in stack.transport.sent if addr == _ADDR_RX and pkt[:4] == DMRD]
     slots = sorted(parse_dmr_fields(pkt)["slot"] for pkt in downlink)
     assert slots == [2]
+
+
+def test_group_call_self_echo_not_blocked_by_own_ingress_when_dynamic_tg_on_both_slots() -> None:
+    """Regression: when a TG is dynamically (SINGLE=0) active on both slots,
+    peer_downlink_voice_slot used to always resolve to slot 1 regardless of
+    which slot was asked about. That made the busy-check for a slot-1-to-2
+    self-echo also examine slot 1 -- the peer's own live ingress slot -- so
+    the echo was wrongly reported busy even though slot 2 was free."""
+    stack = build_hbp_repeat_stack(talker_alias=False)
+    stack.config["SYSTEMS"][stack.system_name]["SINGLE_MODE"] = False
+    stack.register_peer(_PEER_TX, _ADDR_TX, options="")
+    pk = bytes_4(int.from_bytes(_PEER_TX, "big"))
+    stack.config["SYSTEMS"][stack.system_name].setdefault("_PEER_UA_MULTI_TGS", {})[pk] = {
+        1: {_TG}, 2: {_TG},
+    }
+
+    base = _group_spec(slot=1)
+    stack.inject_spec(DeterministicScenario.voice_head_spec(base), _ADDR_TX)
+    stack.transport.clear()
+    stack.inject_spec(
+        DeterministicScenario.voice_burst_spec(base, seq=1, dtype_vseq=1), _ADDR_TX,
+    )
+
+    echo = [pkt for pkt, addr in stack.transport.sent if addr == _ADDR_TX and pkt[:4] == DMRD]
+    slots = sorted(parse_dmr_fields(pkt)["slot"] for pkt in echo)
+    assert slots == [2], (
+        "self-echo to slot 2 must not be blocked by the source's own ingress "
+        f"on slot 1 -- got {slots}"
+    )
+
+
+def test_group_call_self_echo_to_dynamic_slot_not_blocked_by_own_static_slot_ingress() -> None:
+    """Regression: TG static on TS1 only, dynamically activated on TS2 by an
+    earlier call. peer_hangtime_voice_slots used to always union in the
+    static slot (TS1) as a busy-check candidate, via peer_downlink_voice_slot,
+    even when the caller only cares about TS2 -- so a later TX on TS1 (the
+    static slot, now busy with the source's own ingress) wrongly blocked its
+    own self-echo delivery to TS2, even though TS2 was free."""
+    stack = build_hbp_repeat_stack(talker_alias=False)
+    stack.config["SYSTEMS"][stack.system_name]["SINGLE_MODE"] = False
+    stack.register_peer(_PEER_TX, _ADDR_TX, options=f"TS1={_TG};SINGLE=0;")
+
+    # First call: TX on TS2 (not in static OPTIONS) -- dynamically activates
+    # TS2, and (as a side effect) self-echoes back to the static TS1 slot.
+    base_a = _group_spec(slot=2)
+    stack.inject_spec(DeterministicScenario.voice_head_spec(base_a), _ADDR_TX)
+    stack.inject_spec(
+        DeterministicScenario.voice_burst_spec(base_a, seq=1, dtype_vseq=1), _ADDR_TX,
+    )
+    stack.inject_spec(DeterministicScenario.voice_term_spec(base_a, seq=2), _ADDR_TX)
+
+    # Second call: TX on TS1 (the static slot) -- must self-echo to TS2,
+    # which is now dynamically active from the first call.
+    stack.transport.clear()
+    base_b = _group_spec(slot=1)
+    stack.inject_spec(DeterministicScenario.voice_head_spec(base_b), _ADDR_TX)
+    stack.inject_spec(
+        DeterministicScenario.voice_burst_spec(base_b, seq=1, dtype_vseq=1), _ADDR_TX,
+    )
+
+    echo = [pkt for pkt, addr in stack.transport.sent if addr == _ADDR_TX and pkt[:4] == DMRD]
+    slots = sorted(parse_dmr_fields(pkt)["slot"] for pkt in echo)
+    assert slots == [2, 2], (
+        "self-echo to the dynamically-active TS2 must not be blocked by the "
+        f"source's own busy static TS1 -- got {slots}"
+    )

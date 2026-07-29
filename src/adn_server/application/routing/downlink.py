@@ -34,7 +34,7 @@ from .helpers import (
     _peer_transmit_hangtime_blocks,
     _peer_ua_session_entry,
     clear_peer_ua_sessions,
-    hbp_slot_blocks_group_voice_for_peer,
+    hbp_slot_blocks_group_voice_for_peer_reason,
     is_special_tg,
     is_ua_session_tgid,
     master_per_peer_slot_contention,
@@ -159,12 +159,27 @@ def peer_hangtime_voice_slots(
     *,
     peer_id: bytes | None = None,
 ) -> set[int]:
-    """RF / OPTIONS slots that share transmit hangtime for this downlink."""
-    rf_slot = normalize_ua_voice_slot(peer, int(wire_slot))
+    """RF / OPTIONS slots that share transmit hangtime for this downlink.
+
+    ``wire_slot`` is already the caller's final, decided delivery slot (the
+    packet has already been remapped). If this peer is genuinely eligible for
+    ``tgid`` on ``wire_slot`` (static or dynamic, per the same combined logic
+    ``iter_downlink_voice_slots`` uses for the actual delivery decision),
+    trust it and check only that slot -- falling back to also deriving
+    ``rf_slot``/``listen_slot`` would pull in an unrelated slot (e.g. a static
+    slot for the same TG on this peer) whenever ``peer_downlink_voice_slot``'s
+    single-slot answer differs from ``wire_slot``, wrongly reporting that
+    unrelated slot's own busy/ingress state instead of ``wire_slot``'s.
+    """
+    wire_slot_i = int(wire_slot)
+    eligible = iter_downlink_voice_slots(peer, wire_slot_i, int(tgid), sys_cfg, peer_id=peer_id)
+    if wire_slot_i in eligible:
+        return {wire_slot_i}
+    rf_slot = normalize_ua_voice_slot(peer, wire_slot_i)
     listen_slot = peer_downlink_voice_slot(
-        peer, int(wire_slot), int(tgid), sys_cfg, peer_id=peer_id,
+        peer, wire_slot_i, int(tgid), sys_cfg, peer_id=peer_id,
     )
-    return {int(rf_slot), int(wire_slot), int(listen_slot)}
+    return {int(rf_slot), wire_slot_i, int(listen_slot)}
 
 
 def peer_slot_block_reason(
@@ -256,7 +271,7 @@ def peer_slot_block_reason(
     for voice_slot in sorted(voice_slots):
         hang_row = ctx.peer_voice_hangtime.get(pk, {}).get(voice_slot)
         slot_st = ctx.status.get(voice_slot, {})
-        if hbp_slot_blocks_group_voice_for_peer(
+        busy_reason = hbp_slot_blocks_group_voice_for_peer_reason(
             slot_st,
             peer_id,
             incoming_tgid_b,
@@ -269,8 +284,9 @@ def peer_slot_block_reason(
             peer_hang_row=hang_row,
             voice_slot=voice_slot,
             sys_cfg=ctx.sys_cfg,
-        ):
-            return f"slot {voice_slot} busy or in GROUP_HANGTIME"
+        )
+        if busy_reason is not None:
+            return busy_reason
     return None
 
 

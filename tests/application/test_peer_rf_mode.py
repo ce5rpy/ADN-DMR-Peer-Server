@@ -11,6 +11,7 @@ from adn_server.application.routing.helpers import (
     RF_MODE_DUPLEX,
     RF_MODE_SIMPLEX,
     SIMPLEX_VOICE_SLOT,
+    bytes_4,
     derive_peer_rf_mode,
     peer_downlink_voice_slot,
     peer_is_simplex,
@@ -82,6 +83,47 @@ def test_duplex_keeps_cross_slot_static_remap() -> None:
     ).data()
     remapped = remap_dmrd_to_peer_static_slot(burst, peer)
     assert not (remapped[15] & 0x80)
+
+
+def test_downlink_voice_slot_prefers_wire_slot_when_dynamic_tg_active_on_both() -> None:
+    # Regression: a SINGLE=0 (UA_MULTI) TG dynamically active on both slots
+    # used to always resolve to slot 1 regardless of which slot was asked
+    # about, wrongly reporting the peer's own actively-transmitting slot as
+    # the "listen slot" for the opposite-direction self-echo delivery.
+    peer = _duplex_peer()
+    peer_rf_mode(peer)
+    peer_id = 714001
+    pk = bytes_4(peer_id)
+    sys_cfg = {"_PEER_UA_MULTI_TGS": {pk: {1: {71442}, 2: {71442}}}}
+    assert peer_downlink_voice_slot(peer, 1, 71442, sys_cfg, peer_id=peer_id) == 1
+    assert peer_downlink_voice_slot(peer, 2, 71442, sys_cfg, peer_id=peer_id) == 2
+
+
+def test_downlink_voice_slot_static_both_slots_not_hijacked_by_single_exclusive_lock() -> None:
+    # Regression: a peer with a TG static on BOTH TS1 and TS2 (SINGLE=1) that
+    # is currently transmitting registers a SINGLE=1 exclusive session lock
+    # on its own TX slot. peer_downlink_voice_slot used to consult that lock
+    # (checking slot 1 before slot 2, unconditionally) whenever the static
+    # config was "ambiguous" (both slots), hijacking the answer to whichever
+    # slot the peer's own lock happened to be on -- wrongly reporting the
+    # peer's own actively-transmitting slot as busy for a self-echo delivery
+    # actually targeting the *other* slot.
+    peer = {
+        "SLOTS": b"3",
+        "RX_FREQ": b"431612500",
+        "TX_FREQ": b"438612500",
+        "OPTIONS": b"TS1=730500;TS2=730500;SINGLE=1;",
+    }
+    peer_rf_mode(peer)
+    peer_id = 730039258
+    pk = bytes_4(peer_id)
+    sys_cfg = {
+        "_PEER_UA_SESSIONS": {
+            pk: {1: {"tgid": 730500, "expires": 0, "source": "local"}},
+        },
+    }
+    assert peer_downlink_voice_slot(peer, 1, 730500, sys_cfg, peer_id=peer_id) == 1
+    assert peer_downlink_voice_slot(peer, 2, 730500, sys_cfg, peer_id=peer_id) == 2
 
 
 def test_topology_peer_row_includes_rf_mode() -> None:
