@@ -11,7 +11,9 @@ from adn_server.application.routing.helpers import (
     hbp_master_ingress_repeat_allowed,
     hbp_slot_blocks_group_voice,
     hbp_slot_blocks_group_voice_for_peer,
+    hbp_slot_blocks_group_voice_for_peer_reason,
     peer_hotspot_voice_slot_busy,
+    peer_hotspot_voice_slot_busy_reason,
     register_peer_ua_session,
     slot_has_active_voice,
     slot_in_group_hangtime,
@@ -331,6 +333,54 @@ def test_peer_hotspot_voice_slot_busy_blocks_downlink_during_local_ingress() -> 
     assert peer_hotspot_voice_slot_busy(
         hs, 2, _STREAM_A, _TG_A, slot, peer_slots, None, now + 0.05, 5.0,
     )
+
+
+def test_peer_hotspot_voice_slot_busy_reason_distinguishes_ingress_and_bridge_hold() -> None:
+    """Regression: the drop reason must name the actual cause, not a generic string."""
+    now = 1_000_000.0
+    hs = bytes_4(730039265)
+    slot = _active_rx_slot()
+    slot["RX_PEER"] = bytes_4(730039264)
+
+    ingress_slots = {
+        2: {"stream_id": _STREAM_B, "tgid": 730502, "time": now, "ingress": True},
+    }
+    reason = peer_hotspot_voice_slot_busy_reason(
+        hs, 2, _STREAM_A, _TG_A, slot, ingress_slots, None, now + 0.05, 5.0,
+    )
+    assert reason is not None and "transmitting (ingress) on slot 2" in reason
+    assert peer_hotspot_voice_slot_busy(
+        hs, 2, _STREAM_A, _TG_A, slot, ingress_slots, None, now + 0.05, 5.0,
+    ) == (reason is not None)
+
+    bridge_slots = {
+        2: {"stream_id": _STREAM_B, "tgid": 71442, "time": now, "bridge_hold": True},
+    }
+    reason = peer_hotspot_voice_slot_busy_reason(
+        hs, 2, _STREAM_A, _TG_A, slot, bridge_slots, None, now + 0.05, 5.0,
+    )
+    assert reason is not None and "bridge hold: TG 71442 active on slot 2" in reason
+    assert peer_hotspot_voice_slot_busy(
+        hs, 2, _STREAM_A, _TG_A, slot, bridge_slots, None, now + 0.05, 5.0,
+    ) == (reason is not None)
+
+
+def test_hbp_slot_blocks_group_voice_for_peer_reason_matches_bool() -> None:
+    now = 1_000_000.0
+    peer_a = bytes_4(352000133)
+    peer_b = bytes_4(714002301)
+    slot = _active_rx_slot()
+    slot["RX_PEER"] = peer_a
+    assert hbp_slot_blocks_group_voice_for_peer_reason(
+        slot, peer_b, _TG_B, _STREAM_B, now + 0.1, 0.0, per_peer=True, voice_slot=2,
+    ) is None
+    reason = hbp_slot_blocks_group_voice_for_peer_reason(
+        slot, peer_a, _TG_B, _STREAM_B, now + 0.1, 0.0, per_peer=True, voice_slot=2,
+    )
+    assert reason is not None
+    assert hbp_slot_blocks_group_voice_for_peer(
+        slot, peer_a, _TG_B, _STREAM_B, now + 0.1, 0.0, per_peer=True, voice_slot=2,
+    ) is True
 
 
 def test_per_peer_scope_ignores_other_hotspot_busy_slot() -> None:
