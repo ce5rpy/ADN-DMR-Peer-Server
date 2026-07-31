@@ -320,6 +320,32 @@ def test_peer_without_static_tgs_receives_nothing_until_dynamic() -> None:
     )
 
 
+def test_multi_zero_static_on_one_slot_still_tracks_dynamic_on_other() -> None:
+    """Real bug: TG static on TS2, peer separately keys the SAME TG on TS1 --
+    the static match on TS2 must not block persisting TS1 as dynamic too.
+    register_peer_ua_multi_tg's guard used to be slot-blind (peer_receives_group_tgid
+    ignores its slot argument and checks either static list), so this dynamic
+    activation was silently never recorded."""
+    peer = {"OPTIONS": b"TS2=71442;SINGLE=0;"}
+    sys_cfg = _sys_cfg()
+    peer_id = _peer_id()
+    register_peer_ua_multi_tg(peer, peer_id, 1, 71442, sys_cfg)
+    pk = bytes_4(int_id(peer_id))
+    assert 71442 in sys_cfg["_PEER_UA_MULTI_TGS"][pk][1]
+
+
+def test_multi_zero_simplex_static_on_either_slot_still_blocks_dynamic() -> None:
+    """Simplex peer: one real RF path regardless of nominal TS1/TS2, so a
+    static match on either slot still blocks dynamic tracking (unlike
+    duplex, which is tracked independently per slot)."""
+    peer = {"OPTIONS": b"TS2=71442;SINGLE=0;", "RF_MODE": "simplex"}
+    sys_cfg = _sys_cfg()
+    peer_id = _peer_id()
+    register_peer_ua_multi_tg(peer, peer_id, 1, 71442, sys_cfg)
+    pk = bytes_4(int_id(peer_id))
+    assert pk not in sys_cfg.get("_PEER_UA_MULTI_TGS", {})
+
+
 def test_single_zero_dynamic_heard_when_both_peers_keyed() -> None:
     """SINGLE=0: HS1 and HS2 both keyed 7304 → each hears the other's TX on 7304."""
     peer_a = {"OPTIONS": b"TS2=730,7305;SINGLE=0;"}

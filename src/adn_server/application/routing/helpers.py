@@ -336,6 +336,102 @@ def peer_single_same_tg_foreign_tx_blocks(
     return True
 
 
+def peer_hotspot_voice_slot_busy_reason(
+    peer_id: bytes,
+    voice_slot: int,
+    stream_id: bytes,
+    incoming_tgid_b: bytes,
+    slot_st: dict[str, Any],
+    peer_slots: PeerVoiceSlotMap | None,
+    hang_row: tuple[int, float] | None,
+    pkt_time: float,
+    group_hangtime: float,
+    *,
+    peers: dict[Any, Any] | None = None,
+    peer: dict[str, Any] | None = None,
+    sys_cfg: dict[str, Any] | None = None,
+) -> str | None:
+    """Reason this hotspot must not receive another group stream on ``voice_slot``, or None.
+
+    Same logic as ``peer_hotspot_voice_slot_busy`` (which just checks ``is not
+    None``) -- kept as one function so the diagnostic reason can never drift
+    from the actual accept/reject decision.
+
+    Hard rules (SINGLE=0 and SINGLE=1):
+
+    - **Transmitting** (``ingress``): drop every downlink byte until VTERM clears the slot.
+    - **Listening** on TG *T*: drop every byte for TG *U* ≠ *T* on this RF slot (no hangtime
+      exception for another OPTIONS/UA TG).
+    - **Bridge hold**: while an ACTIVE bridge leg keeps *T* on the slot, foreign legs on
+      *U* ≠ *T* stay dropped (OBP or HBP).
+    - Same ``stream_id`` on the same TG continues one call leg.
+    """
+    pk = bytes_4(int_id(peer_id))
+    if peer is None and peers is not None:
+        peer = peers.get(peer_id) or peers.get(pk)
+    if _peer_transmit_hangtime_blocks(hang_row, incoming_tgid_b, pkt_time, group_hangtime):
+        return f"GROUP_HANGTIME: recent local transmit hanging on slot {voice_slot}"
+    incoming_tgid = int_id(incoming_tgid_b)
+    active = (peer_slots or {}).get(int(voice_slot))
+    if isinstance(active, dict):
+        active_tgid = int(active.get("tgid", 0) or 0)
+        active_stream = active.get("stream_id")
+        active_time = float(active.get("time", 0) or 0)
+        age = pkt_time - active_time
+        if isinstance(active, dict) and active_time > 0 and age >= _STALE_PEER_SESSION_TIMEOUT:
+            peer_slots.pop(int(voice_slot), None)
+            active = None
+        if isinstance(active, dict) and active.get("ingress"):
+            return f"peer is transmitting (ingress) on slot {voice_slot}"
+        if isinstance(active, dict) and active.get("bridge_hold") and active_tgid and incoming_tgid != active_tgid:
+            if age <= group_hangtime:
+                return f"bridge hold: TG {active_tgid} active on slot {voice_slot}"
+            peer_slots.pop(int(voice_slot), None)
+            active = None
+        if isinstance(active, dict) and stream_id and active_stream:
+            if active_stream == stream_id:
+                pass
+            elif active_tgid and active_tgid == incoming_tgid:
+                if age >= STREAM_TO:
+                    peer_slots.pop(int(voice_slot), None)
+                else:
+                    return f"TG {incoming_tgid} already active on slot {voice_slot} with a different stream"
+            elif active_tgid and incoming_tgid != active_tgid:
+                return f"slot {voice_slot} busy with different TG {active_tgid}"
+            else:
+                return f"slot {voice_slot} busy with an unidentified active stream"
+        elif isinstance(active, dict):
+            if active_tgid and active_tgid == incoming_tgid:
+                pass
+            else:
+                return (
+                    f"slot {voice_slot} already occupied by TG {active_tgid}"
+                    if active_tgid
+                    else f"slot {voice_slot} already occupied by another stream"
+                )
+    if isinstance(peer, dict) and peer_single_blocks_foreign_same_tg_downlink(
+        peer, pk, voice_slot, incoming_tgid_b, peer_slots, sys_cfg, now=pkt_time,
+    ):
+        return f"SINGLE mode: local UA lock on TG {incoming_tgid} blocks foreign downlink on slot {voice_slot}"
+    if isinstance(peer, dict) and peer_single_same_tg_foreign_tx_blocks(
+        peer, pk, incoming_tgid_b, stream_id, slot_st, sys_cfg, pkt_time=pkt_time,
+    ):
+        return f"SINGLE mode: peer is transmitting a different call on TG {incoming_tgid}"
+    if bytes_4(int_id(slot_st.get("RX_PEER", b""))) == pk:
+        rx_active = (
+            slot_st.get("RX_TYPE") is not None
+            and slot_st.get("RX_TYPE") != HBPF_SLT_VTERM
+            and (pkt_time - float(slot_st.get("RX_TIME", 0))) < STREAM_TO
+        )
+        if rx_active and stream_id != slot_st.get("RX_STREAM_ID"):
+            return f"slot {voice_slot} STATUS RX owner with a different active stream"
+        if _peer_status_rx_hangtime_blocks(
+            peer_id, slot_st, incoming_tgid_b, pkt_time, group_hangtime,
+        ):
+            return f"GROUP_HANGTIME: recent STATUS RX hangtime on slot {voice_slot}"
+    return None
+
+
 def peer_hotspot_voice_slot_busy(
     peer_id: bytes,
     voice_slot: int,
@@ -351,77 +447,24 @@ def peer_hotspot_voice_slot_busy(
     peer: dict[str, Any] | None = None,
     sys_cfg: dict[str, Any] | None = None,
 ) -> bool:
-    """True when this hotspot must not receive another group stream on ``voice_slot``.
-
-    Hard rules (SINGLE=0 and SINGLE=1):
-
-    - **Transmitting** (``ingress``): drop every downlink byte until VTERM clears the slot.
-    - **Listening** on TG *T*: drop every byte for TG *U* ≠ *T* on this RF slot (no hangtime
-      exception for another OPTIONS/UA TG).
-    - **Bridge hold**: while an ACTIVE bridge leg keeps *T* on the slot, foreign legs on
-      *U* ≠ *T* stay dropped (OBP or HBP).
-    - Same ``stream_id`` on the same TG continues one call leg.
-    """
-    pk = bytes_4(int_id(peer_id))
-    if peer is None and peers is not None:
-        peer = peers.get(peer_id) or peers.get(pk)
-    if _peer_transmit_hangtime_blocks(hang_row, incoming_tgid_b, pkt_time, group_hangtime):
-        return True
-    active = (peer_slots or {}).get(int(voice_slot))
-    if isinstance(active, dict):
-        incoming_tgid = int_id(incoming_tgid_b)
-        active_tgid = int(active.get("tgid", 0) or 0)
-        active_stream = active.get("stream_id")
-        active_time = float(active.get("time", 0) or 0)
-        age = pkt_time - active_time
-        if isinstance(active, dict) and active_time > 0 and age >= _STALE_PEER_SESSION_TIMEOUT:
-            peer_slots.pop(int(voice_slot), None)
-            active = None
-        if isinstance(active, dict) and active.get("ingress"):
-            return True
-        if isinstance(active, dict) and active.get("bridge_hold") and active_tgid and incoming_tgid != active_tgid:
-            if age <= group_hangtime:
-                return True
-            peer_slots.pop(int(voice_slot), None)
-            active = None
-        if isinstance(active, dict) and stream_id and active_stream:
-            if active_stream == stream_id:
-                pass
-            elif active_tgid and active_tgid == incoming_tgid:
-                if age >= STREAM_TO:
-                    peer_slots.pop(int(voice_slot), None)
-                else:
-                    return True
-            elif active_tgid and incoming_tgid != active_tgid:
-                return True
-            else:
-                return True
-        elif isinstance(active, dict):
-            if active_tgid and active_tgid == incoming_tgid:
-                pass
-            else:
-                return True
-    if isinstance(peer, dict) and peer_single_blocks_foreign_same_tg_downlink(
-        peer, pk, voice_slot, incoming_tgid_b, peer_slots, sys_cfg, now=pkt_time,
-    ):
-        return True
-    if isinstance(peer, dict) and peer_single_same_tg_foreign_tx_blocks(
-        peer, pk, incoming_tgid_b, stream_id, slot_st, sys_cfg, pkt_time=pkt_time,
-    ):
-        return True
-    if bytes_4(int_id(slot_st.get("RX_PEER", b""))) == pk:
-        rx_active = (
-            slot_st.get("RX_TYPE") is not None
-            and slot_st.get("RX_TYPE") != HBPF_SLT_VTERM
-            and (pkt_time - float(slot_st.get("RX_TIME", 0))) < STREAM_TO
+    """True when this hotspot must not receive another group stream on ``voice_slot``."""
+    return (
+        peer_hotspot_voice_slot_busy_reason(
+            peer_id,
+            voice_slot,
+            stream_id,
+            incoming_tgid_b,
+            slot_st,
+            peer_slots,
+            hang_row,
+            pkt_time,
+            group_hangtime,
+            peers=peers,
+            peer=peer,
+            sys_cfg=sys_cfg,
         )
-        if rx_active and stream_id != slot_st.get("RX_STREAM_ID"):
-            return True
-        if _peer_status_rx_hangtime_blocks(
-            peer_id, slot_st, incoming_tgid_b, pkt_time, group_hangtime,
-        ):
-            return True
-    return False
+        is not None
+    )
 
 
 def master_per_peer_slot_contention(
@@ -602,6 +645,55 @@ def obp_clear_deferred_bridge_tx_leg(
             obp_clear_flat_bridge_tx(slot_st)
 
 
+def hbp_slot_blocks_group_voice_for_peer_reason(
+    slot_st: dict[str, Any],
+    peer_id: bytes,
+    incoming_tgid_b: bytes,
+    stream_id: bytes,
+    pkt_time: float,
+    group_hangtime: float,
+    *,
+    per_peer: bool,
+    peers: dict[Any, Any] | None = None,
+    peer_slots: PeerVoiceSlotMap | None = None,
+    peer_hang_row: tuple[int, float] | None = None,
+    voice_slot: int | None = None,
+    sys_cfg: dict[str, Any] | None = None,
+) -> str | None:
+    """Reason for ``hbp_slot_blocks_group_voice_for_peer``'s block, or None.
+
+    Same logic as ``hbp_slot_blocks_group_voice_for_peer`` (which just checks
+    ``is not None``) -- kept as one function so the diagnostic reason can
+    never drift from the actual accept/reject decision.
+    """
+    if per_peer:
+        if voice_slot is None:
+            return None
+        peer = None
+        if peers is not None:
+            pk = bytes_4(int_id(peer_id))
+            peer = peers.get(peer_id) or peers.get(pk)
+        return peer_hotspot_voice_slot_busy_reason(
+            peer_id,
+            int(voice_slot),
+            stream_id,
+            incoming_tgid_b,
+            slot_st,
+            peer_slots,
+            peer_hang_row,
+            pkt_time,
+            group_hangtime,
+            peers=peers,
+            peer=peer if isinstance(peer, dict) else None,
+            sys_cfg=sys_cfg,
+        )
+    if hbp_slot_blocks_group_voice(
+        slot_st, incoming_tgid_b, stream_id, pkt_time, group_hangtime,
+    ):
+        return "global STATUS slot contention"
+    return None
+
+
 def hbp_slot_blocks_group_voice_for_peer(
     slot_st: dict[str, Any],
     peer_id: bytes,
@@ -626,29 +718,22 @@ def hbp_slot_blocks_group_voice_for_peer(
     shared slot row before ``send_peer``. Same-stream exemption must not treat that
     bridge TX stamp as the hotspot's own leg while the peer is still on the air (RX).
     """
-    if per_peer:
-        if voice_slot is None:
-            return False
-        peer = None
-        if peers is not None:
-            pk = bytes_4(int_id(peer_id))
-            peer = peers.get(peer_id) or peers.get(pk)
-        return peer_hotspot_voice_slot_busy(
-            peer_id,
-            int(voice_slot),
-            stream_id,
-            incoming_tgid_b,
+    return (
+        hbp_slot_blocks_group_voice_for_peer_reason(
             slot_st,
-            peer_slots,
-            peer_hang_row,
+            peer_id,
+            incoming_tgid_b,
+            stream_id,
             pkt_time,
             group_hangtime,
+            per_peer=per_peer,
             peers=peers,
-            peer=peer if isinstance(peer, dict) else None,
+            peer_slots=peer_slots,
+            peer_hang_row=peer_hang_row,
+            voice_slot=voice_slot,
             sys_cfg=sys_cfg,
         )
-    return hbp_slot_blocks_group_voice(
-        slot_st, incoming_tgid_b, stream_id, pkt_time, group_hangtime,
+        is not None
     )
 
 
@@ -1208,6 +1293,27 @@ def _peer_ua_multi_store(sys_cfg: dict[str, Any]) -> dict[bytes, dict[int, set[i
     return store
 
 
+def _peer_static_tg_blocks_slot(peer: dict[str, Any], slot: int, tgid: int) -> bool:
+    """Does this peer's static OPTIONS already cover ``tgid`` for this exact
+    slot? Simplex peers have one real RF path regardless of nominal TS1/TS2,
+    so any static match blocks (matches peer_receives_group_tgid's
+    either-slot check); duplex peers are checked per-slot, since a static
+    match on one slot must not block genuinely independent dynamic activity
+    on the *other* slot (e.g. TG static on TS2, this same peer separately
+    keying up the same TG on TS1)."""
+    from adn_server.application.report.payloads import parse_peer_options_static
+
+    ts1, ts2 = parse_peer_options_static(peer.get("OPTIONS"))
+    tg = str(tgid)
+    if peer_is_simplex(peer):
+        return tg in ts1 or tg in ts2
+    if int(slot) == 1:
+        return tg in ts1
+    if int(slot) == 2:
+        return tg in ts2
+    return False
+
+
 def register_peer_ua_multi_tg(
     peer: dict[str, Any],
     peer_id: bytes,
@@ -1221,7 +1327,7 @@ def register_peer_ua_multi_tg(
     tgid_i = int(tgid)
     if not is_ua_session_tgid(tgid_i):
         return
-    if peer_receives_group_tgid(peer, slot, tgid_i):
+    if _peer_static_tg_blocks_slot(peer, slot, tgid_i):
         return
     pk = bytes_4(int_id(peer_id))
     per_peer = _peer_ua_multi_store(sys_cfg).setdefault(pk, {})
@@ -1257,6 +1363,50 @@ def peer_owns_multi_dynamic_ua(
         if isinstance(slot_set, set) and tgid_i in slot_set:
             return True
     return False
+
+
+def peer_dynamic_tg_active_on_slot(
+    peer: dict[str, Any],
+    tgid: int,
+    slot: int,
+    sys_cfg: dict[str, Any] | None,
+    *,
+    peer_id: bytes | None = None,
+) -> bool:
+    """True when a *dynamic* (non-static OPTIONS) TG is active on this
+    specific slot for this peer right now. Covers SINGLE=1 (independent
+    exclusive session per slot) and SINGLE=0 (independently keyed multi-TG
+    set per slot)."""
+    if not sys_cfg or peer_id is None:
+        return False
+    tgid_i = int(tgid)
+    if peer_single_mode(peer, sys_cfg):
+        locked = peer_single_exclusive_tgid(peer, slot, sys_cfg, peer_id=peer_id)
+        return locked is not None and locked == tgid_i
+    store = sys_cfg.get("_PEER_UA_MULTI_TGS")
+    if not isinstance(store, dict):
+        return False
+    per_peer = store.get(bytes_4(int_id(peer_id)))
+    if not isinstance(per_peer, dict):
+        return False
+    slot_set = per_peer.get(slot)
+    return isinstance(slot_set, set) and tgid_i in slot_set
+
+
+def peer_dynamic_tg_active_on_both_slots(
+    peer: dict[str, Any],
+    tgid: int,
+    sys_cfg: dict[str, Any] | None,
+    *,
+    peer_id: bytes | None = None,
+) -> bool:
+    """True when a *dynamic* (non-static OPTIONS) TG is active on both slot 1
+    and slot 2 for this peer right now -- static-or-dynamic makes no
+    difference to whether a duplex peer should get the call on both slots."""
+    return (
+        peer_dynamic_tg_active_on_slot(peer, tgid, 1, sys_cfg, peer_id=peer_id)
+        and peer_dynamic_tg_active_on_slot(peer, tgid, 2, sys_cfg, peer_id=peer_id)
+    )
 
 
 def register_peer_ua_session(
@@ -1728,6 +1878,17 @@ def peer_downlink_voice_slot(
     static = peer_options_static_tg_slot(peer, tgid)
     if static is not None:
         return static
+    from adn_server.application.report.payloads import parse_peer_options_static
+
+    ts1, ts2 = parse_peer_options_static(peer.get("OPTIONS"))
+    tg = str(tgid)
+    if tg in ts1 and tg in ts2:
+        # Static on both slots (peer_options_static_tg_slot returns None
+        # because that's ambiguous *as a single answer*, not because the TG
+        # is unresolved) -- an in-progress SINGLE=1 exclusive lock or SINGLE=0
+        # UA_MULTI entry from this peer's own current transmission must not
+        # override a config that already, unambiguously, permits wire_slot.
+        return int(wire_slot)
     if sys_cfg is not None and peer_id is not None:
         tgid_i = int(tgid)
         pk = bytes_4(int_id(peer_id))
@@ -1741,6 +1902,10 @@ def peer_downlink_voice_slot(
         if isinstance(store, dict):
             per_peer = store.get(pk)
             if isinstance(per_peer, dict):
+                wire_slot_i = int(wire_slot)
+                wire_slot_set = per_peer.get(wire_slot_i)
+                if isinstance(wire_slot_set, set) and tgid_i in wire_slot_set:
+                    return wire_slot_i
                 for voice_slot in (1, 2):
                     slot_set = per_peer.get(voice_slot)
                     if isinstance(slot_set, set) and tgid_i in slot_set:
