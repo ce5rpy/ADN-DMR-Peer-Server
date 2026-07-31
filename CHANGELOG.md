@@ -4,6 +4,27 @@ All notable changes to **adn-server** are documented here.
 
 <!-- version list -->
 
+## v2.5.3 (2026-07-31)
+
+### Bug Fixes
+
+- Deliver a hotspot's own group call back to its other slot when subscribed there too
+  ([#67](https://github.com/ce5rpy/ADN-DMR-Peer-Server/pull/67),
+  [`c788382`](https://github.com/ce5rpy/ADN-DMR-Peer-Server/commit/c7883822c61b56317e57cc18b68eb724f1d85c25))
+
+- Deliver TG on both slots when static on one, dynamic on the other
+  ([#66](https://github.com/ce5rpy/ADN-DMR-Peer-Server/pull/66),
+  [`6c28754`](https://github.com/ce5rpy/ADN-DMR-Peer-Server/commit/6c28754ce4fc470d05e98b45fe9e893b10a2a20a))
+
+- Dual-slot delivery for mixed static+dynamic TG subscriptions
+  ([#66](https://github.com/ce5rpy/ADN-DMR-Peer-Server/pull/66),
+  [`6c28754`](https://github.com/ce5rpy/ADN-DMR-Peer-Server/commit/6c28754ce4fc470d05e98b45fe9e893b10a2a20a))
+
+- Strip NUL-padded CALLSIGN instead of showing raw bytes
+  ([#66](https://github.com/ce5rpy/ADN-DMR-Peer-Server/pull/66),
+  [`6c28754`](https://github.com/ce5rpy/ADN-DMR-Peer-Server/commit/6c28754ce4fc470d05e98b45fe9e893b10a2a20a))
+
+
 ## v2.5.2 (2026-07-28)
 
 ### Bug Fixes
