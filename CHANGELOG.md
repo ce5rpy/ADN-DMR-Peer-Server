@@ -4,6 +4,17 @@ All notable changes to **adn-server** are documented here.
 
 <!-- version list -->
 
+## v2.5.4 (2026-08-19)
+
+### Bug Fixes
+
+- Keep hotspots connected when the security server is unreachable
+  ([`49114fe`](https://github.com/ce5rpy/ADN-DMR-Peer-Server/commit/49114feee954e864d99d85d95fbbb3e8d89a6938))
+
+- Stop unit calls to 4000 from being broadcast to every peer
+  ([`62225c9`](https://github.com/ce5rpy/ADN-DMR-Peer-Server/commit/62225c9f07650078f1338461f1bb9a2d063e3691))
+
+
 ## v2.5.3 (2026-07-31)
 
 ### Bug Fixes
