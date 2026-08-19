@@ -436,12 +436,22 @@ class HBPProtocol(DatagramProtocol):
         to blast the call to peers it can't possibly be for. Returns a
         1-tuple with the exact peer_id when it's still connected here.
 
+        TG/ID 4000 is the dynamic-TG reset control code (see
+        ``_handle_tg4000_packet``/``routing_use_cases.dmrd_received``), never
+        a real subscriber -- it can never appear in _SUB_MAP, so it would
+        otherwise always fall into the "unknown destination" broadcast
+        fallback above and get blasted to every peer. That fallback runs
+        before dmrd_received's own dst_id == 4000 guard ever sees the
+        packet, so it must be special-cased here too.
+
         The report_slot / "SYSTEM-N" monitor display name is NOT used for
         this — it's cosmetic and can be reassigned to a different peer across
         refreshes (self-service peers without a stable report_slot fall back
         to a sorted-by-id allocation recomputed each time). The raw peer_id
         is what's actually stable.
         """
+        if int_id(dst_id) == 4000:
+            return ()
         sub_map = self._CONFIG.get("_SUB_MAP")
         if not sub_map:
             return None
