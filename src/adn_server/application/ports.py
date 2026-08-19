@@ -215,8 +215,8 @@ class SecurityDownloader(ABC):
         ...
 
     @abstractmethod
-    def periodic_download(self, config: dict[str, Any]) -> None:
-        """Periodic password/encryption download."""
+    def periodic_download(self, config: dict[str, Any]) -> bool:
+        """Periodic password/encryption download. Returns True when passwords file was updated."""
         ...
 
 

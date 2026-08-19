@@ -30,7 +30,7 @@ import os
 import shutil
 import socket
 import tempfile
-import time
+import json
 from typing import Any
 from urllib.error import HTTPError, URLError
 from urllib.parse import quote
@@ -40,19 +40,20 @@ from ...application.ports import SecurityDownloader
 
 logger = logging.getLogger(__name__)
 
-DOWNLOAD_INTERVAL_PASSWORDS = 300
+# Bounded so a dead security server cannot stall a caller longer than
+# PING_TIME * MAX_MISSED (30s with default config) and time out every hotspot.
+DNS_TIMEOUT = 5
+DOWNLOAD_TIMEOUT = 10
 
-_last_passwords_download = 0.0
 _last_passwords_size = 0
 _last_passwords_content: bytes | None = None
 
 
-def _resolve_hostname(hostname: str, timeout: int = 10) -> str | None:
+def _resolve_hostname(hostname: str, timeout: int = DNS_TIMEOUT) -> str | None:
+    old_timeout = socket.getdefaulttimeout()
     try:
-        old_timeout = socket.getdefaulttimeout()
         socket.setdefaulttimeout(timeout)
         ip = socket.gethostbyname(hostname)
-        socket.setdefaulttimeout(old_timeout)
         logger.debug("(SECURITY) Resolved %s to %s", hostname, ip)
         return ip
     except socket.gaierror as e:
@@ -61,6 +62,9 @@ def _resolve_hostname(hostname: str, timeout: int = 10) -> str | None:
     except Exception as e:
         logger.error("(SECURITY) Unexpected error resolving %s: %s", hostname, e)
         return None
+    finally:
+        # Never leak the process-wide default onto unrelated sockets (MySQL, aliases).
+        socket.setdefaulttimeout(old_timeout)
 
 
 def _build_download_url(config: dict[str, Any], filename: str) -> tuple[str | None, str | None]:
@@ -82,14 +86,19 @@ def _build_download_url(config: dict[str, Any], filename: str) -> tuple[str | No
     return url, url_security
 
 
+def _log_target(url: str) -> str:
+    """Host and path only: the query string carries PASS_SECURITY and must never be logged."""
+    return url.split("?", 1)[0]
+
+
 def _download_file_safely(
-    url: str, dest_path: str, timeout: int = 60
+    url: str, dest_path: str, timeout: int = DOWNLOAD_TIMEOUT
 ) -> bool:
     try:
         fd, temp_path = tempfile.mkstemp()
         os.close(fd)
         try:
-            logger.debug("(SECURITY) Attempting download from: %s", url)
+            logger.debug("(SECURITY) Attempting download from: %s", _log_target(url))
             req = Request(url)
             req.add_header("User-Agent", "ADN-Systems-DMR/1.0")
             with urlopen(req, timeout=timeout) as response:
@@ -136,13 +145,14 @@ def _download_encryption_key(config: dict[str, Any], config_dir: str) -> bool:
     return _download_file_safely(url, dest_path)
 
 
-def _download_user_passwords(
-    config: dict[str, Any], data_dir: str, force: bool = False
-) -> bool:
-    global _last_passwords_download, _last_passwords_size, _last_passwords_content
-    now = time.time()
-    if not force and (now - _last_passwords_download) < DOWNLOAD_INTERVAL_PASSWORDS:
-        return False
+def _download_user_passwords(config: dict[str, Any], data_dir: str) -> bool:
+    """Fetch user passwords; keep the file on disk untouched unless a valid payload arrives.
+
+    Pacing is the caller's job (the 300s LoopingCall). An extra interval guard here
+    would reject ticks that arrive a few ms early and silently stretch the real
+    retry period to a multiple of the loop interval.
+    """
+    global _last_passwords_size, _last_passwords_content
     g = config.get("GLOBAL", {})
     users_pass = (g.get("USERS_PASS") or "user_passwords.json").strip()
     dest_path = os.path.join(data_dir, users_pass)
@@ -151,19 +161,24 @@ def _download_user_passwords(
         logger.debug("(SECURITY) Security server not configured, skipping passwords download")
         return False
     try:
-        logger.debug("(SECURITY) Downloading passwords from: %s", url)
+        logger.debug("(SECURITY) Downloading passwords from: %s", _log_target(url))
         req = Request(url)
         req.add_header("User-Agent", "ADN-Systems-DMR/1.0")
-        with urlopen(req, timeout=60) as response:
+        with urlopen(req, timeout=DOWNLOAD_TIMEOUT) as response:
             new_content = response.read()
         new_size = len(new_content)
         if new_size == 0:
             logger.warning("(SECURITY) Downloaded passwords file is empty, keeping existing")
-            _last_passwords_download = now
+            return False
+        try:
+            parsed = json.loads(new_content)
+            if not isinstance(parsed, dict) or not isinstance(parsed.get("passwords"), dict):
+                raise ValueError("invalid passwords JSON shape")
+        except (json.JSONDecodeError, ValueError) as e:
+            logger.warning("(SECURITY) Downloaded passwords invalid, keeping existing: %s", e)
             return False
         if _last_passwords_content is not None and new_content == _last_passwords_content:
             logger.debug("(SECURITY) Passwords file unchanged, no update needed")
-            _last_passwords_download = now
             return False
         fd, temp_path = tempfile.mkstemp()
         os.close(fd)
@@ -173,24 +188,19 @@ def _download_user_passwords(
         shutil.move(temp_path, dest_path)
         _last_passwords_content = new_content
         _last_passwords_size = new_size
-        _last_passwords_download = now
         logger.info("(SECURITY) Successfully updated passwords file: %s (%d bytes)", dest_path, new_size)
         return True
     except HTTPError as e:
         logger.error("(SECURITY) HTTP error downloading passwords: %s (Code: %d)", e, e.code)
-        _last_passwords_download = now
         return False
     except URLError as e:
         logger.error("(SECURITY) URL error downloading passwords: %s", e.reason)
-        _last_passwords_download = now
         return False
     except socket.timeout:
         logger.error("(SECURITY) Timeout downloading passwords")
-        _last_passwords_download = now
         return False
     except Exception as e:
         logger.error("(SECURITY) Unexpected error downloading passwords: %s", e)
-        _last_passwords_download = now
         return False
 
 
@@ -208,7 +218,7 @@ class DefaultSecurityDownloader(SecurityDownloader):
         return os.path.join(self._project_root, path)
 
     def init_downloads(self, config: dict[str, Any]) -> None:
-        """One-time init: resolve hostname, download encryption key and passwords (force)."""
+        """One-time init: resolve hostname, download encryption key and passwords."""
         url_security = (config.get("GLOBAL", {}).get("URL_SECURITY") or "").strip()
         if not url_security:
             logger.info("(SECURITY) Central security server not configured")
@@ -229,12 +239,15 @@ class DefaultSecurityDownloader(SecurityDownloader):
         config_dir = self._config_dir(config)
         data_dir = self._data_dir(config)
         _download_encryption_key(config, config_dir)
-        _download_user_passwords(config, data_dir, force=True)
-
-    def periodic_download(self, config: dict[str, Any]) -> None:
-        """Periodic password file download (every 5 min)."""
-        data_dir = self._data_dir(config)
         _download_user_passwords(config, data_dir)
+
+    def periodic_download(self, config: dict[str, Any]) -> bool:
+        """Periodic password file download. Blocking — call off the reactor thread.
+
+        Returns True only when the file on disk was replaced with a new valid payload.
+        """
+        data_dir = self._data_dir(config)
+        return _download_user_passwords(config, data_dir)
 
 
 class StubSecurityDownloader(SecurityDownloader):
@@ -243,5 +256,5 @@ class StubSecurityDownloader(SecurityDownloader):
     def init_downloads(self, config: dict[str, Any]) -> None:
         pass
 
-    def periodic_download(self, config: dict[str, Any]) -> None:
-        pass
+    def periodic_download(self, config: dict[str, Any]) -> bool:
+        return False

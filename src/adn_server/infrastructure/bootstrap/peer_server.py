@@ -477,19 +477,19 @@ def run_peer_server(
 
     def alias_reload_loop():
         logger.debug("(ALIAS) starting alias thread")
-        try:
-            peer_ids, subscriber_ids, talkgroup_ids, local_subscriber_ids, server_ids, checksums = (
-                alias_loader.load_aliases(config)
+        # Downloads run in the thread pool (blocking HTTP would stall hotspot pings);
+        # the config swap is applied back on the reactor thread.
+        d = threads.deferToThread(alias_loader.load_aliases, config)
+        d.addCallback(
+            lambda loaded: DefaultAliasLoader.merge_reload_into_config(
+                config, alias_loader, *loaded
             )
-            config["_SUB_IDS"] = subscriber_ids
-            config["_SUB_PROFILES"] = alias_loader.load_subscriber_profiles(config)
-            config["_PEER_IDS"] = peer_ids
-            config["_TG_IDS"] = talkgroup_ids
-            config["_LOCAL_SUBSCRIBER_IDS"] = local_subscriber_ids
-            config["_SERVER_IDS"] = server_ids
-            config["CHECKSUMS"] = checksums
-        except Exception as e:
-            logger.warning("(ALIAS) alias reload failed: %s", e)
+        )
+        d.addErrback(
+            lambda failure: logger.warning(
+                "(ALIAS) alias reload failed: %s", failure.getErrorMessage()
+            )
+        )
 
     task.LoopingCall(alias_reload_loop).start(alias_interval).addErrback(_looping_errback, logger)
 
@@ -733,8 +733,28 @@ def run_peer_server(
     task.LoopingCall(voice_reload_loop).start(15).addErrback(_looping_errback, logger)
     logger.info("(VOICE-RELOAD) config file watch active (every 15 seconds)")
 
+    # The download is blocking HTTP: run it in the thread pool. On the reactor thread a
+    # slow/dead security server stalls RPTPING handling past PING_TIME * MAX_MISSED and
+    # every hotspot gets timed out and reconnects.
+    security_download_busy = {"value": False}
+
+    def _security_download_done(updated):
+        security_download_busy["value"] = False
+        if updated:
+            user_passwords_loader.load(config)
+
+    def _security_download_error(failure):
+        security_download_busy["value"] = False
+        logger.error("(SECURITY) Periodic download failed: %s", failure.getErrorMessage())
+
     def security_loop():
-        security.periodic_download(config)
+        if security_download_busy["value"]:
+            logger.warning("(SECURITY) Previous download still running, skipping this cycle")
+            return
+        security_download_busy["value"] = True
+        threads.deferToThread(security.periodic_download, config).addCallbacks(
+            _security_download_done, _security_download_error
+        )
 
     task.LoopingCall(security_loop).start(300).addErrback(_looping_errback, logger)
     logger.info("(SECURITY) Periodic password download task started (every 5 minutes)")
