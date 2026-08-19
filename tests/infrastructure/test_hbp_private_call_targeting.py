@@ -31,6 +31,8 @@ parity) -- see test_hbp_repeat_private_call.py."""
 
 from __future__ import annotations
 
+import dataclasses
+
 from tests.harness.deterministic import DeterministicScenario, PacketSpec
 from tests.support.hbp_repeat_stack import build_hbp_repeat_stack
 
@@ -108,6 +110,24 @@ def test_private_call_not_delivered_locally_when_known_on_different_system() -> 
     _fire_private_call(stack, _private_spec())
 
     assert not stack.transport.for_addr(_ADDR_OTHER), "destination known elsewhere must not repeat locally"
+
+
+def test_private_call_to_4000_not_broadcast() -> None:
+    """TG/ID 4000 is the dynamic-TG reset control code, never a real subscriber --
+    it can never appear in _SUB_MAP, so without a special case it always fell into
+    the "unknown destination" broadcast fallback and reached every connected peer
+    instead of being stopped at the server (dmrd_received's own dst_id == 4000
+    guard runs too late: _pvt_repeat_targets/the REPEAT loop already ran)."""
+    stack = build_hbp_repeat_stack(talker_alias=True)
+    stack.register_peer(_PEER_TX, _ADDR_TX, options="TS2=7304;")
+    stack.register_peer(_PEER_RX, _ADDR_RX, options="TS2=7304;")
+    stack.register_peer(_PEER_OTHER, _ADDR_OTHER, options="TS2=7304;")
+
+    base = dataclasses.replace(_private_spec(), dst_id=4000)
+    _fire_private_call(stack, base)
+
+    assert not stack.transport.for_addr(_ADDR_RX), "TG 4000 must not be broadcast to any peer"
+    assert not stack.transport.for_addr(_ADDR_OTHER), "TG 4000 must not be broadcast to any peer"
 
 
 def test_sub_map_entries_for_peer_purged_on_reconnect() -> None:
