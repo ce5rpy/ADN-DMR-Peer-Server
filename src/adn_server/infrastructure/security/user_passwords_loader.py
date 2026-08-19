@@ -54,6 +54,7 @@ class UserPasswordsLoader:
         now = time.time()
         if now - _last_load < USER_PASSWORDS_RELOAD_INTERVAL and self._passwords:
             return self._passwords
+        previous = dict(self._passwords)
         data_dir = os.path.join(
             self._project_root,
             (config.get("ALIASES", {}).get("PATH") or "data").rstrip("/"),
@@ -66,20 +67,33 @@ class UserPasswordsLoader:
         )
         hash_encrypt = (config.get("GLOBAL", {}).get("HASH_ENCRYPT") or "encryption_key.secret").strip()
         self._key_path = os.path.join(key_path, hash_encrypt)
-        self._passwords = {}
         if not os.path.exists(path):
             _last_load = now
+            if previous:
+                logger.warning("(AUTH) user passwords file missing, keeping cached passwords")
+                return self._passwords
+            self._passwords = {}
             return self._passwords
         try:
             with open(path, "r", encoding="utf-8") as f:
                 data = json.load(f)
+            if not isinstance(data, dict) or not isinstance(data.get("passwords"), dict):
+                raise ValueError("invalid user_passwords.json shape")
             encrypted = data.get("passwords", {})
             from .password_crypto import decrypt_password
+
+            new_passwords: dict[str, str] = {}
             for radio_id, pwd in encrypted.items():
-                self._passwords[str(radio_id)] = decrypt_password(pwd, self._key_path) or ""
+                new_passwords[str(radio_id)] = decrypt_password(pwd, self._key_path) or ""
+            self._passwords = new_passwords
             logger.debug("(AUTH) Loaded %d individual passwords from %s", len(self._passwords), path)
-        except (FileNotFoundError, json.JSONDecodeError, Exception) as e:
+        except (FileNotFoundError, json.JSONDecodeError, ValueError, Exception) as e:
             logger.warning("(AUTH) Could not load user passwords: %s", e)
+            if previous:
+                logger.warning("(AUTH) keeping previous cached passwords (%d entries)", len(previous))
+                self._passwords = previous
+            else:
+                self._passwords = {}
         _last_load = now
         return self._passwords
 
